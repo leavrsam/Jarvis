@@ -510,12 +510,13 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       let targetRim = new THREE.Color(0x0055ff);
 
       if (state === 'listening') {
-        pulseMod = 1.0 + volume * 2.2;
+        // High reactivity to live user microphone volume & frequency
+        pulseMod = 1.0 + volume * 3.8;
         targetCore = new THREE.Color(0xffffff);
-        targetMid = new THREE.Color(0xa5f3fc);
+        targetMid = new THREE.Color(0xdcfce7); // vibrant radiant cyan-lime touch for acoustic ingest
         targetRim = new THREE.Color(0x00f0ff);
       } else if (state === 'speaking') {
-        pulseMod = 1.0 + volume * 2.0;
+        pulseMod = 1.0 + volume * 2.8;
         targetCore = new THREE.Color(0xffffff);
         targetMid = new THREE.Color(0x38bdf8);
         targetRim = new THREE.Color(0x0284c7);
@@ -566,20 +567,20 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       plasmaUniforms.uColorMid.value.lerp(targetMid, 0.08);
       plasmaUniforms.uColorRim.value.lerp(targetRim, 0.08);
 
-      // Core Breathing & Dynamic Scale
+      // Core Breathing & Dynamic Scale (strongly reacts to speech volume)
       const baseScale = 1.0 + Math.sin(time * 1.5) * 0.02;
-      const audioScale = baseScale + volume * 0.55;
+      const audioScale = baseScale + volume * (state === 'listening' ? 0.95 : 0.65);
       coreContainer.scale.set(audioScale, audioScale, audioScale);
 
       // Outer Corona Bloom Sprite
-      const spriteScale = 9.5 + volume * 3.5 + Math.sin(time * 2) * 0.2;
+      const spriteScale = 9.5 + volume * (state === 'listening' ? 6.5 : 4.0) + Math.sin(time * 2) * 0.2;
       bloomSprite.scale.set(spriteScale, spriteScale, 1);
-      bloomSpriteMat.opacity = Math.min(0.9, 0.55 + volume * 0.35);
+      bloomSpriteMat.opacity = Math.min(0.95, 0.55 + volume * 0.45);
       bloomSpriteMat.color.lerp(targetMid, 0.08);
 
-      // Lights
-      coreLight.intensity = 4.0 + volume * 8.0;
-      pointLight.intensity = 2.5 + volume * 4.5;
+      // Lights (brightens dynamically with vocal tone)
+      coreLight.intensity = 4.0 + volume * (state === 'listening' ? 12.0 : 7.0);
+      pointLight.intensity = 2.5 + volume * (state === 'listening' ? 8.0 : 4.5);
       pointLight.color.lerp(targetMid, 0.08);
 
       // 4. Update Internal Core Sparks
@@ -588,8 +589,8 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
       for (let i = 0; i < coreSparkCount; i++) {
         const d = coreSparkData[i];
-        d.theta += d.speed * (1.0 + volume * 2.5);
-        d.phi += d.speed * 0.6;
+        d.theta += d.speed * (1.0 + volume * 3.5);
+        d.phi += d.speed * 0.8;
         sparkPosArray[i * 3] = d.r * Math.cos(d.theta) * Math.cos(d.phi);
         sparkPosArray[i * 3 + 1] = d.r * Math.sin(d.theta) * Math.cos(d.phi);
         sparkPosArray[i * 3 + 2] = d.r * Math.sin(d.phi);
@@ -605,21 +606,21 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
         let offset = 0;
 
         if (freqArray && freqArray.length > 0) {
-          const freqIndex = Math.floor((i / waveSegments) * (freqArray.length / 3));
+          const freqIndex = Math.floor((i / waveSegments) * (freqArray.length / 2));
           const freqVal = freqArray[freqIndex] || 0;
-          offset += (freqVal / 255) * 1.25;
+          offset += (freqVal / 255) * (state === 'listening' ? 2.4 : 1.5);
         }
 
         if (timeArray && timeArray.length > 0) {
           const timeIndex = Math.floor((i / waveSegments) * timeArray.length);
           const timeVal = (timeArray[timeIndex] - 128) / 128;
-          offset += timeVal * 0.5;
+          offset += timeVal * (state === 'listening' ? 1.1 : 0.6);
         }
 
-        const r = baseWaveRadius + offset * (state === 'idle' ? 0.1 : 1.0);
+        const r = baseWaveRadius + offset * (state === 'idle' ? 0.08 : 1.0);
         wavePosArray[i * 3] = Math.cos(theta) * r;
         wavePosArray[i * 3 + 1] = Math.sin(theta) * r;
-        wavePosArray[i * 3 + 2] = Math.sin(theta * 3 + time * 1.5) * (volume * 0.3);
+        wavePosArray[i * 3 + 2] = Math.sin(theta * 3 + time * 2) * (volume * 0.45);
       }
       wavePosAttr.needsUpdate = true;
       waveMat.color.lerp(targetMid, 0.08);

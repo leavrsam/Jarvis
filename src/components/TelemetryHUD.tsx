@@ -32,6 +32,7 @@ interface TelemetryHUDProps {
   onTestVoice?: () => void;
   onLockConsole?: () => void;
   onToggleWakeWordMode?: () => void;
+  onSelectVoice?: (voice: SpeechSynthesisVoice) => void;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
@@ -46,9 +47,22 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   onTestVoice,
   onLockConsole,
   onToggleWakeWordMode,
+  onSelectVoice,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [coreFreq, setCoreFreq] = useState<number>(4.82);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const update = () => {
+        setVoices(window.speechSynthesis.getVoices());
+      };
+      update();
+      window.speechSynthesis.onvoiceschanged = update;
+    }
+  }, []);
 
   useEffect(() => {
     const updateClock = () => {
@@ -193,6 +207,16 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             <Volume2 className="w-3 h-3" />
             <span>VOICE TEST</span>
           </button>
+          <button
+            onClick={() => setShowVoiceModal(true)}
+            className="hidden md:flex items-center space-x-1 px-2.5 py-1 rounded border border-cyan-800/60 bg-black/60 hover:bg-cyan-950/60 text-[10px] font-orbitron text-cyan-400 transition-all hover:border-cyan-500"
+            title="Select British / Natural Jarvis voice"
+          >
+            <span>VOICE:</span>
+            <span className="text-cyan-200 truncate max-w-[80px]">
+              {voiceName.replace(/Microsoft |Google |\(English \(United Kingdom\)\)|\(Natural\)/gi, '').trim() || 'Jarvis'}
+            </span>
+          </button>
           {onLockConsole && (
             <button
               onClick={onLockConsole}
@@ -232,11 +256,15 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             <span className="tracking-wider">HEURISTIC TELEMETRY</span>
           </div>
           <div className="space-y-1.5 text-[10px] font-mono-tech text-cyan-400/80">
-            <div className="flex justify-between border-b border-cyan-950 pb-1">
+            <div className="flex justify-between border-b border-cyan-950 pb-1 items-center">
               <span className="text-cyan-600">TTS MODEL</span>
-              <span className="text-cyan-300 truncate max-w-[130px]" title={voiceName}>
+              <button
+                onClick={() => setShowVoiceModal(true)}
+                className="text-cyan-300 hover:text-cyan-100 hover:underline truncate max-w-[130px] text-right font-mono-tech"
+                title="Click to change Jarvis Voice"
+              >
                 {voiceName}
-              </span>
+              </button>
             </div>
             <div className="flex justify-between border-b border-cyan-950 pb-1">
               <span className="text-cyan-600">BACKEND WEBHOOK</span>
@@ -335,6 +363,91 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           <span>ENCRYPTED NEURAL PIPELINE // AUTHORIZATION LEVEL 5</span>
         </div>
       </aside>
+
+      {/* VOICE SELECTION MODAL */}
+      {showVoiceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+          <div className="relative w-full max-w-lg p-6 rounded-2xl border border-cyan-500/60 bg-black/95 shadow-[0_0_50px_rgba(0,240,255,0.25)] space-y-4">
+            <div className="flex items-center justify-between border-b border-cyan-900/80 pb-3">
+              <div className="flex items-center space-x-2">
+                <Volume2 className="w-5 h-5 text-cyan-400" />
+                <h2 className="font-orbitron font-bold text-sm tracking-widest text-cyan-300">
+                  J.A.R.V.I.S. VOCAL SYNTHESIZER
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowVoiceModal(false)}
+                className="text-cyan-500 hover:text-cyan-300 text-xs font-mono-tech px-2 py-1 rounded border border-cyan-900 hover:border-cyan-500"
+              >
+                [ESC / CLOSE]
+              </button>
+            </div>
+
+            <p className="text-xs font-mono-tech text-cyan-400/80">
+              Select your preferred voice model. British voices provide the authentic Paul Bettany J.A.R.V.I.S. experience:
+            </p>
+
+            <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
+              {voices
+                .filter(v => v.lang.startsWith('en'))
+                .sort((a, b) => {
+                  const aGb = a.lang.startsWith('en-GB') || a.lang.startsWith('en_GB');
+                  const bGb = b.lang.startsWith('en-GB') || b.lang.startsWith('en_GB');
+                  if (aGb && !bGb) return -1;
+                  if (!aGb && bGb) return 1;
+                  return a.name.localeCompare(b.name);
+                })
+                .map((v) => {
+                  const isCurrent = v.name === voiceName;
+                  const isBritish = v.lang.startsWith('en-GB') || v.lang.startsWith('en_GB');
+                  return (
+                    <div
+                      key={v.name}
+                      onClick={() => {
+                        onSelectVoice?.(v);
+                      }}
+                      className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${
+                        isCurrent
+                          ? 'border-cyan-400 bg-cyan-950/60 text-white shadow-[0_0_12px_rgba(0,240,255,0.3)]'
+                          : 'border-cyan-950/70 bg-black/40 hover:border-cyan-700 hover:bg-cyan-950/30 text-cyan-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className={`w-2 h-2 rounded-full ${isCurrent ? 'bg-cyan-400 animate-ping' : 'bg-cyan-800'}`} />
+                        <div>
+                          <div className="text-xs font-mono-tech font-bold text-cyan-200">
+                            {v.name}
+                          </div>
+                          <div className="text-[10px] font-mono-tech text-cyan-500">
+                            {v.lang} {isBritish ? '• British Accent (Recommended)' : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-orbitron px-2 py-0.5 rounded border border-cyan-800 text-cyan-300">
+                        {isCurrent ? 'ACTIVE' : 'SELECT'}
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="pt-2 flex justify-end space-x-3">
+              <button
+                onClick={onTestVoice}
+                className="px-3 py-1.5 rounded border border-cyan-500/60 bg-cyan-950/50 hover:bg-cyan-900/60 text-xs font-orbitron text-cyan-300 transition-colors"
+              >
+                TEST CURRENT VOICE
+              </button>
+              <button
+                onClick={() => setShowVoiceModal(false)}
+                className="px-4 py-1.5 rounded bg-cyan-500 text-black hover:bg-cyan-400 text-xs font-orbitron font-bold transition-colors"
+              >
+                DONE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

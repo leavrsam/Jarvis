@@ -178,6 +178,41 @@ export const App: React.FC = () => {
     }
   }, [isAuthenticated, audioState, isListening, startListening, stopListening]);
 
+  // Global Hotkey Listener: Spacebar, Option+Space, Cmd+Shift+J
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      if (isInput) return;
+
+      // 1. Plain Spacebar push-to-talk / toggle
+      if (e.code === 'Space' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        handleToggleListening();
+        return;
+      }
+
+      // 2. Option + Space (Mac quick-action hotkey)
+      if (e.altKey && e.code === 'Space') {
+        e.preventDefault();
+        handleToggleListening();
+        return;
+      }
+
+      // 3. Cmd/Ctrl + Shift + J
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'KeyJ') {
+        e.preventDefault();
+        handleToggleListening();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAuthenticated, handleToggleListening]);
+
   // Sync audioState when SpeechRecognition terminates
   useEffect(() => {
     if (!isListening && audioState === 'listening') {
@@ -206,11 +241,21 @@ export const App: React.FC = () => {
   const handleVoiceTest = useCallback(() => {
     audioEngine.ensureContext();
     audioEngine.playSfx('activate');
-    const greeting = 'J.A.R.V.I.S. online. Arc-reactor and neural harmonics calibrated. Standing by for instructions.';
+    const greeting = 'Good evening, sir. All core systems are calibrated and standing by for instructions.';
     setLastResponse(greeting);
     setAudioState('speaking');
     audioEngine.speak(
       greeting,
+      () => setAudioState('speaking'),
+      () => setAudioState('idle')
+    );
+  }, []);
+
+  const handleSelectVoice = useCallback((voice: SpeechSynthesisVoice) => {
+    audioEngine.setVoice(voice);
+    audioEngine.playSfx('activate');
+    audioEngine.speak(
+      'At your service, sir.',
       () => setAudioState('speaking'),
       () => setAudioState('idle')
     );
@@ -262,6 +307,7 @@ export const App: React.FC = () => {
         onTestVoice={handleVoiceTest}
         onLockConsole={handleLockConsole}
         onToggleWakeWordMode={handleToggleWakeWordMode}
+        onSelectVoice={handleSelectVoice}
       />
 
       {/* Center Holographic Arc-Reactor Three.js Visualizer */}

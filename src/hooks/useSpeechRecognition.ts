@@ -308,41 +308,6 @@ export function useSpeechRecognition({
     }
   }, [isListening, startListening, stopListening]);
 
-  // Global Hotkey listeners:
-  // 1. Spacebar (when not focused on input)
-  // 2. Option + Space (Mac quick-action hotkey)
-  // 3. Command/Control + Shift + J
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
-
-      // Hotkey 1: Option + Space (works anywhere, even in some inputs)
-      if (e.altKey && e.code === 'Space') {
-        e.preventDefault();
-        toggleListening();
-        return;
-      }
-
-      // Hotkey 2: Command/Control + Shift + J
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'KeyJ') {
-        e.preventDefault();
-        toggleListening();
-        return;
-      }
-
-      // Hotkey 3: Plain Spacebar (only when not typing)
-      if (e.code === 'Space' && !e.repeat && !isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        toggleListening();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [toggleListening]);
-
   return {
     isListening,
     isStandby,

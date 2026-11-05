@@ -34,29 +34,11 @@ class JarvisAudioEngine {
   private initVoices() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const updateVoices = () => {
-        this.availableVoices = window.speechSynthesis.getVoices();
-        // Priority order:
-        // 1. en-GB-RyanNeural (Edge TTS British Ryan)
-        // 2. Microsoft Ryan Online (Natural) - English (United Kingdom)
-        // 3. Google UK English Male
-        // 4. Daniel (macOS British Male)
-        // 5. Oliver / George / British English
-        // 6. Any en-GB
-        // 7. en-US / default
-        const ryan = this.availableVoices.find(v => 
-          v.name.includes('RyanNeural') || 
-          (v.name.toLowerCase().includes('ryan') && v.lang.startsWith('en-GB'))
-        );
-        const ukMale = this.availableVoices.find(v => 
-          v.name.includes('Google UK English Male') ||
-          v.name.includes('Daniel') ||
-          v.name.includes('Oliver') ||
-          (v.lang.startsWith('en-GB') && v.name.toLowerCase().includes('male'))
-        );
-        const enGb = this.availableVoices.find(v => v.lang.startsWith('en-GB'));
-        const defaultVoice = this.availableVoices.find(v => v.default) || this.availableVoices[0];
-
-        this.selectedVoice = ryan || ukMale || enGb || defaultVoice || null;
+        const voices = window.speechSynthesis.getVoices();
+        if (voices && voices.length > 0) {
+          this.availableVoices = voices;
+          this.resolveBestVoice();
+        }
       };
 
       updateVoices();
@@ -64,16 +46,80 @@ class JarvisAudioEngine {
     }
   }
 
+  public resolveBestVoice(): SpeechSynthesisVoice | null {
+    if (!this.availableVoices || this.availableVoices.length === 0) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        this.availableVoices = window.speechSynthesis.getVoices();
+      }
+    }
+
+    // 1. Check user preference stored in localStorage
+    try {
+      const savedName = localStorage.getItem('jarvis_selected_voice');
+      if (savedName) {
+        const found = this.availableVoices.find(v => v.name === savedName);
+        if (found) {
+          this.selectedVoice = found;
+          return found;
+        }
+      }
+    } catch {}
+
+    // 2. Movie-accurate Jarvis (Paul Bettany) voice matching hierarchy:
+    // Priority A: Edge Natural British Ryan (en-GB-RyanNeural)
+    const ryan = this.availableVoices.find(v => 
+      v.name.includes('RyanNeural') || 
+      (v.name.toLowerCase().includes('ryan') && (v.lang.startsWith('en-GB') || v.lang.startsWith('en_GB')))
+    );
+
+    // Priority B: Google UK English Male (High-fidelity neural British voice in Chrome)
+    const googleUk = this.availableVoices.find(v => 
+      v.name.includes('Google UK English Male') ||
+      (v.name.toLowerCase().includes('uk english male') && v.name.includes('Google'))
+    );
+
+    // Priority C: Apple Daniel (Enhanced / Premium / Standard macOS British male)
+    const danielEnhanced = this.availableVoices.find(v => 
+      v.name.toLowerCase().includes('daniel') && 
+      (v.name.toLowerCase().includes('enhanced') || v.name.toLowerCase().includes('premium'))
+    );
+    const daniel = this.availableVoices.find(v => v.name.toLowerCase().includes('daniel'));
+
+    // Priority D: Apple Oliver, Arthur, George, Reed (British voices)
+    const britishMale = this.availableVoices.find(v => 
+      (v.lang.startsWith('en-GB') || v.lang.startsWith('en_GB')) &&
+      (v.name.includes('Oliver') || v.name.includes('Arthur') || v.name.includes('George') || v.name.toLowerCase().includes('male'))
+    );
+
+    // Priority E: Any British English voice
+    const anyEnGb = this.availableVoices.find(v => v.lang.startsWith('en-GB') || v.lang.startsWith('en_GB'));
+
+    // Priority F: Default fallback
+    const fallback = this.availableVoices.find(v => v.default) || this.availableVoices[0];
+
+    this.selectedVoice = ryan || googleUk || danielEnhanced || daniel || britishMale || anyEnGb || fallback || null;
+    return this.selectedVoice;
+  }
+
   public getVoiceName(): string {
-    return this.selectedVoice?.name || 'en-GB-RyanNeural (System Emulated)';
+    if (!this.selectedVoice) {
+      this.resolveBestVoice();
+    }
+    return this.selectedVoice?.name || 'Jarvis British Neural';
   }
 
   public getAvailableVoices(): SpeechSynthesisVoice[] {
+    if (this.availableVoices.length === 0 && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      this.availableVoices = window.speechSynthesis.getVoices();
+    }
     return this.availableVoices;
   }
 
   public setVoice(voice: SpeechSynthesisVoice) {
     this.selectedVoice = voice;
+    try {
+      localStorage.setItem('jarvis_selected_voice', voice.name);
+    } catch {}
   }
 
   public ensureContext(): AudioContext {
@@ -205,14 +251,8 @@ class JarvisAudioEngine {
       osc.connect(filter);
       osc2.connect(filter);
       filter.connect(gain);
-      // Connect to analyser for reactivity!
+      // Connect to analyser for reactivity! (DO NOT route to destination to keep voice natural without robotic buzz)
       gain.connect(this.analyser);
-
-      // Low level audible sci-fi vocoder undertone (subtle 0.015 volume)
-      const subGain = this.ctx.createGain();
-      subGain.gain.setValueAtTime(0.012, this.ctx.currentTime);
-      gain.connect(subGain);
-      subGain.connect(this.ctx.destination);
 
       osc.start();
       osc2.start();
@@ -262,7 +302,17 @@ class JarvisAudioEngine {
     }
   }
 
-  // Text-To-Speech with en-GB-RyanNeural preference & visualizer reactivity
+  // Clean text for natural speech pronunciation (strip markdown, brackets, URLs)
+  private cleanSpeechText(raw: string): string {
+    return raw
+      .replace(/https?:\/\/\S+/gi, '') // remove urls
+      .replace(/[*_#`~[\]]/g, '') // remove markdown characters
+      .replace(/n8n/gi, 'n-eight-n')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // Text-To-Speech with human-like British Jarvis prosody & visualizer reactivity
   public speak(
     text: string, 
     onStart?: () => void, 
@@ -280,12 +330,24 @@ class JarvisAudioEngine {
       window.speechSynthesis.cancel();
       this.stopTtsVisualizerModulation();
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      if (this.selectedVoice) {
-        utterance.voice = this.selectedVoice;
+      const spokenText = this.cleanSpeechText(text);
+      if (!spokenText) {
+        onEnd?.();
+        resolve();
+        return;
       }
-      utterance.rate = 1.05; // crisp British tempo
-      utterance.pitch = 0.95; // authoritative lower British cadence
+
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+      const voice = this.resolveBestVoice();
+      if (voice) {
+        utterance.voice = voice;
+      }
+
+      // Paul Bettany / J.A.R.V.I.S. prosody:
+      // Slightly lower resonant baritone pitch (0.91) with measured, articulate British pacing (0.97)
+      utterance.rate = 0.97;
+      utterance.pitch = 0.91;
+      utterance.volume = 1.0;
 
       utterance.onstart = () => {
         this.currentState = 'speaking';
