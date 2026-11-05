@@ -86,7 +86,7 @@ export function useSpeechRecognition({
     clearSilenceTimer();
     const query = activeTranscriptRef.current.trim();
     if (query && query.length > 1) {
-      setTranscript(query);
+      setTranscript('');
       setInterimTranscript('');
       activeTranscriptRef.current = '';
       setIsListening(false);

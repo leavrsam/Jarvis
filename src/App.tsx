@@ -41,6 +41,7 @@ export const App: React.FC = () => {
   );
 
   const [audioState, setAudioState] = useState<JarvisAudioState>('idle');
+  const [lastQuery, setLastQuery] = useState<string>('');
   const [lastResponse, setLastResponse] = useState<string>('All systems operational. Standing by for command.');
   const [isProcessing, setIsProcessing] = useState(false);
   const [history, setHistory] = useState<{ query: string; response: string; timestamp: Date }[]>([]);
@@ -81,6 +82,9 @@ export const App: React.FC = () => {
   const handleCommandSubmit = useCallback(async (query: string) => {
     if (!query || query.trim().length === 0) return;
     
+    // Record user prompt for HUD attribution
+    setLastQuery(query.trim());
+
     // Stop mic listening while processing and speaking
     audioEngine.stopMicListening();
     audioEngine.setState('processing');
@@ -324,11 +328,21 @@ export const App: React.FC = () => {
         isListening={isListening}
         transcript={transcript}
         interimTranscript={interimTranscript}
+        lastQuery={lastQuery}
         lastResponse={lastResponse}
         isProcessing={isProcessing}
+        history={history}
         onToggleListening={handleToggleListening}
         onSubmitText={handleCommandSubmit}
         onStopSpeaking={handleStopSpeaking}
+        onReplayResponse={(text) => {
+          audioEngine.speak(
+            text,
+            () => setAudioState('speaking'),
+            () => setAudioState('idle')
+          );
+        }}
+        onClearHistory={() => setHistory([])}
       />
     </main>
   );
