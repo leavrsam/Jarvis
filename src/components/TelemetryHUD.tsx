@@ -8,7 +8,8 @@ import {
   Volume2, 
   Activity,
   Layers,
-  Sparkles
+  Sparkles,
+  Lock
 } from 'lucide-react';
 import { JarvisAudioState } from '../services/audioEngine';
 import { AudioSpectrumMeter } from './AudioSpectrumMeter';
@@ -20,6 +21,7 @@ interface TelemetryHUDProps {
   historyLength: number;
   onClearHistory?: () => void;
   onTestVoice?: () => void;
+  onLockConsole?: () => void;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
@@ -29,6 +31,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   historyLength,
   onClearHistory,
   onTestVoice,
+  onLockConsole,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [coreFreq, setCoreFreq] = useState<number>(4.82);
@@ -132,6 +135,16 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             <Volume2 className="w-3 h-3" />
             <span>VOICE TEST</span>
           </button>
+          {onLockConsole && (
+            <button
+              onClick={onLockConsole}
+              className="flex items-center space-x-1 px-2.5 py-1 rounded border border-red-500/30 bg-red-950/20 hover:bg-red-900/40 text-[10px] font-orbitron text-red-300 hover:border-red-400 transition-all"
+              title="Lock console and clear session cache"
+            >
+              <Lock className="w-3 h-3 text-red-400" />
+              <span>LOCK</span>
+            </button>
+          )}
         </div>
       </header>
 

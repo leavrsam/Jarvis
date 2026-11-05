@@ -2,11 +2,26 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD } from './components/TelemetryHUD';
 import { SubtitlesOverlay } from './components/SubtitlesOverlay';
+import { SecurityGate } from './components/SecurityGate';
 import { audioEngine, JarvisAudioState } from './services/audioEngine';
 import { sendJarvisCommand } from './services/jarvisBackend';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 
+// Passcode configured via VITE_JARVIS_SECRET (Vercel env var) or default secret
+const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)?.trim() || 'wolfcub';
+
 export const App: React.FC = () => {
+  // Authentication state with localStorage caching
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('jarvis_auth_token');
+      if (!cached) return false;
+      return cached.trim().toLowerCase() === ACCESS_SECRET.toLowerCase();
+    } catch {
+      return false;
+    }
+  });
+
   const [audioState, setAudioState] = useState<JarvisAudioState>('idle');
   const [lastResponse, setLastResponse] = useState<string>('All systems operational. Standing by for command.');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -70,11 +85,12 @@ export const App: React.FC = () => {
   } = useSpeechRecognition({
     onFinalSubmit: handleCommandSubmit,
     silenceTimeoutMs: 1800,
-    isJarvisSpeaking: audioState === 'speaking' || isProcessing,
+    isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
   });
 
   // Wrap toggle to also initialize Web Audio Context & Mic
   const handleToggleListening = useCallback(async () => {
+    if (!isAuthenticated) return;
     audioEngine.ensureContext();
     if (audioState === 'speaking') {
       audioEngine.stopSpeaking();
@@ -90,7 +106,7 @@ export const App: React.FC = () => {
       startListening();
       setAudioState('listening');
     }
-  }, [audioState, isListening, startListening, stopListening]);
+  }, [isAuthenticated, audioState, isListening, startListening, stopListening]);
 
   // Sync audioState when SpeechRecognition terminates
   useEffect(() => {
@@ -119,6 +135,28 @@ export const App: React.FC = () => {
     setAudioState('idle');
   }, []);
 
+  // Lock Console action
+  const handleLockConsole = useCallback(() => {
+    try {
+      localStorage.removeItem('jarvis_auth_token');
+    } catch {}
+    stopListening();
+    audioEngine.stopMicListening();
+    audioEngine.stopSpeaking();
+    setAudioState('idle');
+    setIsAuthenticated(false);
+  }, [stopListening]);
+
+  // Render Password Security Gate if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <SecurityGate
+        onUnlock={() => setIsAuthenticated(true)}
+        expectedSecret={ACCESS_SECRET}
+      />
+    );
+  }
+
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#02040a] hud-grid">
       {/* Cinematic CRT Scanlines and Radial Vignette */}
@@ -133,6 +171,7 @@ export const App: React.FC = () => {
         historyLength={history.length}
         onClearHistory={() => setHistory([])}
         onTestVoice={handleVoiceTest}
+        onLockConsole={handleLockConsole}
       />
 
       {/* Center Holographic Arc-Reactor Three.js Visualizer */}
