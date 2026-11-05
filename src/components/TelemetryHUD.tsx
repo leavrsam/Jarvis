@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  ShieldAlert, 
-  Cpu, 
-  Radio, 
-  Wifi, 
-  Terminal, 
-  Volume2, 
+import {
+  ShieldAlert,
+  Cpu,
+  Radio,
+  Wifi,
+  Terminal,
+  Volume2,
   Activity,
   Layers,
   Sparkles,
   Lock,
   BatteryCharging,
   Battery,
-  Ear
+  Ear,
 } from 'lucide-react';
-import { JarvisAudioState } from '../services/audioEngine';
+import {
+  JarvisAudioState,
+  JARVIS_NEURAL_VOICES,
+  JarvisNeuralVoicePreset,
+} from '../services/audioEngine';
 import { AudioSpectrumMeter } from './AudioSpectrumMeter';
 import { BatteryStatus } from '../hooks/useBatteryStatus';
 
@@ -27,12 +31,13 @@ interface TelemetryHUDProps {
   wakeWordMode: WakeWordMode;
   battery: BatteryStatus;
   voiceName: string;
+  activeVoicePresetId: string;
   historyLength: number;
   onClearHistory?: () => void;
   onTestVoice?: () => void;
   onLockConsole?: () => void;
   onToggleWakeWordMode?: () => void;
-  onSelectVoice?: (voice: SpeechSynthesisVoice) => void;
+  onSelectVoicePreset?: (preset: JarvisNeuralVoicePreset) => void;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
@@ -42,32 +47,23 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   wakeWordMode,
   battery,
   voiceName,
+  activeVoicePresetId,
   historyLength,
   onClearHistory,
   onTestVoice,
   onLockConsole,
   onToggleWakeWordMode,
-  onSelectVoice,
+  onSelectVoicePreset,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [coreFreq, setCoreFreq] = useState<number>(4.82);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const update = () => {
-        setVoices(window.speechSynthesis.getVoices());
-      };
-      update();
-      window.speechSynthesis.onvoiceschanged = update;
-    }
-  }, []);
 
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
-      const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+      const timeStr =
+        now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
       setCurrentTime(timeStr);
       setCoreFreq(4.8 + Math.sin(Date.now() / 2000) * 0.15);
     };
@@ -130,7 +126,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                   J.A.R.V.I.S.
                 </span>
                 <span className="text-[10px] font-mono-tech px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800 text-cyan-400">
-                  SYSTEM OS v4.2
+                  SYSTEM OS v4.5
                 </span>
               </div>
               <p className="text-[9px] font-mono-tech text-cyan-500/70 tracking-wider">
@@ -142,7 +138,9 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
 
         {/* Center: System Status & Wake Word Pill */}
         <div className="hidden md:flex items-center space-x-3">
-          <div className={`flex items-center space-x-2 px-3.5 py-1 rounded-full border text-xs font-orbitron tracking-widest ${badge.bg} transition-colors duration-300`}>
+          <div
+            className={`flex items-center space-x-2 px-3.5 py-1 rounded-full border text-xs font-orbitron tracking-widest ${badge.bg} transition-colors duration-300`}
+          >
             <span className={`w-2 h-2 rounded-full ${badge.dot}`} />
             <span>{badge.text}</span>
           </div>
@@ -179,7 +177,8 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               <Battery className="w-3.5 h-3.5 text-cyan-400" />
             )}
             <span>
-              {battery.charging ? '⚡' : ''} {Math.round(battery.level * 100)}% {battery.charging ? 'CHARGING' : 'BATTERY'}
+              {battery.charging ? '⚡' : ''} {Math.round(battery.level * 100)}%{' '}
+              {battery.charging ? 'CHARGING' : 'BATTERY'}
             </span>
           </div>
 
@@ -209,13 +208,11 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           </button>
           <button
             onClick={() => setShowVoiceModal(true)}
-            className="hidden md:flex items-center space-x-1 px-2.5 py-1 rounded border border-cyan-800/60 bg-black/60 hover:bg-cyan-950/60 text-[10px] font-orbitron text-cyan-400 transition-all hover:border-cyan-500"
-            title="Select British / Natural Jarvis voice"
+            className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded border border-cyan-800/60 bg-black/60 hover:bg-cyan-950/60 text-[10px] font-orbitron text-cyan-400 transition-all hover:border-cyan-500"
+            title="Configure Neural Voice Model"
           >
             <span>VOICE:</span>
-            <span className="text-cyan-200 truncate max-w-[80px]">
-              {voiceName.replace(/Microsoft |Google |\(English \(United Kingdom\)\)|\(Natural\)/gi, '').trim() || 'Jarvis'}
-            </span>
+            <span className="text-cyan-200 truncate max-w-[110px]">{voiceName}</span>
           </button>
           {onLockConsole && (
             <button
@@ -257,11 +254,11 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           </div>
           <div className="space-y-1.5 text-[10px] font-mono-tech text-cyan-400/80">
             <div className="flex justify-between border-b border-cyan-950 pb-1 items-center">
-              <span className="text-cyan-600">TTS MODEL</span>
+              <span className="text-cyan-600">NEURAL TTS</span>
               <button
                 onClick={() => setShowVoiceModal(true)}
-                className="text-cyan-300 hover:text-cyan-100 hover:underline truncate max-w-[130px] text-right font-mono-tech"
-                title="Click to change Jarvis Voice"
+                className="text-cyan-300 hover:text-cyan-100 hover:underline truncate max-w-[135px] text-right font-mono-tech"
+                title="Click to configure Neural Voice"
               >
                 {voiceName}
               </button>
@@ -271,8 +268,8 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               <span className="text-emerald-400">ONLINE</span>
             </div>
             <div className="flex justify-between border-b border-cyan-950 pb-1">
-              <span className="text-cyan-600">BUFFER EFFICIENCY</span>
-              <span className="text-cyan-300">99.98%</span>
+              <span className="text-cyan-600">AUDIO STREAM</span>
+              <span className="text-cyan-300">24kHz NEURAL</span>
             </div>
             <div className="flex justify-between">
               <span className="text-cyan-600">INPUT PROTOCOL</span>
@@ -288,11 +285,21 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             <span>OPERATIONAL HOTKEYS</span>
           </div>
           <div className="text-[9px] font-mono-tech text-cyan-500/70 space-y-1">
-            <p><strong className="text-cyan-300">["HEY JARVIS"]</strong> Voice Wake Trigger</p>
-            <p><strong className="text-cyan-300">[OPTION + SPACE]</strong> Quick Talk Hotkey</p>
-            <p><strong className="text-cyan-300">[CMD+SHIFT+J]</strong> Global Voice Toggle</p>
-            <p><strong className="text-cyan-300">[SPACEBAR]</strong> Push-To-Talk Toggle</p>
-            <p><strong className="text-cyan-300">[CLICK CORE]</strong> Engage / Disengage</p>
+            <p>
+              <strong className="text-cyan-300">["HEY JARVIS"]</strong> Voice Wake Trigger
+            </p>
+            <p>
+              <strong className="text-cyan-300">[OPTION + SPACE]</strong> Quick Talk Hotkey
+            </p>
+            <p>
+              <strong className="text-cyan-300">[CMD+SHIFT+J]</strong> Global Voice Toggle
+            </p>
+            <p>
+              <strong className="text-cyan-300">[SPACEBAR]</strong> Push-To-Talk Toggle
+            </p>
+            <p>
+              <strong className="text-cyan-300">[CLICK CORE]</strong> Engage / Disengage
+            </p>
           </div>
         </div>
       </aside>
@@ -311,9 +318,17 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           <div className="space-y-1.5">
             {[
               { label: 'ARC-REACTOR OUTPUT', value: '100%', color: 'bg-cyan-500' },
-              { label: 'AUDIO ANALYSER FFT', value: 'NOMINAL', color: 'bg-emerald-500' },
-              { label: 'STT STREAM CAPTURE', value: isListening ? 'ACTIVE' : 'IDLE', color: isListening ? 'bg-cyan-400' : 'bg-blue-600' },
-              { label: 'SPEECH SYNTHESIS', value: state === 'speaking' ? 'VOCALIZING' : 'ARMED', color: state === 'speaking' ? 'bg-emerald-400' : 'bg-cyan-600' },
+              { label: 'NEURAL AUDIO DSP', value: '24kHz', color: 'bg-emerald-500' },
+              {
+                label: 'STT STREAM CAPTURE',
+                value: isListening ? 'ACTIVE' : 'IDLE',
+                color: isListening ? 'bg-cyan-400' : 'bg-blue-600',
+              },
+              {
+                label: 'SPEECH SYNTHESIS',
+                value: state === 'speaking' ? 'VOCALIZING' : 'ARMED',
+                color: state === 'speaking' ? 'bg-emerald-400' : 'bg-cyan-600',
+              },
             ].map((item, idx) => (
               <div key={idx} className="text-[10px] font-mono-tech">
                 <div className="flex justify-between text-cyan-400/90 mb-0.5">
@@ -321,7 +336,10 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                   <span className="text-cyan-200">{item.value}</span>
                 </div>
                 <div className="w-full bg-cyan-950/80 rounded-full h-1 overflow-hidden">
-                  <div className={`h-full ${item.color} rounded-full transition-all duration-300`} style={{ width: '90%' }} />
+                  <div
+                    className={`h-full ${item.color} rounded-full transition-all duration-300`}
+                    style={{ width: '90%' }}
+                  />
                 </div>
               </div>
             ))}
@@ -364,15 +382,15 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
         </div>
       </aside>
 
-      {/* VOICE SELECTION MODAL */}
+      {/* NEURAL VOICE SELECTION MODAL */}
       {showVoiceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <div className="relative w-full max-w-lg p-6 rounded-2xl border border-cyan-500/60 bg-black/95 shadow-[0_0_50px_rgba(0,240,255,0.25)] space-y-4">
+          <div className="relative w-full max-w-xl p-6 rounded-2xl border border-cyan-500/60 bg-black/95 shadow-[0_0_50px_rgba(0,240,255,0.25)] space-y-4">
             <div className="flex items-center justify-between border-b border-cyan-900/80 pb-3">
               <div className="flex items-center space-x-2">
                 <Volume2 className="w-5 h-5 text-cyan-400" />
                 <h2 className="font-orbitron font-bold text-sm tracking-widest text-cyan-300">
-                  J.A.R.V.I.S. VOCAL SYNTHESIZER
+                  J.A.R.V.I.S. NEURAL VOCAL SYNTHESIZER (24kHz)
                 </h2>
               </div>
               <button
@@ -383,60 +401,64 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               </button>
             </div>
 
-            <p className="text-xs font-mono-tech text-cyan-400/80">
-              Select your preferred voice model. British voices provide the authentic Paul Bettany J.A.R.V.I.S. experience:
+            <p className="text-xs font-mono-tech text-cyan-400/80 leading-relaxed">
+              Powered by studio 24kHz Neural TTS & custom Stark HUD acoustic mastering. Select a vocal profile to preview immediately:
             </p>
 
-            <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
-              {voices
-                .filter(v => v.lang.startsWith('en'))
-                .sort((a, b) => {
-                  const aGb = a.lang.startsWith('en-GB') || a.lang.startsWith('en_GB');
-                  const bGb = b.lang.startsWith('en-GB') || b.lang.startsWith('en_GB');
-                  if (aGb && !bGb) return -1;
-                  if (!aGb && bGb) return 1;
-                  return a.name.localeCompare(b.name);
-                })
-                .map((v) => {
-                  const isCurrent = v.name === voiceName;
-                  const isBritish = v.lang.startsWith('en-GB') || v.lang.startsWith('en_GB');
-                  return (
-                    <div
-                      key={v.name}
-                      onClick={() => {
-                        onSelectVoice?.(v);
-                      }}
-                      className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${
-                        isCurrent
-                          ? 'border-cyan-400 bg-cyan-950/60 text-white shadow-[0_0_12px_rgba(0,240,255,0.3)]'
-                          : 'border-cyan-950/70 bg-black/40 hover:border-cyan-700 hover:bg-cyan-950/30 text-cyan-300'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <span className={`w-2 h-2 rounded-full ${isCurrent ? 'bg-cyan-400 animate-ping' : 'bg-cyan-800'}`} />
-                        <div>
-                          <div className="text-xs font-mono-tech font-bold text-cyan-200">
-                            {v.name}
-                          </div>
-                          <div className="text-[10px] font-mono-tech text-cyan-500">
-                            {v.lang} {isBritish ? '• British Accent (Recommended)' : ''}
-                          </div>
+            <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+              {JARVIS_NEURAL_VOICES.map((preset) => {
+                const isCurrent = preset.id === activeVoicePresetId;
+                return (
+                  <div
+                    key={preset.id}
+                    onClick={() => {
+                      onSelectVoicePreset?.(preset);
+                    }}
+                    className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                      isCurrent
+                        ? 'border-cyan-400 bg-cyan-950/60 text-white shadow-[0_0_16px_rgba(0,240,255,0.28)]'
+                        : 'border-cyan-950/80 bg-black/50 hover:border-cyan-700 hover:bg-cyan-950/30 text-cyan-300'
+                    }`}
+                  >
+                    <div className="flex items-start space-x-3 pr-3">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${
+                          isCurrent ? 'bg-cyan-400 animate-ping' : 'bg-cyan-800'
+                        }`}
+                      />
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-orbitron font-bold text-cyan-200">
+                          {preset.name}
+                        </div>
+                        <div className="text-[10px] font-mono-tech text-cyan-400">
+                          {preset.accent} • Rate {preset.rate} • Pitch {preset.pitch}{' '}
+                          {preset.hudDsp ? '• Stark HUD Mastering' : '• Direct Studio'}
+                        </div>
+                        <div className="text-[11px] font-sans text-cyan-500/90">
+                          {preset.description}
                         </div>
                       </div>
-                      <span className="text-[10px] font-orbitron px-2 py-0.5 rounded border border-cyan-800 text-cyan-300">
-                        {isCurrent ? 'ACTIVE' : 'SELECT'}
-                      </span>
                     </div>
-                  );
-                })}
+                    <span
+                      className={`text-[10px] font-orbitron px-2.5 py-1 rounded border shrink-0 ${
+                        isCurrent
+                          ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200'
+                          : 'border-cyan-800 text-cyan-400'
+                      }`}
+                    >
+                      {isCurrent ? 'ACTIVE' : 'ENGAGE'}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="pt-2 flex justify-end space-x-3">
               <button
                 onClick={onTestVoice}
-                className="px-3 py-1.5 rounded border border-cyan-500/60 bg-cyan-950/50 hover:bg-cyan-900/60 text-xs font-orbitron text-cyan-300 transition-colors"
+                className="px-3.5 py-1.5 rounded border border-cyan-500/60 bg-cyan-950/50 hover:bg-cyan-900/60 text-xs font-orbitron text-cyan-300 transition-colors"
               >
-                TEST CURRENT VOICE
+                TEST VOICE SAMPLE
               </button>
               <button
                 onClick={() => setShowVoiceModal(false)}

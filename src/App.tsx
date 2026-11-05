@@ -3,7 +3,7 @@ import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD, WakeWordMode } from './components/TelemetryHUD';
 import { SubtitlesOverlay } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
-import { audioEngine, JarvisAudioState } from './services/audioEngine';
+import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { sendJarvisCommand } from './services/jarvisBackend';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useBatteryStatus } from './hooks/useBatteryStatus';
@@ -41,6 +41,7 @@ export const App: React.FC = () => {
   );
 
   const [audioState, setAudioState] = useState<JarvisAudioState>('idle');
+  const [voicePreset, setVoicePreset] = useState<JarvisNeuralVoicePreset>(() => audioEngine.getVoicePreset());
   const [lastQuery, setLastQuery] = useState<string>('');
   const [lastResponse, setLastResponse] = useState<string>('All systems operational. Standing by for command.');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -255,11 +256,14 @@ export const App: React.FC = () => {
     );
   }, []);
 
-  const handleSelectVoice = useCallback((voice: SpeechSynthesisVoice) => {
-    audioEngine.setVoice(voice);
+  const handleSelectVoicePreset = useCallback((preset: JarvisNeuralVoicePreset) => {
+    const updated = audioEngine.setVoicePreset(preset.id);
+    setVoicePreset(updated);
     audioEngine.playSfx('activate');
+    const sample = 'At your service, sir. Vocal parameters recalibrated.';
+    setLastResponse(sample);
     audioEngine.speak(
-      'At your service, sir.',
+      sample,
       () => setAudioState('speaking'),
       () => setAudioState('idle')
     );
@@ -305,13 +309,14 @@ export const App: React.FC = () => {
         isWakeWordActive={isWakeWordActive}
         wakeWordMode={wakeWordMode}
         battery={battery}
-        voiceName={audioEngine.getVoiceName()}
+        voiceName={voicePreset.shortLabel}
+        activeVoicePresetId={voicePreset.id}
         historyLength={history.length}
         onClearHistory={() => setHistory([])}
         onTestVoice={handleVoiceTest}
         onLockConsole={handleLockConsole}
         onToggleWakeWordMode={handleToggleWakeWordMode}
-        onSelectVoice={handleSelectVoice}
+        onSelectVoicePreset={handleSelectVoicePreset}
       />
 
       {/* Center Holographic Arc-Reactor Three.js Visualizer */}
