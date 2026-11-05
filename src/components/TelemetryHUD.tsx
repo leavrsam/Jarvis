@@ -9,29 +9,43 @@ import {
   Activity,
   Layers,
   Sparkles,
-  Lock
+  Lock,
+  BatteryCharging,
+  Battery,
+  Ear
 } from 'lucide-react';
 import { JarvisAudioState } from '../services/audioEngine';
 import { AudioSpectrumMeter } from './AudioSpectrumMeter';
+import { BatteryStatus } from '../hooks/useBatteryStatus';
+
+export type WakeWordMode = 'charging_only' | 'always' | 'off';
 
 interface TelemetryHUDProps {
   state: JarvisAudioState;
   isListening: boolean;
+  isWakeWordActive: boolean;
+  wakeWordMode: WakeWordMode;
+  battery: BatteryStatus;
   voiceName: string;
   historyLength: number;
   onClearHistory?: () => void;
   onTestVoice?: () => void;
   onLockConsole?: () => void;
+  onToggleWakeWordMode?: () => void;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   state,
   isListening,
+  isWakeWordActive,
+  wakeWordMode,
+  battery,
   voiceName,
   historyLength,
   onClearHistory,
   onTestVoice,
   onLockConsole,
+  onToggleWakeWordMode,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [coreFreq, setCoreFreq] = useState<number>(4.82);
@@ -69,6 +83,13 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           dot: 'bg-emerald-400 animate-pulse',
         };
       default:
+        if (isWakeWordActive) {
+          return {
+            text: 'WAKE-WORD ACTIVE: "HEY JARVIS"',
+            bg: 'bg-emerald-950/40 text-emerald-300 border-emerald-700/60 shadow-[0_0_10px_rgba(16,185,129,0.2)]',
+            dot: 'bg-emerald-400 animate-pulse',
+          };
+        }
         return {
           text: 'JARVIS MK-VII STANDBY',
           bg: 'bg-blue-950/40 text-cyan-400 border-cyan-800',
@@ -105,15 +126,52 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           </div>
         </div>
 
-        {/* Center: System Status Pill */}
+        {/* Center: System Status & Wake Word Pill */}
         <div className="hidden md:flex items-center space-x-3">
           <div className={`flex items-center space-x-2 px-3.5 py-1 rounded-full border text-xs font-orbitron tracking-widest ${badge.bg} transition-colors duration-300`}>
             <span className={`w-2 h-2 rounded-full ${badge.dot}`} />
             <span>{badge.text}</span>
           </div>
-          <div className="flex items-center space-x-2 text-[10px] font-mono-tech text-cyan-400/80 bg-black/60 px-2.5 py-1 rounded border border-cyan-950">
+
+          {/* Wake Word Power Mode Button */}
+          {onToggleWakeWordMode && (
+            <button
+              onClick={onToggleWakeWordMode}
+              className={`flex items-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-all ${
+                isWakeWordActive
+                  ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50'
+                  : 'border-cyan-900/50 bg-black/60 text-cyan-500 hover:text-cyan-300'
+              }`}
+              title="Click to toggle Wake-Word listening mode"
+            >
+              <Ear className="w-3 h-3 text-cyan-300" />
+              <span>
+                {wakeWordMode === 'charging_only'
+                  ? battery.charging
+                    ? 'WAKE: ON POWER (ACTIVE)'
+                    : 'WAKE: ON POWER (PAUSED ON BATTERY)'
+                  : wakeWordMode === 'always'
+                  ? 'WAKE: ALWAYS ON'
+                  : 'WAKE: DISABLED'}
+              </span>
+            </button>
+          )}
+
+          {/* Battery Status */}
+          <div className="flex items-center space-x-1.5 text-[10px] font-mono-tech text-cyan-400/80 bg-black/60 px-2.5 py-1 rounded border border-cyan-950">
+            {battery.charging ? (
+              <BatteryCharging className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            ) : (
+              <Battery className="w-3.5 h-3.5 text-cyan-400" />
+            )}
+            <span>
+              {battery.charging ? '⚡' : ''} {Math.round(battery.level * 100)}% {battery.charging ? 'CHARGING' : 'BATTERY'}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-1.5 text-[10px] font-mono-tech text-cyan-400/80 bg-black/60 px-2 py-1 rounded border border-cyan-950">
             <Wifi className="w-3 h-3 text-emerald-400" />
-            <span>n8n LINK READY</span>
+            <span>n8n LINK</span>
           </div>
         </div>
 
@@ -199,12 +257,14 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
         <div className="p-3 rounded-lg border border-cyan-900/40 bg-black/40 backdrop-blur-sm pointer-events-auto">
           <div className="text-[10px] font-orbitron text-cyan-400/90 mb-1.5 flex items-center space-x-1">
             <Terminal className="w-3 h-3 text-cyan-400" />
-            <span>OPERATIONAL KEYS</span>
+            <span>OPERATIONAL HOTKEYS</span>
           </div>
           <div className="text-[9px] font-mono-tech text-cyan-500/70 space-y-1">
-            <p><strong className="text-cyan-300">[SPACEBAR]</strong> Toggle Push-To-Talk</p>
-            <p><strong className="text-cyan-300">[CLICK CORE]</strong> Engage / Disengage Mic</p>
-            <p><strong className="text-cyan-300">[AUTO-SILENCE]</strong> Auto Dispatches To Core</p>
+            <p><strong className="text-cyan-300">["HEY JARVIS"]</strong> Voice Wake Trigger</p>
+            <p><strong className="text-cyan-300">[OPTION + SPACE]</strong> Quick Talk Hotkey</p>
+            <p><strong className="text-cyan-300">[CMD+SHIFT+J]</strong> Global Voice Toggle</p>
+            <p><strong className="text-cyan-300">[SPACEBAR]</strong> Push-To-Talk Toggle</p>
+            <p><strong className="text-cyan-300">[CLICK CORE]</strong> Engage / Disengage</p>
           </div>
         </div>
       </aside>

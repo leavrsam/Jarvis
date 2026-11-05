@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
-import { TelemetryHUD } from './components/TelemetryHUD';
+import { TelemetryHUD, WakeWordMode } from './components/TelemetryHUD';
 import { SubtitlesOverlay } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
 import { audioEngine, JarvisAudioState } from './services/audioEngine';
 import { sendJarvisCommand } from './services/jarvisBackend';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
+import { useBatteryStatus } from './hooks/useBatteryStatus';
 
 // Passcode configured via VITE_JARVIS_SECRET (Vercel env var) or default secret
 const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)?.trim() || 'wolfcub';
@@ -22,6 +23,23 @@ export const App: React.FC = () => {
     }
   });
 
+  // Battery status & Wake Word power profile
+  const battery = useBatteryStatus();
+  const [wakeWordMode, setWakeWordMode] = useState<WakeWordMode>(() => {
+    try {
+      const saved = localStorage.getItem('jarvis_wakeword_mode') as WakeWordMode | null;
+      if (saved === 'charging_only' || saved === 'always' || saved === 'off') return saved;
+      return 'charging_only'; // Default: listens when charging, conserves battery when unplugged
+    } catch {
+      return 'charging_only';
+    }
+  });
+
+  const isWakeWordActive = isAuthenticated && (
+    wakeWordMode === 'always' ||
+    (wakeWordMode === 'charging_only' && battery.charging)
+  );
+
   const [audioState, setAudioState] = useState<JarvisAudioState>('idle');
   const [lastResponse, setLastResponse] = useState<string>('All systems operational. Standing by for command.');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,6 +50,32 @@ export const App: React.FC = () => {
   useEffect(() => {
     isSpeakingRef.current = audioState === 'speaking';
   }, [audioState]);
+
+  // Request notification permission when wake word is enabled
+  useEffect(() => {
+    if (isWakeWordActive) {
+      audioEngine.requestNotificationPermission();
+    }
+  }, [isWakeWordActive]);
+
+  // Update browser tab title dynamically so user can monitor status across windows
+  useEffect(() => {
+    if (!isAuthenticated) {
+      document.title = 'J.A.R.V.I.S. // Security Locked';
+      return;
+    }
+    if (audioState === 'listening') {
+      document.title = '[● LISTENING] J.A.R.V.I.S.';
+    } else if (audioState === 'processing') {
+      document.title = '[⏳ PROCESSING] J.A.R.V.I.S.';
+    } else if (audioState === 'speaking') {
+      document.title = '[▶ SPEAKING] J.A.R.V.I.S.';
+    } else if (isWakeWordActive) {
+      document.title = '[⚡ "HEY JARVIS"] J.A.R.V.I.S.';
+    } else {
+      document.title = 'J.A.R.V.I.S. // Autonomous Sci-Fi HUD';
+    }
+  }, [isAuthenticated, audioState, isWakeWordActive]);
 
   // Execute Backend Dispatch to n8n Webhook
   const handleCommandSubmit = useCallback(async (query: string) => {
@@ -75,7 +119,31 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Web Speech Recognition Hook
+  // Handler for Wake Word ("Hey Jarvis" / "Jarvis") trigger
+  const handleWakeWordDetected = useCallback(async (trailingQuery?: string) => {
+    if (!isAuthenticated) return;
+
+    audioEngine.ensureContext();
+    audioEngine.playSfx('wake');
+
+    // Notify if running in background
+    if (document.hidden) {
+      audioEngine.notifyWake(trailingQuery ? `Ingested: "${trailingQuery}"` : 'Listening for your instructions, sir.');
+    }
+
+    // Couple microphone stream to reactive visualizer
+    await audioEngine.startMicListening();
+    setAudioState('listening');
+
+    if (trailingQuery && trailingQuery.length > 1) {
+      // User spoke command immediately with the wake word (e.g. "Hey Jarvis what is the weather?")
+      // Recognition hook already captured trailingQuery into transcript
+    } else {
+      setLastResponse('Listening, sir...');
+    }
+  }, [isAuthenticated]);
+
+  // Web Speech Recognition Hook with wake-word detection & global hotkeys
   const {
     isListening,
     transcript,
@@ -84,11 +152,13 @@ export const App: React.FC = () => {
     stopListening,
   } = useSpeechRecognition({
     onFinalSubmit: handleCommandSubmit,
+    onWakeWordDetected: handleWakeWordDetected,
     silenceTimeoutMs: 1800,
     isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
+    wakeWordEnabled: isWakeWordActive,
   });
 
-  // Wrap toggle to also initialize Web Audio Context & Mic
+  // Manual Push-to-Talk or Hotkey Toggle
   const handleToggleListening = useCallback(async () => {
     if (!isAuthenticated) return;
     audioEngine.ensureContext();
@@ -115,6 +185,22 @@ export const App: React.FC = () => {
       audioEngine.stopMicListening();
     }
   }, [isListening, audioState]);
+
+  // Cycle Wake-Word Power Profiles: charging_only -> always -> off
+  const handleToggleWakeWordMode = useCallback(() => {
+    setWakeWordMode(prev => {
+      let next: WakeWordMode = 'charging_only';
+      if (prev === 'charging_only') next = 'always';
+      else if (prev === 'always') next = 'off';
+      else next = 'charging_only';
+
+      try {
+        localStorage.setItem('jarvis_wakeword_mode', next);
+      } catch {}
+      audioEngine.playSfx('activate');
+      return next;
+    });
+  }, []);
 
   // Voice Test Action
   const handleVoiceTest = useCallback(() => {
@@ -167,11 +253,15 @@ export const App: React.FC = () => {
       <TelemetryHUD
         state={audioState}
         isListening={isListening}
+        isWakeWordActive={isWakeWordActive}
+        wakeWordMode={wakeWordMode}
+        battery={battery}
         voiceName={audioEngine.getVoiceName()}
         historyLength={history.length}
         onClearHistory={() => setHistory([])}
         onTestVoice={handleVoiceTest}
         onLockConsole={handleLockConsole}
+        onToggleWakeWordMode={handleToggleWakeWordMode}
       />
 
       {/* Center Holographic Arc-Reactor Three.js Visualizer */}

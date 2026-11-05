@@ -251,6 +251,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     const animate = () => {
       animFrameId = requestAnimationFrame(animate);
+
+      // Conserve GPU/battery when window is in background
+      if (document.hidden) {
+        return;
+      }
+
       const time = clock.getElapsedTime();
 
       // Read Web Audio API Analyser telemetry

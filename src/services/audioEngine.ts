@@ -15,6 +15,9 @@ class JarvisAudioEngine {
   private isTtsActive = false;
   private ttsSpeechAnimId: number | null = null;
 
+  // Background Audio Keep-Alive (prevents browser from throttling AudioContext when tab is unfocused)
+  private keepAliveOsc: OscillatorNode | null = null;
+
   // Analyser buffers
   private freqData: Uint8Array<ArrayBuffer> | null = null;
   private timeData: Uint8Array<ArrayBuffer> | null = null;
@@ -90,7 +93,27 @@ class JarvisAudioEngine {
       this.timeData = new Uint8Array(this.analyser.frequencyBinCount);
     }
 
+    // Initialize background audio keep-alive if not already present
+    this.ensureKeepAlive();
+
     return this.ctx;
+  }
+
+  private ensureKeepAlive() {
+    if (!this.ctx || this.keepAliveOsc) return;
+    try {
+      // Create an ultra-low inaudible oscillator (5Hz, gain 0.00001) connected to destination
+      // This signals to macOS and Chrome that the tab has an active audio output pipeline,
+      // preventing background process suspension.
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.frequency.setValueAtTime(5, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.00001, this.ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      this.keepAliveOsc = osc;
+    } catch {}
   }
 
   public getAnalyser(): AnalyserNode | null {
@@ -351,12 +374,40 @@ class JarvisAudioEngine {
     };
   }
 
-  // Play sci-fi UI activation blip
-  public playSfx(type: 'activate' | 'processing' | 'response' | 'error') {
+  // Play sci-fi UI activation blip & wake chime
+  public playSfx(type: 'activate' | 'wake' | 'processing' | 'response' | 'error') {
     try {
       this.ensureContext();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
+
+      if (type === 'wake') {
+        // High-tech 3-tone Stark Industries wake chime
+        const frequencies = [587.33, 880, 1174.66]; // D5, A5, D6
+        frequencies.forEach((freq, idx) => {
+          if (!this.ctx) return;
+          const toneOsc = this.ctx.createOscillator();
+          const toneGain = this.ctx.createGain();
+          const startTime = now + idx * 0.06;
+          const duration = 0.16;
+
+          toneOsc.type = 'sine';
+          toneOsc.frequency.setValueAtTime(freq, startTime);
+          toneGain.gain.setValueAtTime(0.12, startTime);
+          toneGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+          toneOsc.connect(toneGain);
+          toneGain.connect(this.ctx.destination);
+          if (this.analyser) {
+            toneGain.connect(this.analyser);
+          }
+
+          toneOsc.start(startTime);
+          toneOsc.stop(startTime + duration + 0.05);
+        });
+        return;
+      }
+
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
@@ -395,6 +446,29 @@ class JarvisAudioEngine {
       osc.start(now);
       osc.stop(now + 0.22);
     } catch {}
+  }
+
+  // System notification for background wake-word events
+  public async requestNotificationPermission(): Promise<boolean> {
+    if (typeof window === 'undefined' || !('Notification' in window)) return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission !== 'denied') {
+      const permission = await Notification.requestPermission();
+      return permission === 'granted';
+    }
+    return false;
+  }
+
+  public notifyWake(message: string = 'Listening for your command...') {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
+      try {
+        new Notification('J.A.R.V.I.S. // Voice Assistant', {
+          body: message,
+          icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' stroke='%2300f0ff' stroke-width='6' fill='%2302040a'/><circle cx='50' cy='50' r='25' fill='%2300f0ff'/></svg>",
+          silent: true, // We already play our Stark audio chime
+        });
+      } catch {}
+    }
   }
 }
 
