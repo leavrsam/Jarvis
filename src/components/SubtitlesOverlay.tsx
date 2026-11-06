@@ -67,8 +67,9 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
   const formatVisualSubtitle = (text: string) =>
     text
-      .replace(/PLAY_YOUTUBE:\s*[a-zA-Z0-9_-]{11}/gi, '')
-      .replace(/\b(?:PAUSE_YOUTUBE|STOP_YOUTUBE|RESUME_YOUTUBE|SET_VOLUME:\s*\d+)\b/gi, '')
+      .replace(/PLAY_YOUTUBE_PLAYLIST:[^ \n\r]+/gi, '')
+      .replace(/PLAY_YOUTUBE:[^ \n\r]+/gi, '')
+      .replace(/\b(?:PAUSE_YOUTUBE|STOP_YOUTUBE|RESUME_YOUTUBE|NEXT_YOUTUBE|PREV_YOUTUBE|PREVIOUS_YOUTUBE|SET_VOLUME:\s*\d+)\b/gi, '')
       .replace(/<(?:short pause|long pause|pause|sigh|laugh|chuckle|breath|gasp|cough)>/gi, '')
       .replace(/\s+/g, ' ')
       .trim();

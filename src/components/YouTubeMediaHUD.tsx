@@ -10,12 +10,17 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  SkipBack,
+  SkipForward,
+  ListMusic,
 } from 'lucide-react';
 import {
   YouTubePlaybackState,
   subscribeYouTubeState,
   togglePlayPause,
   stopVideo,
+  nextTrack,
+  previousTrack,
   setVolume,
   toggleMute,
 } from '../services/youtubeController';
@@ -26,6 +31,8 @@ export const YouTubeMediaHUD: React.FC = () => {
     isPlaying: false,
     isPaused: false,
     videoId: null,
+    playlistId: null,
+    playlistIndex: null,
     title: null,
     volume: 100,
     isMuted: false,
@@ -44,8 +51,8 @@ export const YouTubeMediaHUD: React.FC = () => {
     return unsubscribe;
   }, [ytState.isPlaying]);
 
-  // Only render if a video has been loaded or is currently playing/paused
-  if (!ytState.videoId && !ytState.isPlaying && !ytState.isPaused) {
+  // Only render if a video or playlist has been loaded or is currently playing/paused
+  if (!ytState.videoId && !ytState.playlistId && !ytState.isPlaying && !ytState.isPaused) {
     return null;
   }
 
@@ -57,9 +64,17 @@ export const YouTubeMediaHUD: React.FC = () => {
           className="flex items-center space-x-2 px-3 py-1.5 rounded-full border border-cyan-500/60 bg-black/85 backdrop-blur-md shadow-[0_0_15px_rgba(0,240,255,0.3)] text-cyan-300 hover:border-cyan-400 transition-all text-xs font-orbitron"
           title="Expand YouTube Audio Player"
         >
-          <Music className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
-          <span className="text-[10px] tracking-wider truncate max-w-[100px]">
-            {ytState.isPlaying ? 'PLAYING' : 'PAUSED'}
+          {ytState.playlistId ? (
+            <ListMusic className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
+          ) : (
+            <Music className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
+          )}
+          <span className="text-[10px] tracking-wider truncate max-w-[120px]">
+            {ytState.isPlaying
+              ? ytState.playlistId && typeof ytState.playlistIndex === 'number'
+                ? `PLAYING [#${ytState.playlistIndex + 1}]`
+                : 'PLAYING'
+              : 'PAUSED'}
           </span>
           <ChevronDown className="w-3 h-3 text-cyan-400" />
         </button>
@@ -80,11 +95,15 @@ export const YouTubeMediaHUD: React.FC = () => {
         <div className="flex items-center justify-between border-b border-cyan-950 pb-2">
           <div className="flex items-center space-x-2">
             <div className="w-6 h-6 rounded bg-cyan-950/60 border border-cyan-500/50 flex items-center justify-center">
-              <Radio className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
+              {ytState.playlistId ? (
+                <ListMusic className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
+              ) : (
+                <Radio className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
+              )}
             </div>
             <div>
               <div className="font-orbitron text-[10px] font-bold text-cyan-200 tracking-wider flex items-center space-x-1.5">
-                <span>AUDIO STREAM // YT</span>
+                <span>{ytState.playlistId ? 'PLAYLIST STREAM // YT' : 'AUDIO STREAM // YT'}</span>
                 {ytState.isDucked && (
                   <span className="text-[8px] px-1 py-0.2 rounded bg-amber-950/80 border border-amber-600/70 text-amber-300 animate-pulse">
                     DUCKED
@@ -95,13 +114,17 @@ export const YouTubeMediaHUD: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center space-x-1">
-            {ytState.videoId && (
+            {(ytState.playlistId || ytState.videoId) && (
               <a
-                href={`https://www.youtube.com/watch?v=${ytState.videoId}`}
+                href={
+                  ytState.playlistId
+                    ? `https://www.youtube.com/playlist?list=${ytState.playlistId}`
+                    : `https://www.youtube.com/watch?v=${ytState.videoId}`
+                }
                 target="_blank"
                 rel="noreferrer"
                 className="p-1 rounded text-cyan-500 hover:text-cyan-200 hover:bg-cyan-950/40 transition-colors"
-                title="Open Video in YouTube"
+                title={ytState.playlistId ? 'Open Playlist in YouTube' : 'Open Video in YouTube'}
               >
                 <ExternalLink className="w-3 h-3" />
               </a>
@@ -116,14 +139,23 @@ export const YouTubeMediaHUD: React.FC = () => {
           </div>
         </div>
 
-        {/* Track Title & Video ID */}
+        {/* Track Title & Video ID / Playlist Info */}
         <div className="space-y-0.5">
           <div className="text-xs font-orbitron text-white truncate max-w-[270px]">
-            {ytState.title || (ytState.videoId ? `Track ID: ${ytState.videoId}` : 'Acoustic Stream')}
+            {ytState.title ||
+              (ytState.playlistId
+                ? `Playlist: ${ytState.playlistId}`
+                : ytState.videoId
+                ? `Track ID: ${ytState.videoId}`
+                : 'Acoustic Stream')}
           </div>
           <div className="text-[9px] text-cyan-400/70 flex items-center justify-between">
-            <span>ID: {ytState.videoId || 'UNKNOWN'}</span>
-            <span className={ytState.isPlaying ? 'text-emerald-400' : 'text-amber-400'}>
+            <span className="truncate max-w-[170px]">
+              {ytState.playlistId
+                ? `LIST: ${ytState.playlistId.slice(0, 10)}...${typeof ytState.playlistIndex === 'number' ? ` [#${ytState.playlistIndex + 1}]` : ''}`
+                : `ID: ${ytState.videoId || 'UNKNOWN'}`}
+            </span>
+            <span className={ytState.isPlaying ? 'text-emerald-400 shrink-0 ml-1' : 'text-amber-400 shrink-0 ml-1'}>
               {ytState.isPlaying ? '● PLAYING' : ytState.isPaused ? '❚❚ PAUSED' : 'STANDBY'}
             </span>
           </div>
@@ -131,8 +163,18 @@ export const YouTubeMediaHUD: React.FC = () => {
 
         {/* Playback & Volume Control Toolbar */}
         <div className="flex items-center justify-between pt-1">
-          {/* Controls: Play/Pause, Stop */}
-          <div className="flex items-center space-x-2">
+          {/* Controls: Prev, Play/Pause, Next, Stop */}
+          <div className="flex items-center space-x-1.5">
+            {ytState.playlistId && (
+              <button
+                onClick={previousTrack}
+                className="p-1.5 rounded-lg border border-cyan-800 bg-black/60 text-cyan-400 hover:border-cyan-500 hover:text-cyan-200 transition-colors"
+                title="Previous Track"
+              >
+                <SkipBack className="w-3 h-3" />
+              </button>
+            )}
+
             <button
               onClick={togglePlayPause}
               className={`p-2 rounded-lg border transition-all ${
@@ -144,6 +186,16 @@ export const YouTubeMediaHUD: React.FC = () => {
             >
               {ytState.isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             </button>
+
+            {ytState.playlistId && (
+              <button
+                onClick={nextTrack}
+                className="p-1.5 rounded-lg border border-cyan-800 bg-black/60 text-cyan-400 hover:border-cyan-500 hover:text-cyan-200 transition-colors"
+                title="Next Track"
+              >
+                <SkipForward className="w-3 h-3" />
+              </button>
+            )}
 
             <button
               onClick={stopVideo}

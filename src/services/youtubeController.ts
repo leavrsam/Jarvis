@@ -10,6 +10,8 @@ export interface YouTubePlaybackState {
   isPlaying: boolean;
   isPaused: boolean;
   videoId: string | null;
+  playlistId: string | null;
+  playlistIndex: number | null;
   title: string | null;
   volume: number;
   isMuted: boolean;
@@ -20,6 +22,8 @@ type StateListener = (state: YouTubePlaybackState) => void;
 
 let ytPlayer: YT.Player | null = null;
 let currentVideoId: string | null = null;
+let currentPlaylistId: string | null = null;
+let currentPlaylistIndex: number | null = null;
 let currentTitle: string | null = null;
 let isPlayerReady = false;
 let isPlaying = false;
@@ -35,6 +39,8 @@ function notifyListeners() {
     isPlaying,
     isPaused,
     videoId: currentVideoId,
+    playlistId: currentPlaylistId,
+    playlistIndex: currentPlaylistIndex,
     title: currentTitle,
     volume: userVolume,
     isMuted,
@@ -61,6 +67,15 @@ function handleStateChange(event: { data: number }) {
       if (data?.title) {
         currentTitle = data.title;
       }
+      if (data?.video_id) {
+        currentVideoId = data.video_id;
+      }
+      if (ytPlayer && typeof ytPlayer.getPlaylistIndex === 'function') {
+        const idx = ytPlayer.getPlaylistIndex();
+        if (typeof idx === 'number' && idx >= 0) {
+          currentPlaylistIndex = idx;
+        }
+      }
     } catch {}
   } else if (event.data === PlayerState.PAUSED) {
     isPlaying = false;
@@ -69,7 +84,21 @@ function handleStateChange(event: { data: number }) {
     isPlaying = false;
     isPaused = false;
   } else if (event.data === PlayerState.BUFFERING) {
-    // Buffering
+    try {
+      const data = ytPlayer?.getVideoData();
+      if (data?.title) {
+        currentTitle = data.title;
+      }
+      if (data?.video_id) {
+        currentVideoId = data.video_id;
+      }
+      if (ytPlayer && typeof ytPlayer.getPlaylistIndex === 'function') {
+        const idx = ytPlayer.getPlaylistIndex();
+        if (typeof idx === 'number' && idx >= 0) {
+          currentPlaylistIndex = idx;
+        }
+      }
+    } catch {}
   }
   notifyListeners();
 }
@@ -138,54 +167,96 @@ if (typeof window !== 'undefined') {
 
 /**
  * Primary webhook handler requested for J.A.R.V.I.S.
- * Scans reply text for PLAY_YOUTUBE directives, starts playback,
+ * Scans reply text for PLAY_YOUTUBE_PLAYLIST or PLAY_YOUTUBE directives, starts playback,
  * and strips directives so vocal TTS does not read them aloud.
  */
 export function handleJarvisResponse(text: string): string {
   if (!text) return text;
 
-  // 1. Check if Jarvis included the playback directive: PLAY_YOUTUBE: <videoId>
-  const match = text.match(/PLAY_YOUTUBE:\s*([a-zA-Z0-9_-]{11})/i);
-  if (match) {
-    const videoId = match[1];
+  // 1. Directives parsing: Check for playlist or single video
+  const playlistMatch = text.match(/PLAY_YOUTUBE_PLAYLIST:\s*([a-zA-Z0-9_-]+)/i);
+  const videoMatch = text.match(/PLAY_YOUTUBE:\s*([a-zA-Z0-9_-]{11})/i);
+
+  if (playlistMatch) {
+    const playlistId = playlistMatch[1];
+    currentPlaylistId = playlistId;
+    currentVideoId = null;
+    currentPlaylistIndex = 0;
+    currentTitle = `Playlist: ${playlistId}`;
+
+    const playPlaylist = () => {
+      if (ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+        try {
+          ytPlayer.loadPlaylist({
+            list: playlistId,
+            listType: 'playlist',
+            index: 0,
+            suggestedQuality: 'small',
+          });
+          ytPlayer.playVideo();
+          isPlaying = true;
+          isPaused = false;
+          notifyListeners();
+          return true;
+        } catch (err) {
+          console.warn('[YouTubeController] Failed to play playlist:', err);
+        }
+      }
+      return false;
+    };
+
+    if (!playPlaylist()) {
+      const checkReadyInterval = setInterval(() => {
+        if (playPlaylist()) {
+          clearInterval(checkReadyInterval);
+        }
+      }, 250);
+      setTimeout(() => clearInterval(checkReadyInterval), 8000);
+    }
+  } else if (videoMatch) {
+    const videoId = videoMatch[1];
     currentVideoId = videoId;
+    currentPlaylistId = null;
+    currentPlaylistIndex = null;
     currentTitle = `Track: ${videoId}`;
 
-    if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
-      try {
-        ytPlayer.loadVideoById(videoId);
-        ytPlayer.playVideo();
-        isPlaying = true;
-        isPaused = false;
-        notifyListeners();
-      } catch (err) {
-        console.warn('[YouTubeController] Failed to play video:', err);
+    const playSingle = () => {
+      if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+        try {
+          ytPlayer.loadVideoById(videoId);
+          ytPlayer.playVideo();
+          isPlaying = true;
+          isPaused = false;
+          notifyListeners();
+          return true;
+        } catch (err) {
+          console.warn('[YouTubeController] Failed to play video:', err);
+        }
       }
-    } else {
-      // In case player is still initializing, retry as soon as ready
+      return false;
+    };
+
+    if (!playSingle()) {
       const checkReadyInterval = setInterval(() => {
-        if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+        if (playSingle()) {
           clearInterval(checkReadyInterval);
-          try {
-            ytPlayer.loadVideoById(videoId);
-            ytPlayer.playVideo();
-            isPlaying = true;
-            isPaused = false;
-            notifyListeners();
-          } catch {}
         }
       }, 250);
       setTimeout(() => clearInterval(checkReadyInterval), 8000);
     }
   }
 
-  // 2. Extra directives: PAUSE_YOUTUBE, STOP_YOUTUBE, RESUME_YOUTUBE, SET_VOLUME:<0-100>
+  // 2. Extra directives: PAUSE_YOUTUBE, STOP_YOUTUBE, RESUME_YOUTUBE, NEXT_YOUTUBE, PREV_YOUTUBE, SET_VOLUME:<0-100>
   if (/\bPAUSE_YOUTUBE\b/i.test(text)) {
     pauseVideo();
   } else if (/\bSTOP_YOUTUBE\b/i.test(text)) {
     stopVideo();
   } else if (/\bRESUME_YOUTUBE\b/i.test(text)) {
     playVideo();
+  } else if (/\b(?:NEXT_YOUTUBE|YOUTUBE_NEXT)\b/i.test(text)) {
+    nextTrack();
+  } else if (/\b(?:PREV_YOUTUBE|PREVIOUS_YOUTUBE|YOUTUBE_PREV)\b/i.test(text)) {
+    previousTrack();
   }
 
   const volMatch = text.match(/SET_VOLUME:\s*(\d+)/i);
@@ -194,10 +265,11 @@ export function handleJarvisResponse(text: string): string {
     setVolume(vol);
   }
 
-  // 3. Strip the directive tag so Edge-TTS / Gemini TTS doesn't speak "PLAY_YOUTUBE..." aloud
+  // 3. Strip directive tags so Edge-TTS / Gemini TTS doesn't speak "PLAY_YOUTUBE..." or "PLAY_YOUTUBE_PLAYLIST..." aloud
   const cleanSpokenText = text
-    .replace(/PLAY_YOUTUBE:\s*[a-zA-Z0-9_-]{11}/gi, '')
-    .replace(/\b(?:PAUSE_YOUTUBE|STOP_YOUTUBE|RESUME_YOUTUBE|SET_VOLUME:\s*\d+)\b/gi, '')
+    .replace(/PLAY_YOUTUBE_PLAYLIST:[^ \n\r]+/gi, '')
+    .replace(/PLAY_YOUTUBE:[^ \n\r]+/gi, '')
+    .replace(/\b(?:PAUSE_YOUTUBE|STOP_YOUTUBE|RESUME_YOUTUBE|NEXT_YOUTUBE|PREV_YOUTUBE|PREVIOUS_YOUTUBE|SET_VOLUME:\s*\d+)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
@@ -236,9 +308,31 @@ export function stopVideo() {
       isPlaying = false;
       isPaused = false;
       currentVideoId = null;
+      currentPlaylistId = null;
+      currentPlaylistIndex = null;
       currentTitle = null;
       notifyListeners();
     } catch {}
+  }
+}
+
+export function nextTrack() {
+  if (ytPlayer && typeof ytPlayer.nextVideo === 'function') {
+    try {
+      ytPlayer.nextVideo();
+    } catch (e) {
+      console.warn('[YouTubeController] Failed next track:', e);
+    }
+  }
+}
+
+export function previousTrack() {
+  if (ytPlayer && typeof ytPlayer.previousVideo === 'function') {
+    try {
+      ytPlayer.previousVideo();
+    } catch (e) {
+      console.warn('[YouTubeController] Failed previous track:', e);
+    }
   }
 }
 
@@ -316,6 +410,8 @@ export function subscribeYouTubeState(listener: StateListener): () => void {
     isPlaying,
     isPaused,
     videoId: currentVideoId,
+    playlistId: currentPlaylistId,
+    playlistIndex: currentPlaylistIndex,
     title: currentTitle,
     volume: userVolume,
     isMuted,
@@ -333,6 +429,8 @@ export function getYouTubeState(): YouTubePlaybackState {
     isPlaying,
     isPaused,
     videoId: currentVideoId,
+    playlistId: currentPlaylistId,
+    playlistIndex: currentPlaylistIndex,
     title: currentTitle,
     volume: userVolume,
     isMuted,

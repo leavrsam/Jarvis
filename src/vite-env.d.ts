@@ -29,6 +29,23 @@ declare namespace YT {
   interface Player {
     loadVideoById(videoId: string | { videoId: string; startSeconds?: number }): void;
     cueVideoById(videoId: string | { videoId: string; startSeconds?: number }): void;
+    loadPlaylist(
+      playlist: string | string[] | { list?: string; listType?: string; index?: number; startSeconds?: number; suggestedQuality?: string },
+      index?: number,
+      startSeconds?: number,
+      suggestedQuality?: string
+    ): void;
+    cuePlaylist(
+      playlist: string | string[] | { list?: string; listType?: string; index?: number; startSeconds?: number; suggestedQuality?: string },
+      index?: number,
+      startSeconds?: number,
+      suggestedQuality?: string
+    ): void;
+    nextVideo(): void;
+    previousVideo(): void;
+    playVideoAt(index: number): void;
+    getPlaylist(): string[];
+    getPlaylistIndex(): number;
     playVideo(): void;
     pauseVideo(): void;
     stopVideo(): void;
