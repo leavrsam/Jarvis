@@ -12,13 +12,13 @@ const ALLOWED_EDGE_VOICES = new Set([
 ]);
 
 const DEFAULT_JARVIS_VOICE_PROMPT =
-  'A refined, articulate British gentleman butler in his early 40s with a warm, resonant baritone voice, speaking with calm, effortless composure, crisp Received Pronunciation diction, and natural human warmth.';
+  'An exact emulation of Paul Bettany as J.A.R.V.I.S. in the Marvel Iron Man films: an aristocratic, refined British gentleman in his early 40s with a warm, resonant baritone voice, speaking with calm, effortless composure, crisp Received Pronunciation diction, quiet dry wit, subtle breathiness, and polite understated warmth.';
 
 const DEFAULT_JARVIS_STYLE =
-  'calm, composed, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication';
+  'Paul Bettany as JARVIS: calm, unshakeable composure, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication';
 
 // Server-side in-memory cache for the project's custom designed Jarvis voice ID
-let cachedDesignedVoiceId = 'voice_g67uthl21vr5';
+let cachedDesignedVoiceId = 'voice_5r8hqutci8lm';
 const ttsMemoryCache = new Map();
 
 function escapeXml(unsafe) {
@@ -121,42 +121,78 @@ async function synthesizeWithGemini(apiKey, params) {
 
   const style = (params.style || DEFAULT_JARVIS_STYLE).toString().trim();
 
-  const interaction = await ai.interactions.create({
-    model,
-    input: [
-      {
-        type: 'user_input',
-        content: [
-          {
-            type: 'text',
-            text: rawText.slice(0, 2500),
-            annotations: [
-              {
-                type: 'speech_metadata',
-                style,
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    response_format: {
-      type: 'audio',
-    },
-    generation_config: {
-      speech_config: [{ voice: voiceId }],
-    },
-  });
+  let base64Audio = null;
+  let contentType = 'audio/wav';
 
-  const base64Audio = interaction?.output_audio?.data;
+  try {
+    const interaction = await ai.interactions.create({
+      model,
+      input: [
+        {
+          type: 'user_input',
+          content: [
+            {
+              type: 'text',
+              text: rawText.slice(0, 2500),
+              annotations: [
+                {
+                  type: 'speech_metadata',
+                  style,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      response_format: {
+        type: 'audio',
+      },
+      generation_config: {
+        speech_config: [{ voice: voiceId }],
+      },
+    });
+
+    base64Audio = interaction?.output_audio?.data;
+    contentType = interaction?.output_audio?.mime_type || 'audio/wav';
+  } catch (interactionErr) {
+    console.warn('[/api/tts] Interactions API synthesis fallback:', interactionErr?.message || interactionErr);
+
+    const res = await ai.models.generateContent({
+      model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: rawText.slice(0, 2500),
+              speechMetadata: { style },
+            },
+          ],
+        },
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            voice: voiceId,
+          },
+        },
+      },
+    });
+
+    const part = res?.candidates?.[0]?.content?.parts?.[0];
+    base64Audio = part?.inlineData?.data;
+    contentType = part?.inlineData?.mimeType || 'audio/wav';
+  }
+
   if (!base64Audio) {
-    throw new Error('Gemini 3.8 TTS returned no output_audio data');
+    throw new Error('Gemini 3.8 TTS returned no audio data');
   }
 
   return {
     isJson: false,
     buffer: Buffer.from(base64Audio, 'base64'),
-    contentType: interaction?.output_audio?.mime_type || 'audio/wav',
+    contentType,
     engine: model,
     voiceId,
   };
@@ -268,7 +304,7 @@ export default async function handler(req, res) {
     if (apiKey && preferProvider !== 'edge') {
       try {
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Gemini TTS timed out after 2200ms')), 2200)
+          setTimeout(() => reject(new Error('Gemini TTS timed out after 15000ms')), 15000)
         );
         const result = await Promise.race([
           synthesizeWithGemini(apiKey, params),
@@ -289,11 +325,12 @@ export default async function handler(req, res) {
         res.status(200).send(result.buffer);
         return;
       } catch (geminiErr) {
-        console.warn('[/api/tts] Gemini TTS error/timeout, instantly falling back to Edge Neural:', geminiErr?.message || geminiErr);
+        console.warn('[/api/tts] Gemini TTS failed, seamlessly falling back to Edge Neural:', geminiErr?.message || geminiErr);
+        // Seamless fallback to high-fidelity Edge Neural so audio never fails
       }
     }
 
-    // Fast Fallback to 24kHz Edge Neural TTS (~300ms)
+    // Free Fallback to 24kHz Edge Neural TTS (~300ms) when no Gemini API key is configured
     const edgeResult = await synthesizeWithEdgeFallback(params);
 
     if (ttsMemoryCache.size > 60) {

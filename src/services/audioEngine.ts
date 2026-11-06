@@ -27,13 +27,13 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     provider: 'gemini',
     model: 'gemini-3.8-flash-tts',
     voice: 'AUTO_DESIGN_JARVIS',
-    edgeVoice: 'en-GB-RyanNeural',
-    accent: 'en-GB • Custom Designed British Baritone',
+    edgeVoice: 'en-GB-ThomasNeural',
+    accent: 'en-GB • Paul Bettany Emulation',
     description:
-      'Expressive human Gemini 3.8 Flash TTS using a custom-designed Paul Bettany British AI butler persona.',
+      'Cinema-accurate Gemini 3.8 Flash TTS Voice Design custom-modeled on Paul Bettany as J.A.R.V.I.S. in Iron Man.',
     style:
-      'calm, composed, articulate British gentleman AI assistant, warm resonant baritone, natural human breathing and subtle dry wit',
-    rate: '+4%',
+      'Paul Bettany as JARVIS: calm, unshakeable composure, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication',
+    rate: '+0%',
     pitch: '-2Hz',
     hudDsp: true,
   },
@@ -44,13 +44,13 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     provider: 'gemini',
     model: 'gemini-3.8-flash-lite-tts',
     voice: 'AUTO_DESIGN_JARVIS',
-    edgeVoice: 'en-GB-RyanNeural',
-    accent: 'en-GB • Low-Latency Expressive',
+    edgeVoice: 'en-GB-ThomasNeural',
+    accent: 'en-GB • Low-Latency Paul Bettany',
     description:
-      'Fastest Gemini 3.8 Lite TTS model for rapid conversational turn-taking with your custom Jarvis voice.',
+      'Fastest Gemini 3.8 Lite TTS model with Paul Bettany voice design for rapid conversational turn-taking.',
     style:
-      'crisp, responsive, composed British gentleman AI butler, natural conversational cadence',
-    rate: '+4%',
+      'Paul Bettany as JARVIS: crisp, responsive, composed British gentleman AI butler, natural conversational cadence with dry wit',
+    rate: '+0%',
     pitch: '-2Hz',
     hudDsp: true,
   },
@@ -134,7 +134,7 @@ class JarvisAudioEngine {
   // State
   private currentState: JarvisAudioState = 'idle';
   private selectedPreset: JarvisNeuralVoicePreset = JARVIS_NEURAL_VOICES[0];
-  private customDesignedVoiceId: string = 'voice_g67uthl21vr5';
+  private customDesignedVoiceId: string = 'voice_5r8hqutci8lm';
   private clientGeminiApiKey: string = '';
   private lastActiveEngine: string = 'gemini-3.8-flash-tts';
 
@@ -152,8 +152,11 @@ class JarvisAudioEngine {
         }
       }
       const savedCustomVoiceId = localStorage.getItem('jarvis_custom_designed_voice_id');
-      if (savedCustomVoiceId) {
+      if (savedCustomVoiceId && savedCustomVoiceId !== 'voice_g67uthl21vr5') {
         this.customDesignedVoiceId = savedCustomVoiceId;
+      } else if (savedCustomVoiceId === 'voice_g67uthl21vr5') {
+        localStorage.removeItem('jarvis_custom_designed_voice_id');
+        this.customDesignedVoiceId = '';
       }
       const savedKey = localStorage.getItem('jarvis_gemini_api_key');
       if (savedKey) {
@@ -485,7 +488,7 @@ class JarvisAudioEngine {
         this.activeAbortController = controller;
         const fetchTimeout = setTimeout(() => {
           controller.abort();
-        }, 4500);
+        }, 10000);
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
