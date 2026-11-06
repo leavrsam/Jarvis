@@ -133,7 +133,7 @@ class JarvisAudioEngine {
   // State
   private currentState: JarvisAudioState = 'idle';
   private selectedPreset: JarvisNeuralVoicePreset = JARVIS_NEURAL_VOICES[0];
-  private customDesignedVoiceId: string = '';
+  private customDesignedVoiceId: string = 'voice_g67uthl21vr5';
   private clientGeminiApiKey: string = '';
   private lastActiveEngine: string = 'gemini-3.8-flash-tts';
 

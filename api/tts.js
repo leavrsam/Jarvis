@@ -18,7 +18,7 @@ const DEFAULT_JARVIS_STYLE =
   'calm, composed, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication';
 
 // Server-side in-memory cache for the project's custom designed Jarvis voice ID
-let cachedDesignedVoiceId = null;
+let cachedDesignedVoiceId = 'voice_g67uthl21vr5';
 
 function escapeXml(unsafe) {
   return String(unsafe)

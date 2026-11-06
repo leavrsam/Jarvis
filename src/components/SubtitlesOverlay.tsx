@@ -56,6 +56,12 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
   const [showInput, setShowInput] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
 
+  const formatVisualSubtitle = (text: string) =>
+    text
+      .replace(/<(?:short pause|long pause|pause|sigh|laugh|chuckle|breath|gasp|cough)>/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (manualText.trim()) {
@@ -159,7 +165,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
           {/* Jarvis Spoken Words */}
           <p className="text-cyan-100 font-sans text-base md:text-lg leading-relaxed text-center font-medium max-w-4xl mx-auto text-glow-cyan px-2 max-h-36 overflow-y-auto">
-            "{lastResponse}"
+            "{formatVisualSubtitle(lastResponse)}"
           </p>
         </div>
       );
@@ -359,7 +365,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
                         )}
                       </div>
                       <p className="text-xs text-cyan-100 font-sans leading-relaxed">
-                        "{item.response}"
+                        "{formatVisualSubtitle(item.response)}"
                       </p>
                     </div>
                   </div>
