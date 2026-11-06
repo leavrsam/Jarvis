@@ -11,6 +11,9 @@ import { useBatteryStatus } from './hooks/useBatteryStatus';
 // Passcode configured via VITE_JARVIS_SECRET (Vercel env var) or default secret
 const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)?.trim() || 'wolfcub';
 
+// Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
+const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|thank you jarvis|thanks jarvis|goodbye|bye jarvis|stop listening|go to sleep|stand by|standby)\b/i;
+
 export const App: React.FC = () => {
   // Authentication state with localStorage caching
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -47,6 +50,9 @@ export const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [history, setHistory] = useState<{ query: string; response: string; timestamp: Date }[]>([]);
   const isSpeakingRef = useRef(false);
+  // Tracks whether we are in an active multi-turn dialogue loop
+  const inConversationRef = useRef(false);
+  const startListeningRef = useRef<(isFollowUp?: boolean) => void>(() => {});
 
   // Sync speaking state
   useEffect(() => {
@@ -79,12 +85,31 @@ export const App: React.FC = () => {
     }
   }, [isAuthenticated, audioState, isWakeWordActive]);
 
+  // Helper to transition back into follow-up listening after Jarvis finishes speaking
+  const resumeFollowUpListening = useCallback(async () => {
+    if (!inConversationRef.current) {
+      setAudioState('idle');
+      return;
+    }
+    await audioEngine.startMicListening();
+    setAudioState('listening');
+    startListeningRef.current(true);
+  }, []);
+
   // Execute Backend Dispatch to n8n Webhook
   const handleCommandSubmit = useCallback(async (query: string) => {
     if (!query || query.trim().length === 0) return;
-    
+
+    const trimmedQuery = query.trim();
     // Record user prompt for HUD attribution
-    setLastQuery(query.trim());
+    setLastQuery(trimmedQuery);
+
+    // Check if the user is signing off ("That's all, thanks Jarvis")
+    if (CONVERSATION_END_REGEX.test(trimmedQuery)) {
+      inConversationRef.current = false;
+    } else {
+      inConversationRef.current = true;
+    }
 
     // Stop mic listening while processing and speaking
     audioEngine.stopMicListening();
@@ -95,39 +120,47 @@ export const App: React.FC = () => {
 
     try {
       // POST { query: transcript, sessionId: "jarvis-web" } to n8n webhook
-      const reply = await sendJarvisCommand(query, 'jarvis-web');
+      const reply = await sendJarvisCommand(trimmedQuery, 'jarvis-web');
       setLastResponse(reply);
-      setHistory(prev => [{ query, response: reply, timestamp: new Date() }, ...prev]);
+      setHistory(prev => [{ query: trimmedQuery, response: reply, timestamp: new Date() }, ...prev]);
       setIsProcessing(false);
       audioEngine.playSfx('response');
 
       // Vocalize response using British TTS and route into visualizer analyser
       audioEngine.setState('speaking');
       setAudioState('speaking');
-      
+
       await audioEngine.speak(
         reply,
         () => {
           setAudioState('speaking');
         },
         () => {
-          setAudioState('idle');
+          // Automatically re-open mic for seamless multi-turn back-and-forth dialogue
+          void resumeFollowUpListening();
         }
       );
-    } catch (err: unknown) {
+    } catch {
       setIsProcessing(false);
       audioEngine.playSfx('error');
       const errText = 'Neural network dispatch error. Unable to establish link with n8n matrix.';
       setLastResponse(errText);
       setAudioState('speaking');
-      await audioEngine.speak(errText, () => setAudioState('speaking'), () => setAudioState('idle'));
+      await audioEngine.speak(
+        errText,
+        () => setAudioState('speaking'),
+        () => {
+          void resumeFollowUpListening();
+        }
+      );
     }
-  }, []);
+  }, [resumeFollowUpListening]);
 
   // Handler for Wake Word ("Hey Jarvis" / "Jarvis") trigger
   const handleWakeWordDetected = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
 
+    inConversationRef.current = true;
     audioEngine.ensureContext();
     audioEngine.playSfx('wake');
 
@@ -148,6 +181,12 @@ export const App: React.FC = () => {
     }
   }, [isAuthenticated]);
 
+  const handleFollowUpTimeout = useCallback(() => {
+    inConversationRef.current = false;
+    audioEngine.stopMicListening();
+    setAudioState('idle');
+  }, []);
+
   // Web Speech Recognition Hook with wake-word detection & global hotkeys
   const {
     isListening,
@@ -158,27 +197,43 @@ export const App: React.FC = () => {
   } = useSpeechRecognition({
     onFinalSubmit: handleCommandSubmit,
     onWakeWordDetected: handleWakeWordDetected,
-    silenceTimeoutMs: 1050,
+    onFollowUpTimeout: handleFollowUpTimeout,
+    silenceTimeoutMs: 1150,
+    followUpTimeoutMs: 15000,
     isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
     wakeWordEnabled: isWakeWordActive,
   });
+
+  useEffect(() => {
+    startListeningRef.current = startListening;
+  }, [startListening]);
 
   // Manual Push-to-Talk or Hotkey Toggle
   const handleToggleListening = useCallback(async () => {
     if (!isAuthenticated) return;
     audioEngine.ensureContext();
+
+    // If Jarvis is currently speaking, pressing Space / clicking the orb interrupts him and starts listening immediately!
     if (audioState === 'speaking') {
+      inConversationRef.current = true;
       audioEngine.stopSpeaking();
+      audioEngine.playSfx('activate');
+      await audioEngine.startMicListening();
+      startListening(false);
+      setAudioState('listening');
+      return;
     }
 
     if (isListening) {
+      inConversationRef.current = false;
       stopListening();
       audioEngine.stopMicListening();
       setAudioState('idle');
     } else {
+      inConversationRef.current = true;
       audioEngine.playSfx('activate');
       await audioEngine.startMicListening();
-      startListening();
+      startListening(false);
       setAudioState('listening');
     }
   }, [isAuthenticated, audioState, isListening, startListening, stopListening]);
@@ -244,6 +299,7 @@ export const App: React.FC = () => {
 
   // Voice Test Action
   const handleVoiceTest = useCallback(() => {
+    inConversationRef.current = false;
     audioEngine.ensureContext();
     audioEngine.playSfx('activate');
     const greeting = 'Good evening, sir. All core systems are calibrated and standing by for instructions.';
@@ -257,6 +313,7 @@ export const App: React.FC = () => {
   }, []);
 
   const handleSelectVoicePreset = useCallback((preset: JarvisNeuralVoicePreset) => {
+    inConversationRef.current = false;
     const updated = audioEngine.setVoicePreset(preset.id);
     setVoicePreset(updated);
     audioEngine.playSfx('activate');
@@ -270,12 +327,14 @@ export const App: React.FC = () => {
   }, []);
 
   const handleStopSpeaking = useCallback(() => {
+    inConversationRef.current = false;
     audioEngine.stopSpeaking();
     setAudioState('idle');
   }, []);
 
   // Lock Console action
   const handleLockConsole = useCallback(() => {
+    inConversationRef.current = false;
     try {
       localStorage.removeItem('jarvis_auth_token');
     } catch {}
@@ -341,6 +400,7 @@ export const App: React.FC = () => {
         onSubmitText={handleCommandSubmit}
         onStopSpeaking={handleStopSpeaking}
         onReplayResponse={(text) => {
+          inConversationRef.current = false;
           audioEngine.speak(
             text,
             () => setAudioState('speaking'),

@@ -713,6 +713,11 @@ class JarvisAudioEngine {
     averageFrequency: number;
     peakFrequency: number;
     volume: number;
+    rmsVolume: number;
+    bass: number;
+    mid: number;
+    treble: number;
+    spectralCentroid: number;
   } {
     if (!this.analyser || !this.freqData || !this.timeData) {
       return {
@@ -721,23 +726,70 @@ class JarvisAudioEngine {
         averageFrequency: 0,
         peakFrequency: 0,
         volume: 0,
+        rmsVolume: 0,
+        bass: 0,
+        mid: 0,
+        treble: 0,
+        spectralCentroid: 0,
       };
     }
 
     this.analyser.getByteFrequencyData(this.freqData);
     this.analyser.getByteTimeDomainData(this.timeData);
 
-    let sum = 0;
+    // 1. Compute True Time-Domain RMS Amplitude (instantaneous syllabic punch)
+    let sumSquares = 0;
+    const tLen = this.timeData.length;
+    for (let i = 0; i < tLen; i++) {
+      const norm = (this.timeData[i] - 128) / 128;
+      sumSquares += norm * norm;
+    }
+    const rawRms = Math.sqrt(sumSquares / (tLen || 1));
+    // Perceptual curve so normal speech (RMS ~0.04-0.25) maps cleanly to 0.15-1.0
+    const rmsVolume = Math.min(1, Math.pow(rawRms * 4.2, 0.78));
+
+    // 2. Compute Vocal Band Energies & Spectral Centroid (Timbre / Pitch Brightness)
+    // With fftSize=512 at 48kHz, each bin is ~93.75 Hz:
+    // Bins 1..6 (~90-600 Hz) = Bass / Vocal Fundamental Pitch
+    // Bins 7..32 (~650-3000 Hz) = Mid / Vowel Formants
+    // Bins 33..96 (~3100-9000 Hz) = Treble / Consonants & Sibilance
+    let bassSum = 0;
+    let midSum = 0;
+    let trebleSum = 0;
+    let weightedFreqSum = 0;
+    let totalVocalMag = 0;
     let peak = 0;
-    const len = this.freqData.length;
-    for (let i = 0; i < len; i++) {
+
+    const fLen = this.freqData.length;
+    for (let i = 1; i < fLen; i++) {
       const val = this.freqData[i];
-      sum += val;
       if (val > peak) peak = val;
+
+      if (i <= 6) {
+        bassSum += val;
+      } else if (i <= 32) {
+        midSum += val;
+      } else if (i <= 96) {
+        trebleSum += val;
+      }
+
+      if (i <= 80) {
+        weightedFreqSum += i * val;
+        totalVocalMag += val;
+      }
     }
 
-    const avg = sum / (len || 1);
-    const volume = Math.min(1, avg / 128);
+    const bass = Math.min(1, Math.pow(bassSum / (6 * 210), 0.85));
+    const mid = Math.min(1, Math.pow(midSum / (26 * 185), 0.85));
+    const treble = Math.min(1, Math.pow(trebleSum / (64 * 140), 0.85));
+
+    // Normalized spectral centroid (0.0 = deep baritone, 1.0 = bright high frequency)
+    const rawCentroidBin = totalVocalMag > 10 ? weightedFreqSum / totalVocalMag : 12;
+    const spectralCentroid = Math.min(1, Math.max(0, (rawCentroidBin - 4) / 36));
+
+    const vocalBandVolume = Math.min(1, bass * 0.45 + mid * 0.42 + treble * 0.13);
+    const volume = Math.min(1, Math.max(rmsVolume, vocalBandVolume));
+    const avg = totalVocalMag / 80;
 
     return {
       frequencyData: this.freqData,
@@ -745,6 +797,11 @@ class JarvisAudioEngine {
       averageFrequency: avg,
       peakFrequency: peak,
       volume,
+      rmsVolume,
+      bass,
+      mid,
+      treble,
+      spectralCentroid,
     };
   }
 

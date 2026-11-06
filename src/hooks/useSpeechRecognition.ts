@@ -37,7 +37,9 @@ interface SpeechRecognitionInstance extends EventTarget {
 export interface UseSpeechRecognitionOptions {
   onFinalSubmit?: (text: string) => void;
   onWakeWordDetected?: (trailingQuery?: string) => void;
+  onFollowUpTimeout?: () => void;
   silenceTimeoutMs?: number;
+  followUpTimeoutMs?: number;
   isJarvisSpeaking?: boolean;
   wakeWordEnabled?: boolean;
 }
@@ -47,7 +49,9 @@ const WAKE_WORD_REGEX = /\b(?:hey\s+|ok\s+|hi\s+|yo\s+)?jarvis\b/i;
 export function useSpeechRecognition({
   onFinalSubmit,
   onWakeWordDetected,
-  silenceTimeoutMs = 1050,
+  onFollowUpTimeout,
+  silenceTimeoutMs = 1150,
+  followUpTimeoutMs = 15000,
   isJarvisSpeaking = false,
   wakeWordEnabled = true,
 }: UseSpeechRecognitionOptions = {}) {
@@ -61,6 +65,7 @@ export function useSpeechRecognition({
 
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const followUpTimerRef = useRef<NodeJS.Timeout | null>(null);
   const activeTranscriptRef = useRef<string>('');
   const isListeningRef = useRef(false);
   const isStandbyRef = useRef(wakeWordEnabled);
@@ -68,22 +73,74 @@ export function useSpeechRecognition({
   const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wakeWordHandledRef = useRef(false);
 
-  // Sync refs
-  useEffect(() => {
-    isJarvisSpeakingRef.current = isJarvisSpeaking;
-    isStandbyRef.current = wakeWordEnabled;
-    setIsStandby(wakeWordEnabled);
-  }, [isJarvisSpeaking, wakeWordEnabled]);
+  // Store callbacks in refs so recognition instance never tears down on re-renders
+  const onFinalSubmitRef = useRef(onFinalSubmit);
+  const onWakeWordDetectedRef = useRef(onWakeWordDetected);
+  const onFollowUpTimeoutRef = useRef(onFollowUpTimeout);
+  const silenceTimeoutMsRef = useRef(silenceTimeoutMs);
+  const followUpTimeoutMsRef = useRef(followUpTimeoutMs);
 
-  const clearSilenceTimer = () => {
+  useEffect(() => {
+    onFinalSubmitRef.current = onFinalSubmit;
+    onWakeWordDetectedRef.current = onWakeWordDetected;
+    onFollowUpTimeoutRef.current = onFollowUpTimeout;
+    silenceTimeoutMsRef.current = silenceTimeoutMs;
+    followUpTimeoutMsRef.current = followUpTimeoutMs;
+  }, [onFinalSubmit, onWakeWordDetected, onFollowUpTimeout, silenceTimeoutMs, followUpTimeoutMs]);
+
+  const clearSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
-  };
+  }, []);
+
+  const clearFollowUpTimer = useCallback(() => {
+    if (followUpTimerRef.current) {
+      clearTimeout(followUpTimerRef.current);
+      followUpTimerRef.current = null;
+    }
+  }, []);
+
+  // Safely start or restart recognition
+  const restartRecognition = useCallback((immediate = false) => {
+    if (!recognitionRef.current) return;
+    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+
+    const runStart = () => {
+      if (isJarvisSpeakingRef.current) return;
+      try {
+        recognitionRef.current?.start();
+      } catch {
+        // Recognition already active or starting
+      }
+    };
+
+    if (immediate) {
+      runStart();
+    } else {
+      restartTimeoutRef.current = setTimeout(runStart, 100);
+    }
+  }, []);
+
+  // Sync speaking & wake-word standby refs, and auto-restart recognition when Jarvis stops speaking
+  useEffect(() => {
+    const wasSpeaking = isJarvisSpeakingRef.current;
+    isJarvisSpeakingRef.current = isJarvisSpeaking;
+    isStandbyRef.current = wakeWordEnabled;
+    setIsStandby(wakeWordEnabled);
+
+    if (wasSpeaking && !isJarvisSpeaking) {
+      // Jarvis just finished speaking or processing — ensure speech recognition engine is running
+      if (isListeningRef.current || isStandbyRef.current) {
+        restartRecognition();
+      }
+    }
+  }, [isJarvisSpeaking, wakeWordEnabled, restartRecognition]);
 
   const triggerSubmission = useCallback(() => {
     clearSilenceTimer();
+    clearFollowUpTimer();
     const query = activeTranscriptRef.current.trim();
     if (query && query.length > 1) {
       setTranscript('');
@@ -91,36 +148,37 @@ export function useSpeechRecognition({
       activeTranscriptRef.current = '';
       setIsListening(false);
       isListeningRef.current = false;
-      onFinalSubmit?.(query);
+      onFinalSubmitRef.current?.(query);
     }
-  }, [onFinalSubmit]);
+  }, [clearSilenceTimer, clearFollowUpTimer]);
 
   const resetSilenceTimer = useCallback(() => {
     clearSilenceTimer();
+    clearFollowUpTimer(); // User is actively speaking, so cancel idle follow-up timeout
     const currentText = activeTranscriptRef.current.trim();
     const hasPunctuation = /[.?!]$/.test(currentText);
-    const delay = hasPunctuation ? Math.min(silenceTimeoutMs, 750) : silenceTimeoutMs;
+    const baseDelay = silenceTimeoutMsRef.current;
+    const delay = hasPunctuation ? Math.min(baseDelay, 800) : baseDelay;
     silenceTimerRef.current = setTimeout(() => {
       if (activeTranscriptRef.current.trim().length > 1) {
         triggerSubmission();
       }
     }, delay);
-  }, [silenceTimeoutMs, triggerSubmission]);
+  }, [clearSilenceTimer, clearFollowUpTimer, triggerSubmission]);
 
-  // Safely start or restart recognition
-  const restartRecognition = useCallback(() => {
-    if (!recognitionRef.current) return;
-    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
-
-    restartTimeoutRef.current = setTimeout(() => {
-      if (isJarvisSpeakingRef.current) return;
-      try {
-        recognitionRef.current?.start();
-      } catch {
-        // Recognition already active or starting
+  const armFollowUpTimer = useCallback(() => {
+    clearFollowUpTimer();
+    followUpTimerRef.current = setTimeout(() => {
+      // If user hasn't spoken anything during the follow-up window, gracefully return to idle/standby
+      if (isListeningRef.current && activeTranscriptRef.current.trim().length === 0) {
+        isListeningRef.current = false;
+        setIsListening(false);
+        setTranscript('');
+        setInterimTranscript('');
+        onFollowUpTimeoutRef.current?.();
       }
-    }, 150);
-  }, []);
+    }, followUpTimeoutMsRef.current);
+  }, [clearFollowUpTimer]);
 
   const handleWakeWordDetection = useCallback((trailingQuery?: string) => {
     wakeWordHandledRef.current = true;
@@ -136,15 +194,16 @@ export function useSpeechRecognition({
       activeTranscriptRef.current = '';
       setTranscript('');
       setInterimTranscript('');
+      armFollowUpTimer();
     }
 
-    onWakeWordDetected?.(trailingQuery);
+    onWakeWordDetectedRef.current?.(trailingQuery);
 
     // Reset wake flag after debounce
     setTimeout(() => {
       wakeWordHandledRef.current = false;
     }, 1200);
-  }, [onWakeWordDetected, resetSilenceTimer]);
+  }, [resetSilenceTimer, armFollowUpTimer]);
 
   useEffect(() => {
     const win = window as unknown as IWindowSpeech;
@@ -201,7 +260,7 @@ export function useSpeechRecognition({
         // 2. Active Command Capture Mode
         if (isListeningRef.current) {
           if (finalChunk) {
-            // Also sanitize in case wake word is present in the beginning of active capture
+            // Also sanitize in case wake word is present at the beginning of active capture
             let cleanedChunk = finalChunk;
             const match = cleanedChunk.match(WAKE_WORD_REGEX);
             if (match && match.index !== undefined && match.index === 0) {
@@ -220,8 +279,13 @@ export function useSpeechRecognition({
             if (match && match.index !== undefined && match.index === 0) {
               cleanedInterim = cleanedInterim.slice(match[0].length).replace(/^[,.\s]+/, '').trim();
             }
-            setInterimTranscript(cleanedInterim);
-            resetSilenceTimer();
+            if (cleanedInterim) {
+              clearFollowUpTimer(); // User started speaking
+              setInterimTranscript(cleanedInterim);
+              if (activeTranscriptRef.current.trim().length > 0) {
+                resetSilenceTimer();
+              }
+            }
           }
         }
       };
@@ -238,16 +302,13 @@ export function useSpeechRecognition({
         // Keep listening loop alive in background if wake-word is enabled or currently listening
         if ((isListeningRef.current || isStandbyRef.current) && !isJarvisSpeakingRef.current) {
           restartRecognition();
-        } else {
-          setIsListening(false);
-          isListeningRef.current = false;
         }
       };
 
       recognitionRef.current = recognition;
 
       // Start recognition if wakeWordEnabled is true
-      if (wakeWordEnabled) {
+      if (isStandbyRef.current) {
         try {
           recognition.start();
         } catch {}
@@ -259,6 +320,7 @@ export function useSpeechRecognition({
 
     return () => {
       clearSilenceTimer();
+      clearFollowUpTimer();
       if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
       if (recognitionRef.current) {
         recognitionRef.current.onend = null;
@@ -269,21 +331,31 @@ export function useSpeechRecognition({
         } catch {}
       }
     };
-  }, [handleWakeWordDetection, resetSilenceTimer, restartRecognition, wakeWordEnabled]);
+  }, [clearSilenceTimer, clearFollowUpTimer, handleWakeWordDetection, resetSilenceTimer, restartRecognition]);
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback((isFollowUp = false) => {
+    // Immediately unblock speech recognition if called right as Jarvis finishes speaking
+    isJarvisSpeakingRef.current = false;
     activeTranscriptRef.current = '';
     setTranscript('');
     setInterimTranscript('');
     setIsListening(true);
     isListeningRef.current = true;
-    restartRecognition();
-  }, [restartRecognition]);
+    clearSilenceTimer();
+    if (isFollowUp) {
+      armFollowUpTimer();
+    } else {
+      // Even on manual start, give a generous 20s idle window if user doesn't speak
+      clearFollowUpTimer();
+    }
+    restartRecognition(true);
+  }, [clearSilenceTimer, clearFollowUpTimer, armFollowUpTimer, restartRecognition]);
 
   const stopListening = useCallback(() => {
     isListeningRef.current = false;
     setIsListening(false);
     clearSilenceTimer();
+    clearFollowUpTimer();
 
     if (activeTranscriptRef.current.trim().length > 1) {
       triggerSubmission();
@@ -301,13 +373,13 @@ export function useSpeechRecognition({
         recognitionRef.current.stop();
       } catch {}
     }
-  }, [restartRecognition, triggerSubmission]);
+  }, [clearSilenceTimer, clearFollowUpTimer, restartRecognition, triggerSubmission]);
 
   const toggleListening = useCallback(() => {
     if (isListening) {
       stopListening();
     } else {
-      startListening();
+      startListening(false);
     }
   }, [isListening, startListening, stopListening]);
 
