@@ -38,57 +38,6 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     hudDsp: true,
   },
   {
-    id: 'gemini-jarvis-lite',
-    name: 'J.A.R.V.I.S. Rapid Ops (Gemini 3.8 Lite • Ultra-Fast)',
-    shortLabel: 'Gemini 3.8 Lite',
-    provider: 'gemini',
-    model: 'gemini-3.8-flash-lite-tts',
-    voice: 'AUTO_DESIGN_JARVIS',
-    edgeVoice: 'en-GB-ThomasNeural',
-    accent: 'en-GB • Low-Latency Custom Voice',
-    description:
-      'Fastest Gemini 3.8 Lite TTS model with your custom voice for rapid conversational turn-taking.',
-    style:
-      'Crisp, responsive and composed. Quick, natural conversational cadence, soft-spoken, with a faint dry wit.',
-    rate: '+0%',
-    pitch: '-2Hz',
-    hudDsp: true,
-  },
-  {
-    id: 'gemini-charon',
-    name: 'J.A.R.V.I.S. Studio (Gemini 3.8 • Charon Baritone)',
-    shortLabel: 'Gemini Charon',
-    provider: 'gemini',
-    model: 'gemini-3.8-flash-tts',
-    voice: 'Charon',
-    edgeVoice: 'en-GB-ThomasNeural',
-    accent: 'en-GB • Deep Studio Baritone',
-    description:
-      'Prebuilt Gemini 3.8 Charon voice steered with refined British RP diction and studio warmth.',
-    style:
-      'refined British gentleman AI assistant, warm baritone, calm, composed and sophisticated',
-    rate: '+3%',
-    pitch: '-2Hz',
-    hudDsp: true,
-  },
-  {
-    id: 'gemini-sadaltager',
-    name: 'J.A.R.V.I.S. Scholar (Gemini 3.8 • Sadaltager)',
-    shortLabel: 'Gemini Sadaltager',
-    provider: 'gemini',
-    model: 'gemini-3.8-flash-tts',
-    voice: 'Sadaltager',
-    edgeVoice: 'en-GB-ThomasNeural',
-    accent: 'en-GB • Knowledgeable & Warm',
-    description:
-      'Articulate, thoughtful Gemini 3.8 voice ideal for detailed analytical briefings and diagnostics.',
-    style:
-      'articulate British butler AI, warm, intelligent, measured human cadence',
-    rate: '+3%',
-    pitch: '-1Hz',
-    hudDsp: true,
-  },
-  {
     id: 'edge-ryan-mk7',
     name: 'Edge Neural Backup (Ryan Neural • Free Fallback)',
     shortLabel: 'Ryan Neural (Edge)',
