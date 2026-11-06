@@ -290,6 +290,7 @@ export const App: React.FC = () => {
     silenceTimeoutMs: 750,
     followUpTimeoutMs: 15000,
     isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
+    currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
     wakeWordEnabled: isWakeWordActive,
   });
 

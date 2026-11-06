@@ -237,6 +237,39 @@ class VoiceBiometricsEngine {
   }
 
   /**
+   * Fast real-time check to verify if the live vocal audio matches an enrolled owner / authorized speaker,
+   * used for audible barge-in interruption while Jarvis is speaking.
+   */
+  public isAuthorizedSpeaker(): { isAuthorized: boolean; confidence: number; name: string } {
+    const owner = this.getOwnerProfile();
+    if (!owner) {
+      return { isAuthorized: true, confidence: 1.0, name: 'Owner' };
+    }
+
+    if (this.currentUtteranceFrames.length < 3) {
+      // If buffer is just beginning, allow intent so user is not blocked
+      return { isAuthorized: true, confidence: 0.85, name: owner.name };
+    }
+
+    const liveVector = this.averageVectors(this.currentUtteranceFrames.slice(-10));
+    const cosineSim = this.computeCosineSimilarity(liveVector, owner.vector);
+
+    const recentPitch = this.currentPitchSamples.slice(-10);
+    const avgPitch = recentPitch.length > 0
+      ? recentPitch.reduce((a, b) => a + b, 0) / recentPitch.length
+      : 130;
+    const pitchDiff = Math.abs(avgPitch - owner.avgPitchHz);
+    const pitchSim = Math.max(0, 1 - pitchDiff / 100);
+
+    const confidence = cosineSim * 0.75 + pitchSim * 0.25;
+    return {
+      isAuthorized: confidence >= 0.52,
+      confidence,
+      name: owner.name,
+    };
+  }
+
+  /**
    * Compare the current captured utterance against all enrolled voice profiles.
    * If speech matches, adaptively tunes the profile. If no match and auto-learn is on,
    * automatically registers a new auto-discovered voice profile.

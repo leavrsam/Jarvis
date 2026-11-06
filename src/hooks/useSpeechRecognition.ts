@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { voiceBiometrics } from '../services/voiceBiometrics';
 
 // Web Speech API interfaces
 interface SpeechRecognitionEvent extends Event {
@@ -42,11 +43,46 @@ export interface UseSpeechRecognitionOptions {
   silenceTimeoutMs?: number;
   followUpTimeoutMs?: number;
   isJarvisSpeaking?: boolean;
+  currentJarvisSpeech?: string;
   wakeWordEnabled?: boolean;
 }
 
 // Phonetically tolerant regex: captures "Hey Jarvis", "Jarvis", and common Web Speech mistranscriptions ("Travis", "Harvest", "Jarves")
 const WAKE_WORD_REGEX = /\b(?:hey\s+|ok\s+|hi\s+|yo\s+)?(?:jarvis|travis|harvest|jarves|jarv|charvis)\b/i;
+
+// Explicit audible interruption intents
+const AUDIBLE_INTERRUPT_REGEX = /\b(?:hey\s+|ok\s+|hi\s+|yo\s+)?(?:jarvis|wait|stop|hold on|shut up|quiet|cancel|listen|actually|never mind|nevermind|hang on|pause)\b/i;
+
+/**
+ * Checks whether speech captured by the microphone while Jarvis is talking is an acoustic echo
+ * of Jarvis's own dialogue from the speakers.
+ */
+function isSelfEcho(utterance: string, jarvisSpeech: string): boolean {
+  if (!jarvisSpeech || !jarvisSpeech.trim()) return false;
+
+  const cleanUtterance = utterance.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim();
+  const cleanJarvis = jarvisSpeech.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim();
+
+  if (!cleanUtterance) return true;
+
+  // 1. Direct substring containment (e.g. mic caught words of Jarvis's sentence)
+  if (cleanJarvis.includes(cleanUtterance)) {
+    return true;
+  }
+
+  // 2. High lexical overlap check (accounts for minor speech-to-text drops)
+  const uttWords = cleanUtterance.split(/\s+/).filter(w => w.length > 2);
+  if (uttWords.length === 0) return true;
+
+  const jarvisWords = new Set(cleanJarvis.split(/\s+/));
+  let matchedCount = 0;
+  for (const w of uttWords) {
+    if (jarvisWords.has(w)) matchedCount++;
+  }
+
+  // If >= 65% of the words are present in Jarvis's active speech, it is self-echo!
+  return (matchedCount / uttWords.length) >= 0.65;
+}
 
 export function useSpeechRecognition({
   onFinalSubmit,
@@ -56,6 +92,7 @@ export function useSpeechRecognition({
   silenceTimeoutMs = 750,
   followUpTimeoutMs = 15000,
   isJarvisSpeaking = false,
+  currentJarvisSpeech = '',
   wakeWordEnabled = true,
 }: UseSpeechRecognitionOptions = {}) {
   // Mode: 'standby' (waiting for "Hey Jarvis"), 'active' (recording command), 'idle'
@@ -73,6 +110,7 @@ export function useSpeechRecognition({
   const isListeningRef = useRef(false);
   const isStandbyRef = useRef(wakeWordEnabled);
   const isJarvisSpeakingRef = useRef(isJarvisSpeaking);
+  const currentJarvisSpeechRef = useRef(currentJarvisSpeech);
   const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wakeWordHandledRef = useRef(false);
 
@@ -113,8 +151,6 @@ export function useSpeechRecognition({
     if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
 
     const runStart = () => {
-      // Never start speech recognition while Jarvis is actively speaking out loud
-      if (isJarvisSpeakingRef.current) return;
       try {
         recognitionRef.current?.start();
       } catch {
@@ -129,25 +165,18 @@ export function useSpeechRecognition({
     }
   }, []);
 
-  // Sync speaking state & manage recognition lifecycle to prevent self-interruption
+  // Sync speaking state & current spoken speech, keeping recognition running for audible barge-in
   useEffect(() => {
-    const wasSpeaking = isJarvisSpeakingRef.current;
     isJarvisSpeakingRef.current = isJarvisSpeaking;
+    currentJarvisSpeechRef.current = currentJarvisSpeech;
     isStandbyRef.current = wakeWordEnabled;
     setIsStandby(wakeWordEnabled);
 
-    if (isJarvisSpeaking) {
-      // When Jarvis begins speaking: abort speech recognition so it stops listening to speakers!
-      try {
-        recognitionRef.current?.abort();
-      } catch {}
-    } else if (wasSpeaking && !isJarvisSpeaking) {
-      // The moment Jarvis finishes speaking: immediately restart recognition to listen for user reply!
-      if (isListeningRef.current || isStandbyRef.current) {
-        restartRecognition(true);
-      }
+    // Keep recognition active for wake-word or audible interruption
+    if (wakeWordEnabled || isListeningRef.current || isJarvisSpeaking) {
+      restartRecognition();
     }
-  }, [isJarvisSpeaking, wakeWordEnabled, restartRecognition]);
+  }, [isJarvisSpeaking, currentJarvisSpeech, wakeWordEnabled, restartRecognition]);
 
   const triggerSubmission = useCallback(() => {
     clearSilenceTimer();
@@ -167,7 +196,6 @@ export function useSpeechRecognition({
     clearSilenceTimer();
     clearFollowUpTimer();
     const currentText = activeTranscriptRef.current.trim();
-    // Fast response: if sentence has punctuation, trigger in 350ms; otherwise 750ms
     const hasPunctuation = /[.?!]$/.test(currentText);
     const delay = hasPunctuation ? 350 : Math.min(silenceTimeoutMsRef.current, 750);
 
@@ -210,7 +238,6 @@ export function useSpeechRecognition({
 
     onWakeWordDetectedRef.current?.(trailingQuery);
 
-    // Reset wake flag after debounce
     setTimeout(() => {
       wakeWordHandledRef.current = false;
     }, 1200);
@@ -238,11 +265,6 @@ export function useSpeechRecognition({
       };
 
       recognition.onresult = (event: SpeechRecognitionEvent) => {
-        // Absolute Echo Immunity: Never process microphone input while Jarvis is outputting dialogue
-        if (isJarvisSpeakingRef.current) {
-          return;
-        }
-
         let interim = '';
         let finalChunk = '';
 
@@ -259,7 +281,51 @@ export function useSpeechRecognition({
         const fullUtterance = (finalChunk || interim).trim();
         if (!fullUtterance) return;
 
-        // 1. Check for Wake Word ("Hey Jarvis" / "Jarvis") if in standby
+        // 1. Hands-Free Voice Interruption / Barge-In while Jarvis is speaking!
+        if (isJarvisSpeakingRef.current) {
+          // Acoustic Self-Echo Filter: If microphone captures Jarvis's own vocal text, DISCARD!
+          if (isSelfEcho(fullUtterance, currentJarvisSpeechRef.current)) {
+            return;
+          }
+
+          // Not Jarvis's text! Check if user spoke an interruption intent or new command
+          const isInterruptIntent = AUDIBLE_INTERRUPT_REGEX.test(fullUtterance);
+          const wordCount = fullUtterance.split(/\s+/).length;
+
+          // Biometric Speaker Authentication: verify live voice matches enrolled Owner
+          const speakerAuth = voiceBiometrics.isAuthorizedSpeaker();
+
+          if ((isInterruptIntent || wordCount >= 2) && speakerAuth.isAuthorized) {
+            isJarvisSpeakingRef.current = false;
+            setIsListening(true);
+            isListeningRef.current = true;
+
+            // Extract trailing speech if user said e.g. "Jarvis what is the weather" or "Wait play music"
+            let trailing = fullUtterance;
+            const match = fullUtterance.match(AUDIBLE_INTERRUPT_REGEX);
+            if (match && match.index !== undefined) {
+              trailing = fullUtterance.slice(match.index + match[0].length).replace(/^[,.\s]+/, '').trim();
+            }
+
+            if (trailing && trailing.length > 1) {
+              activeTranscriptRef.current = trailing;
+              setTranscript(trailing);
+              resetSilenceTimer();
+            } else {
+              activeTranscriptRef.current = '';
+              setTranscript('');
+              armFollowUpTimer();
+            }
+
+            onBargeInRef.current?.(trailing);
+            return;
+          }
+
+          // Otherwise ignore non-authorized noise
+          return;
+        }
+
+        // 2. Check for Wake Word ("Hey Jarvis" / "Jarvis") if in standby
         if (!isListeningRef.current && isStandbyRef.current && !wakeWordHandledRef.current) {
           const match = fullUtterance.match(WAKE_WORD_REGEX);
           if (match && match.index !== undefined) {
@@ -269,7 +335,7 @@ export function useSpeechRecognition({
           }
         }
 
-        // 2. Active Command Capture Mode
+        // 3. Active Command Capture Mode
         if (isListeningRef.current) {
           if (finalChunk) {
             let cleanedChunk = finalChunk;
@@ -310,16 +376,15 @@ export function useSpeechRecognition({
       };
 
       recognition.onend = () => {
-        // Keep listening loop alive in background if wake-word is enabled or listening, BUT NEVER while Jarvis is speaking
-        if (!isJarvisSpeakingRef.current && (isListeningRef.current || isStandbyRef.current)) {
+        // Keep listening loop alive in background for wake-word or audible barge-in
+        if (isListeningRef.current || isStandbyRef.current || isJarvisSpeakingRef.current) {
           restartRecognition();
         }
       };
 
       recognitionRef.current = recognition;
 
-      // Start recognition if wake-word is enabled and not speaking
-      if (isStandbyRef.current && !isJarvisSpeakingRef.current) {
+      if (isStandbyRef.current || isJarvisSpeakingRef.current) {
         try {
           recognition.start();
         } catch {}
@@ -374,7 +439,7 @@ export function useSpeechRecognition({
       activeTranscriptRef.current = '';
     }
 
-    if (isStandbyRef.current && !isJarvisSpeakingRef.current) {
+    if (isStandbyRef.current) {
       restartRecognition();
     } else if (recognitionRef.current) {
       try {
