@@ -61,20 +61,21 @@ export const AudioSpectrumMeter: React.FC<AudioSpectrumMeterProps> = ({
 
         const grad = ctx.createLinearGradient(0, height, 0, 0);
         if (state === 'listening') {
-          // Bioluminescent emerald-to-cyan vocal input spectrum
-          grad.addColorStop(0, 'rgba(0, 180, 120, 0.45)');
-          grad.addColorStop(0.6, 'rgba(0, 255, 170, 0.85)');
-          grad.addColorStop(1, 'rgba(180, 255, 240, 1)');
+          // Radiant solar-gold with hot white-gold peak
+          grad.addColorStop(0, 'rgba(217, 119, 6, 0.45)');
+          grad.addColorStop(0.6, 'rgba(251, 191, 36, 0.88)');
+          grad.addColorStop(1, 'rgba(255, 255, 255, 1)');
         } else if (state === 'speaking') {
-          // Stark cyan-to-gold harmonic spectrum shifted by live timbre
+          // Stark molten amber-gold harmonic spectrum
           const warmMix = Math.min(1, (i / bars) * 0.6 + pitch * 0.6);
-          grad.addColorStop(0, 'rgba(0, 140, 255, 0.45)');
-          grad.addColorStop(0.55, warmMix > 0.45 ? 'rgba(255, 190, 40, 0.88)' : 'rgba(0, 240, 255, 0.88)');
-          grad.addColorStop(1, 'rgba(255, 245, 200, 1)');
+          grad.addColorStop(0, 'rgba(180, 83, 9, 0.5)');
+          grad.addColorStop(0.55, warmMix > 0.4 ? 'rgba(245, 158, 11, 0.9)' : 'rgba(251, 191, 36, 0.9)');
+          grad.addColorStop(1, 'rgba(255, 250, 235, 1)');
         } else {
-          grad.addColorStop(0, 'rgba(0, 120, 255, 0.35)');
-          grad.addColorStop(0.6, 'rgba(0, 240, 255, 0.75)');
-          grad.addColorStop(1, 'rgba(224, 255, 255, 0.95)');
+          // Ambient Stark Gold spectrum
+          grad.addColorStop(0, 'rgba(180, 83, 9, 0.3)');
+          grad.addColorStop(0.6, 'rgba(245, 158, 11, 0.7)');
+          grad.addColorStop(1, 'rgba(254, 243, 199, 0.95)');
         }
 
         ctx.fillStyle = grad;
@@ -82,7 +83,7 @@ export const AudioSpectrumMeter: React.FC<AudioSpectrumMeterProps> = ({
 
         // Floating peak hold cap
         const capY = Math.max(0, height - peakCaps[i] - 2);
-        ctx.fillStyle = state === 'listening' ? '#6effd8' : state === 'speaking' ? '#ffe58f' : '#e0ffff';
+        ctx.fillStyle = state === 'listening' ? '#fde047' : state === 'speaking' ? '#fbbf24' : '#f59e0b';
         ctx.fillRect(x, capY, barWidth, 1.5);
       }
     };
@@ -99,7 +100,7 @@ export const AudioSpectrumMeter: React.FC<AudioSpectrumMeterProps> = ({
       ref={canvasRef}
       width={180}
       height={36}
-      className={`rounded bg-black/40 border border-cyan-950/60 ${className}`}
+      className={`rounded bg-black/40 border border-amber-950/60 ${className}`}
     />
   );
 };

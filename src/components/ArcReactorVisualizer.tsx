@@ -7,13 +7,10 @@ interface ArcReactorVisualizerProps {
   onReactorClick?: () => void;
 }
 
-function createRadialGlowTexture(
-  size = 512,
-  inner = 'rgba(255, 255, 255, 1)',
-  mid = 'rgba(0, 240, 255, 0.85)',
-  rim = 'rgba(0, 110, 255, 0.3)',
-  outer = 'rgba(0, 20, 80, 0)'
-): THREE.CanvasTexture {
+/**
+ * Procedural ultra-smooth radial soft particle glow texture
+ */
+function createRadialGlowTexture(size = 512): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -21,51 +18,34 @@ function createRadialGlowTexture(
   if (ctx) {
     const center = size / 2;
     const grad = ctx.createRadialGradient(center, center, 0, center, center, center);
-    grad.addColorStop(0, inner);
-    grad.addColorStop(0.18, mid);
-    grad.addColorStop(0.48, rim);
-    grad.addColorStop(0.8, 'rgba(0, 40, 140, 0.08)');
-    grad.addColorStop(1, outer);
+    grad.addColorStop(0.0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.12, 'rgba(255, 220, 140, 0.95)');
+    grad.addColorStop(0.32, 'rgba(250, 160, 25, 0.65)');
+    grad.addColorStop(0.58, 'rgba(217, 119, 6, 0.28)');
+    grad.addColorStop(0.82, 'rgba(180, 83, 9, 0.08)');
+    grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
   }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.generateMipmaps = true;
-  return texture;
+  return new THREE.CanvasTexture(canvas);
 }
 
+/**
+ * Procedural pinpoint spark texture for stardust embers and acoustic nodes
+ */
 function createSparkTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 128;
   canvas.height = 128;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    const center = 64;
-    const grad = ctx.createRadialGradient(center, center, 0, center, center, 56);
+    const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
     grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.25, 'rgba(0, 240, 255, 0.9)');
-    grad.addColorStop(0.65, 'rgba(0, 100, 255, 0.25)');
+    grad.addColorStop(0.2, 'rgba(254, 215, 102, 0.9)');
+    grad.addColorStop(0.5, 'rgba(245, 158, 11, 0.4)');
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 128, 128);
-  }
-  return new THREE.CanvasTexture(canvas);
-}
-
-function createAnamorphicFlareTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    const grad = ctx.createLinearGradient(0, 32, 512, 32);
-    grad.addColorStop(0, 'rgba(0, 240, 255, 0)');
-    grad.addColorStop(0.35, 'rgba(0, 240, 255, 0.25)');
-    grad.addColorStop(0.5, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.65, 'rgba(0, 240, 255, 0.25)');
-    grad.addColorStop(1, 'rgba(0, 240, 255, 0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 512, 64);
   }
   return new THREE.CanvasTexture(canvas);
 }
@@ -99,7 +79,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       const aspect = w / h;
       camera.aspect = aspect;
       if (aspect < 1) {
-        // Portrait mobile: scale distance so 3D reactor fits without clipping
+        // Mobile portrait viewport distance
         const targetZ = Math.min(54, Math.max(25, 12 / (0.4142 * aspect)));
         camera.position.z = targetZ;
         camera.position.y = 1.1;
@@ -120,18 +100,18 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.45;
+    renderer.toneMappingExposure = 1.5;
     container.appendChild(renderer.domElement);
 
-    // 2. Cinematic Lighting
-    const ambientLight = new THREE.AmbientLight(0x00f0ff, 0.8);
+    // 2. Cinematic Stark Amber-Gold Lighting
+    const ambientLight = new THREE.AmbientLight(0xffb020, 1.1);
     scene.add(ambientLight);
 
-    const pointLight = new THREE.PointLight(0x00f0ff, 4.0, 50);
-    pointLight.position.set(0, 0, 6);
+    const pointLight = new THREE.PointLight(0xff9000, 4.8, 60);
+    pointLight.position.set(0, 0, 7);
     scene.add(pointLight);
 
-    const coreLight = new THREE.PointLight(0xffffff, 6.5, 30);
+    const coreLight = new THREE.PointLight(0xfffaed, 7.5, 35);
     coreLight.position.set(0, 0, 2);
     scene.add(coreLight);
 
@@ -143,7 +123,6 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     const coreCoronaTex = createRadialGlowTexture(512);
     const sparkTex = createSparkTexture();
-    const flareTex = createAnamorphicFlareTexture();
 
     // ==========================================
     // A. CENTRAL CORE WITH MARK-VI TRIANGULAR REACTOR (Image 3)
@@ -151,31 +130,18 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const coreContainer = new THREE.Group();
     reactorGroup.add(coreContainer);
 
-    // Corona Bloom Sprite
+    // Corona Bloom Sprite (Incandescent Gold / White)
     const bloomSpriteMat = new THREE.SpriteMaterial({
       map: coreCoronaTex,
-      color: 0x00f0ff,
+      color: 0xf59e0b,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.75,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
     const bloomSprite = new THREE.Sprite(bloomSpriteMat);
-    bloomSprite.scale.set(11, 11, 1);
+    bloomSprite.scale.set(11.5, 11.5, 1);
     coreContainer.add(bloomSprite);
-
-    // Anamorphic Laser Flare (Image 3 Stark Laser Line)
-    const flareMat = new THREE.SpriteMaterial({
-      map: flareTex,
-      color: 0x00f0ff,
-      transparent: true,
-      opacity: 0.55,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const flareSprite = new THREE.Sprite(flareMat);
-    flareSprite.scale.set(18, 1.8, 1);
-    coreContainer.add(flareSprite);
 
     // 1. Mark-VI Inverted Triangular Reactor Core Geometry (Image 3)
     const triangleGroup = new THREE.Group();
@@ -196,7 +162,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const triPoints = triShape.getPoints();
     const triLineGeom = new THREE.BufferGeometry().setFromPoints(triPoints);
     const triLineMat = new THREE.LineBasicMaterial({
-      color: 0xffffff,
+      color: 0xfffaed,
       linewidth: 2,
       transparent: true,
       opacity: 0.95,
@@ -219,7 +185,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     const innerTriGeom = new THREE.BufferGeometry().setFromPoints(innerTriShape.getPoints());
     const innerTriMat = new THREE.LineBasicMaterial({
-      color: 0x00f0ff,
+      color: 0xfbbf24,
       transparent: true,
       opacity: 0.85,
       blending: THREE.AdditiveBlending,
@@ -254,13 +220,13 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
         const a = startA + (j / steps) * (endA - startA);
         pts.push(new THREE.Vector3(Math.cos(a) * statorRInner, Math.sin(a) * statorRInner, 0));
       }
-      pts.push(pts[0].clone()); // Close loop
+      pts.push(pts[0].clone());
 
       const statorGeom = new THREE.BufferGeometry().setFromPoints(pts);
       const statorMat = new THREE.LineBasicMaterial({
-        color: 0x00f0ff,
+        color: 0xf59e0b,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.78,
         blending: THREE.AdditiveBlending,
       });
       const statorMesh = new THREE.Line(statorGeom, statorMat);
@@ -268,7 +234,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       statorBlocks.push(statorMesh);
     }
 
-    // 3. Volumetric Acoustic Plasma Shader Core
+    // 3. Volumetric Acoustic Plasma Shader Core (Molten Amber-Gold)
     const plasmaVertexShader = `
       uniform float uTime;
       uniform float uBass;
@@ -282,9 +248,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       void main() {
         float freq1 = 3.0 + floor(uPitch * 4.0);
         float freq2 = 6.0 + floor(uPitch * 6.0);
-        float waveBass = sin(position.x * freq1 + uTime * 3.2) * cos(position.y * freq1 - uTime * 2.6) * uBass * 0.26;
-        float waveMid = sin(position.y * freq2 - uTime * 5.0) * sin(position.z * freq2 + uTime * 4.2) * uMid * 0.20;
-        float waveTreble = cos(position.x * 14.0 + position.z * 14.0 + uTime * 9.0) * uTreble * 0.10;
+        float waveBass = sin(position.x * freq1 + uTime * 3.2) * cos(position.y * freq1 - uTime * 2.6) * uBass * 0.28;
+        float waveMid = sin(position.y * freq2 - uTime * 5.0) * sin(position.z * freq2 + uTime * 4.2) * uMid * 0.22;
+        float waveTreble = cos(position.x * 14.0 + position.z * 14.0 + uTime * 9.0) * uTreble * 0.12;
 
         float displacement = waveBass + waveMid + waveTreble;
         vDisplacement = displacement;
@@ -322,17 +288,17 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
         float plasmaWave = sin(normal.x * (6.0 + uPitch * 8.0) + uTime * 3.5)
                          * cos(normal.y * (6.0 + uMid * 8.0) - uTime * 2.8);
-        float filament = smoothstep(-0.2, 0.8, plasmaWave) * (0.25 + uMid * 0.75 + uTreble * 0.5);
+        float filament = smoothstep(-0.2, 0.8, plasmaWave) * (0.3 + uMid * 0.8 + uTreble * 0.5);
 
-        float hotCore = pow(radial, 3.6 - uBass * 1.4) * (1.25 + uAudioPulse * 1.15);
+        float hotCore = pow(radial, 3.4 - uBass * 1.4) * (1.3 + uAudioPulse * 1.2);
 
-        vec3 color = mix(uColorMid, uColorCore, pow(radial, 1.5));
-        color = mix(color, uColorRim, rimGlow * 0.85);
-        color += uColorCore * filament * 0.45;
-        color += vec3(1.0, 1.0, 1.0) * (hotCore * 0.65 + clamp(vDisplacement * 2.5, 0.0, 0.6));
+        vec3 color = mix(uColorMid, uColorCore, pow(radial, 1.4));
+        color = mix(color, uColorRim, rimGlow * 0.9);
+        color += uColorCore * filament * 0.5;
+        color += vec3(1.0, 0.96, 0.88) * (hotCore * 0.7 + clamp(vDisplacement * 2.5, 0.0, 0.6));
 
-        float alpha = clamp(pow(radial, 1.05) * 0.92 + rimGlow * 0.96, 0.0, 1.0);
-        alpha *= (0.85 + uAudioPulse * 0.15);
+        float alpha = clamp(pow(radial, 1.05) * 0.94 + rimGlow * 0.98, 0.0, 1.0);
+        alpha *= (0.88 + uAudioPulse * 0.15);
 
         gl_FragColor = vec4(color, alpha);
       }
@@ -345,9 +311,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       uMid: { value: 0 },
       uTreble: { value: 0 },
       uPitch: { value: 0.25 },
-      uColorCore: { value: new THREE.Color(0xffffff) },
-      uColorMid: { value: new THREE.Color(0x00f0ff) },
-      uColorRim: { value: new THREE.Color(0x0055ff) },
+      uColorCore: { value: new THREE.Color(0xfffaed) },
+      uColorMid: { value: new THREE.Color(0xf59e0b) },
+      uColorRim: { value: new THREE.Color(0xd97706) },
     };
 
     const plasmaMaterial = new THREE.ShaderMaterial({
@@ -369,10 +335,10 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       (geodesicGeom.attributes.position as THREE.BufferAttribute).array
     );
     const geodesicMat = new THREE.MeshBasicMaterial({
-      color: 0x00f0ff,
+      color: 0xfbbf24,
       wireframe: true,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.35,
       blending: THREE.AdditiveBlending,
     });
     const geodesicMesh = new THREE.Mesh(geodesicGeom, geodesicMat);
@@ -382,7 +348,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     // B. 3D ACOUSTIC WAVE POINT-CLOUD SHELL (Image 4 & Image 2)
     // ==========================================
     // 2,400 points uniformly distributed on a Fibonacci Sphere surface (radius = 3.65)
-    // In render loop, points are dynamically displaced by live audio frequency harmonics!
+    // Points dynamically displace by live vocal harmonics in the render loop!
     const pointCount = 2400;
     const waveShellGeom = new THREE.BufferGeometry();
     const waveShellPos = new Float32Array(pointCount * 3);
@@ -391,8 +357,8 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     const goldenRatio = (1 + Math.sqrt(5)) / 2;
     for (let i = 0; i < pointCount; i++) {
-      const theta = 2 * Math.PI * i / goldenRatio;
-      const phi = Math.acos(1 - 2 * (i + 0.5) / pointCount);
+      const theta = (2 * Math.PI * i) / goldenRatio;
+      const phi = Math.acos(1 - (2 * (i + 0.5)) / pointCount);
 
       const x = Math.cos(theta) * Math.sin(phi);
       const y = Math.sin(theta) * Math.sin(phi);
@@ -410,10 +376,10 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     waveShellGeom.setAttribute('position', new THREE.BufferAttribute(waveShellPos, 3));
     const waveShellMat = new THREE.PointsMaterial({
       map: sparkTex,
-      color: 0x00f0ff,
-      size: 0.36,
+      color: 0xfbbf24,
+      size: 0.38,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -421,70 +387,130 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     reactorGroup.add(waveShellPoints);
 
     // ==========================================
-    // C. SCRIBED ORBITAL RADAR TRACKS & LONGITUDE/LATITUDE ARCS (Image 1)
+    // C. ICONIC 3D INCLINED CELESTIAL GYROSCOPE RINGS (Image 2 & Image 3)
+    // Recreating the striking diagonal orbital ring slicing through the sphere
     // ==========================================
-    const orbitalGroup = new THREE.Group();
-    // Tilted at 23.5° like a planetary celestial hologram (Image 1)
-    orbitalGroup.rotation.x = THREE.MathUtils.degToRad(23.5);
-    reactorGroup.add(orbitalGroup);
+    // 1. Primary Inclined Celestial Ring (tilted ~35° on X, 18° on Y)
+    const gyroGroup1 = new THREE.Group();
+    gyroGroup1.rotation.x = THREE.MathUtils.degToRad(35);
+    gyroGroup1.rotation.y = THREE.MathUtils.degToRad(18);
+    reactorGroup.add(gyroGroup1);
 
-    // Orbital ring 1 (Latitude Ring)
-    const orbRing1Geom = new THREE.BufferGeometry().setFromPoints(
-      new THREE.EllipseCurve(0, 0, 4.35, 4.35, 0, Math.PI * 2, false, 0).getPoints(140)
+    const gyroRingRadius = 4.75;
+    const gyroRingGeom = new THREE.BufferGeometry().setFromPoints(
+      new THREE.EllipseCurve(0, 0, gyroRingRadius, gyroRingRadius, 0, Math.PI * 2, false, 0).getPoints(160)
     );
-    const orbRing1Mat = new THREE.LineBasicMaterial({
-      color: 0x0284c7,
+    const gyroRingMat = new THREE.LineBasicMaterial({
+      color: 0xf59e0b,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.85,
       blending: THREE.AdditiveBlending,
     });
-    const orbRing1 = new THREE.LineLoop(orbRing1Geom, orbRing1Mat);
-    orbitalGroup.add(orbRing1);
+    const gyroRing1 = new THREE.LineLoop(gyroRingGeom, gyroRingMat);
+    gyroGroup1.add(gyroRing1);
 
-    // Orbital ring 2 (Outer Polar Ring)
-    const orbRing2Geom = new THREE.BufferGeometry().setFromPoints(
-      new THREE.EllipseCurve(0, 0, 5.15, 5.15, 0, Math.PI * 2, false, 0).getPoints(140)
+    // Concentric Inner Filament Ring
+    const gyroInnerRadius = 4.45;
+    const gyroInnerGeom = new THREE.BufferGeometry().setFromPoints(
+      new THREE.EllipseCurve(0, 0, gyroInnerRadius, gyroInnerRadius, 0, Math.PI * 2, false, 0).getPoints(140)
     );
-    const orbRing2Mat = new THREE.LineBasicMaterial({
-      color: 0x38bdf8,
-      transparent: true,
-      opacity: 0.4,
-      blending: THREE.AdditiveBlending,
-    });
-    const orbRing2 = new THREE.LineLoop(orbRing2Geom, orbRing2Mat);
-    orbitalGroup.add(orbRing2);
-
-    // Scribed Tick Marks on Orbital Track (Image 1)
-    const orbTicks = 80;
-    const orbTickPos = new Float32Array(orbTicks * 2 * 3);
-    for (let i = 0; i < orbTicks; i++) {
-      const a = (i / orbTicks) * Math.PI * 2;
-      const isMajor = i % 8 === 0;
-      const rIn = 4.35;
-      const rOut = rIn + (isMajor ? 0.22 : 0.1);
-      orbTickPos[i * 6] = Math.cos(a) * rIn;
-      orbTickPos[i * 6 + 1] = Math.sin(a) * rIn;
-      orbTickPos[i * 6 + 2] = 0;
-      orbTickPos[i * 6 + 3] = Math.cos(a) * rOut;
-      orbTickPos[i * 6 + 4] = Math.sin(a) * rOut;
-      orbTickPos[i * 6 + 5] = 0;
-    }
-    const orbTickGeom = new THREE.BufferGeometry();
-    orbTickGeom.setAttribute('position', new THREE.BufferAttribute(orbTickPos, 3));
-    const orbTickMat = new THREE.LineBasicMaterial({
-      color: 0x00f0ff,
+    const gyroInnerMat = new THREE.LineBasicMaterial({
+      color: 0xd97706,
       transparent: true,
       opacity: 0.65,
       blending: THREE.AdditiveBlending,
     });
-    const orbTickSegments = new THREE.LineSegments(orbTickGeom, orbTickMat);
-    orbitalGroup.add(orbTickSegments);
+    const gyroInnerRing = new THREE.LineLoop(gyroInnerGeom, gyroInnerMat);
+    gyroGroup1.add(gyroInnerRing);
+
+    // Scribed Circuit Dash Segments along Inclined Ring
+    const gyroTicks = 72;
+    const gyroTickPos = new Float32Array(gyroTicks * 2 * 3);
+    for (let i = 0; i < gyroTicks; i++) {
+      const a = (i / gyroTicks) * Math.PI * 2;
+      const isMajor = i % 6 === 0;
+      const rIn = gyroInnerRadius;
+      const rOut = rIn + (isMajor ? 0.35 : 0.15);
+      gyroTickPos[i * 6] = Math.cos(a) * rIn;
+      gyroTickPos[i * 6 + 1] = Math.sin(a) * rIn;
+      gyroTickPos[i * 6 + 2] = 0;
+      gyroTickPos[i * 6 + 3] = Math.cos(a) * rOut;
+      gyroTickPos[i * 6 + 4] = Math.sin(a) * rOut;
+      gyroTickPos[i * 6 + 5] = 0;
+    }
+    const gyroTickGeom = new THREE.BufferGeometry();
+    gyroTickGeom.setAttribute('position', new THREE.BufferAttribute(gyroTickPos, 3));
+    const gyroTickMat = new THREE.LineBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending,
+    });
+    const gyroTickSegments = new THREE.LineSegments(gyroTickGeom, gyroTickMat);
+    gyroGroup1.add(gyroTickSegments);
+
+    // 2. Counter-Tilted Gyroscope Orbital Ring (tilted -28° on X, -16° on Z)
+    const gyroGroup2 = new THREE.Group();
+    gyroGroup2.rotation.x = THREE.MathUtils.degToRad(-28);
+    gyroGroup2.rotation.z = THREE.MathUtils.degToRad(-16);
+    reactorGroup.add(gyroGroup2);
+
+    const gyroRing2Radius = 5.35;
+    const gyroRing2Geom = new THREE.BufferGeometry().setFromPoints(
+      new THREE.EllipseCurve(0, 0, gyroRing2Radius, gyroRing2Radius, 0, Math.PI * 2, false, 0).getPoints(160)
+    );
+    const gyroRing2Mat = new THREE.LineBasicMaterial({
+      color: 0xd97706,
+      transparent: true,
+      opacity: 0.6,
+      blending: THREE.AdditiveBlending,
+    });
+    const gyroRing2 = new THREE.LineLoop(gyroRing2Geom, gyroRing2Mat);
+    gyroGroup2.add(gyroRing2);
+
+    // High-speed orbiting beacon spark nodes along inclined tracks
+    const beaconCount = 6;
+    const beaconGeom = new THREE.BufferGeometry();
+    const beaconPos = new Float32Array(beaconCount * 3);
+    beaconGeom.setAttribute('position', new THREE.BufferAttribute(beaconPos, 3));
+    const beaconMat = new THREE.PointsMaterial({
+      map: sparkTex,
+      color: 0xfffaed,
+      size: 0.65,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const beaconPoints = new THREE.Points(beaconGeom, beaconMat);
+    gyroGroup1.add(beaconPoints);
 
     // ==========================================
-    // D. LIVE 120-BAR RADIAL EQUALIZER & OSCILLOSCOPE RIBBONS
+    // D. DENSE CONCENTRIC SCHEMATIC DIALS & 120-BAR EQUALIZER (Image 3)
     // ==========================================
     const telemetryGroup = new THREE.Group();
     reactorGroup.add(telemetryGroup);
+
+    // Concentric Segmented Holographic Arcs (Image 3)
+    const arcCount = 4;
+    const arcMeshes: THREE.Line[] = [];
+    for (let k = 0; k < arcCount; k++) {
+      const arcRadius = 3.9 + k * 0.45;
+      const arcAngleSpan = (Math.PI * 0.65) / (k + 1);
+      const arcGeom = new THREE.BufferGeometry().setFromPoints(
+        new THREE.EllipseCurve(0, 0, arcRadius, arcRadius, 0, arcAngleSpan, false, 0).getPoints(30)
+      );
+      const arcMat = new THREE.LineBasicMaterial({
+        color: 0xf59e0b,
+        transparent: true,
+        opacity: 0.7 - k * 0.1,
+        blending: THREE.AdditiveBlending,
+      });
+      const arcMesh = new THREE.Line(arcGeom, arcMat);
+      arcMesh.rotation.z = (k * Math.PI) / 2;
+      telemetryGroup.add(arcMesh);
+      arcMeshes.push(arcMesh);
+    }
 
     // Live 120-Bar Radial Frequency Spectrum Chronograph Dial
     const dialTicks = 120;
@@ -495,8 +521,8 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       const angle = (i / dialTicks) * Math.PI * 2;
       const isMajor = i % 10 === 0;
       const isMid = i % 5 === 0;
-      const rInner = 5.85;
-      const rOuter = rInner + (isMajor ? 0.35 : isMid ? 0.2 : 0.1);
+      const rInner = 5.95;
+      const rOuter = rInner + (isMajor ? 0.38 : isMid ? 0.22 : 0.12);
 
       tickPositions[i * 6] = Math.cos(angle) * rInner;
       tickPositions[i * 6 + 1] = Math.sin(angle) * rInner;
@@ -508,9 +534,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const dialLineGeom = new THREE.BufferGeometry();
     dialLineGeom.setAttribute('position', new THREE.BufferAttribute(tickPositions, 3));
     const dialLineMaterial = new THREE.LineBasicMaterial({
-      color: 0x00f0ff,
+      color: 0xf59e0b,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.82,
       blending: THREE.AdditiveBlending,
     });
     const dialLineSegments = new THREE.LineSegments(dialLineGeom, dialLineMaterial);
@@ -531,10 +557,10 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     waveGeom.setAttribute('position', new THREE.BufferAttribute(wavePositions, 3));
 
     const waveMat = new THREE.LineBasicMaterial({
-      color: 0x00f0ff,
+      color: 0xfbbf24,
       linewidth: 2,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.88,
       blending: THREE.AdditiveBlending,
     });
     const waveRing = new THREE.LineLoop(waveGeom, waveMat);
@@ -543,9 +569,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     // Outer Horizon Boundary with Cardinal Laser Ticks
     const outerHorizonGeom = new THREE.TorusGeometry(8.9, 0.02, 8, 140);
     const outerHorizonMat = new THREE.MeshBasicMaterial({
-      color: 0x0284c7,
+      color: 0xd97706,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.4,
       blending: THREE.AdditiveBlending,
     });
     const outerHorizon = new THREE.Mesh(outerHorizonGeom, outerHorizonMat);
@@ -554,7 +580,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     // ==========================================
     // E. FLOATING AMBIENT STARDUST CONSTELLATION EMBERS (Image 5)
     // ==========================================
-    const stardustCount = 800;
+    const stardustCount = 850;
     const stardustGeom = new THREE.BufferGeometry();
     const stardustPositions = new Float32Array(stardustCount * 3);
     const stardustData: { r: number; theta: number; phi: number; speed: number; pulseSpeed: number }[] = [];
@@ -580,10 +606,10 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     stardustGeom.setAttribute('position', new THREE.BufferAttribute(stardustPositions, 3));
     const stardustMat = new THREE.PointsMaterial({
       map: sparkTex,
-      color: 0x00f0ff,
+      color: 0xf59e0b,
       size: 0.28,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.7,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -617,7 +643,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     };
     window.addEventListener('touchmove', handleTouchMove, { passive: true });
 
-    // Click handler on core
+    // Click handler on reactor
     const handleCanvasClick = (e: MouseEvent | TouchEvent) => {
       e.preventDefault();
       onReactorClick?.();
@@ -665,38 +691,39 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       const freqArray = telemetry.frequencyData;
       const timeArray = telemetry.timeDomainData;
 
-      // Dynamic Color Palettes (Cyan for Listening ↔ Amber-Gold for Speaking - Image 1)
+      // Pure Stark Gold / Molten Amber Color Modulation (Image 2 & Image 3)
       let pulseMod = 1.0;
-      const targetCore = new THREE.Color(0xffffff);
-      const targetMid = new THREE.Color(0x00f0ff);
-      const targetRim = new THREE.Color(0x0055ff);
+      const targetCore = new THREE.Color(0xfffaed);
+      const targetMid = new THREE.Color(0xf59e0b);
+      const targetRim = new THREE.Color(0xd97706);
 
       if (currentState === 'listening') {
-        // Acoustic Ingest Receptor Mode (Bioluminescent Emerald & Electric Cyan)
-        pulseMod = 1.15 + smoothVol * 4.5 + smoothBass * 2.2;
-        const emerald = new THREE.Color(0x10b981);
-        const electricCyan = new THREE.Color(0x00f0ff);
-        targetMid.copy(emerald).lerp(electricCyan, smoothPitch);
-        targetRim.setHex(0x00ffa3).lerp(new THREE.Color(0x0284c7), smoothPitch);
+        // High-energy Solar Gold Vortex (listening to human voice)
+        pulseMod = 1.25 + smoothVol * 4.8 + smoothBass * 2.5;
+        const brightSolarGold = new THREE.Color(0xfde047);
+        const intenseAmber = new THREE.Color(0xf59e0b);
+        targetMid.copy(brightSolarGold).lerp(intenseAmber, 0.4 + smoothPitch * 0.3);
+        targetRim.setHex(0xd97706).lerp(new THREE.Color(0xb45309), smoothBass * 0.4);
         targetCore.setHex(0xffffff);
       } else if (currentState === 'speaking') {
-        // J.A.R.V.I.S. Movie Hologram Mode (Stark Amber-Gold & Warm Plasma - Image 1)
-        pulseMod = 1.25 + smoothVol * 4.2 + smoothMid * 2.5;
+        // Canonical J.A.R.V.I.S. Molten Amber-Gold Voice Waves (Image 1, 2, 3)
+        pulseMod = 1.35 + smoothVol * 4.5 + smoothMid * 2.6;
         const warmGold = new THREE.Color(0xf59e0b);
-        const brightAmber = new THREE.Color(0xfbbf24);
-        targetMid.copy(warmGold).lerp(brightAmber, smoothMid * 0.7 + smoothPitch * 0.3);
-        targetRim.setHex(0xd97706).lerp(new THREE.Color(0xb45309), smoothBass * 0.5);
-        targetCore.setHex(0xfffbeb).lerp(new THREE.Color(0xfef08a), smoothMid * 0.6);
+        const moltenOrange = new THREE.Color(0xf97316);
+        targetMid.copy(warmGold).lerp(moltenOrange, smoothMid * 0.6 + smoothPitch * 0.4);
+        targetRim.setHex(0xc2410c).lerp(new THREE.Color(0x9a3412), smoothBass * 0.5);
+        targetCore.setHex(0xfffbeb).lerp(new THREE.Color(0xfef08a), smoothMid * 0.7);
       } else if (currentState === 'processing') {
         pulseMod = 1.6 + Math.sin(time * 8) * 0.4;
-        targetCore.setHex(0xfef08a);
+        targetCore.setHex(0xffffff);
+        targetMid.setHex(0xfbbf24);
+        targetRim.setHex(0xea580c);
+      } else {
+        // Idle: Deep radiant Stark Amber-Gold
+        pulseMod = 1.0 + Math.sin(time * 1.2) * 0.05;
+        targetCore.setHex(0xfffaed);
         targetMid.setHex(0xf59e0b);
         targetRim.setHex(0xd97706);
-      } else {
-        pulseMod = 1.0 + Math.sin(time * 1.2) * 0.04;
-        targetCore.setHex(0xffffff);
-        targetMid.setHex(0x00f0ff);
-        targetRim.setHex(0x0044cc);
       }
 
       // 1. Mouse/Touch Gyroscopic Parallax
@@ -708,8 +735,8 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
       // 2. Mark-VI Triangular Core & Stator Rotation
       const speedMult = currentState === 'processing' ? 3.0 : 1.0;
-      triangleGroup.rotation.z += 0.002 * speedMult + smoothBass * 0.015;
-      statorGroup.rotation.z -= 0.0015 * speedMult + smoothMid * 0.012;
+      triangleGroup.rotation.z += 0.0025 * speedMult + smoothBass * 0.015;
+      statorGroup.rotation.z -= 0.0018 * speedMult + smoothMid * 0.012;
 
       // Pulse triangle and stators on audio
       triLineMat.color.lerp(targetCore, 0.14);
@@ -720,16 +747,10 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       statorBlocks.forEach((b, idx) => {
         const mat = b.material as THREE.LineBasicMaterial;
         mat.color.lerp(targetMid, 0.14);
-        mat.opacity = 0.5 + smoothVol * 0.5 + (idx % 2 === 0 ? smoothTreble * 0.3 : 0);
+        mat.opacity = 0.55 + smoothVol * 0.45 + (idx % 2 === 0 ? smoothTreble * 0.25 : 0);
       });
 
-      // 3. Anamorphic Horizontal Laser Flares (Image 3)
-      flareSprite.scale.x = 18 + smoothVol * 14 + smoothBass * 8;
-      flareSprite.scale.y = 1.8 + smoothVol * 2.2;
-      flareMat.color.lerp(targetMid, 0.14);
-      flareMat.opacity = 0.35 + smoothVol * 0.65;
-
-      // 4. Volumetric Acoustic Plasma Shader Core
+      // 3. Volumetric Acoustic Plasma Shader Core
       plasmaUniforms.uTime.value = time;
       plasmaUniforms.uAudioPulse.value = smoothVol;
       plasmaUniforms.uBass.value = smoothBass;
@@ -744,218 +765,226 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       const audioScale = baseScale + smoothBass * 0.55 + smoothVol * 0.45;
       coreContainer.scale.set(audioScale, audioScale, audioScale);
 
-      const spriteScale = 9.8 + smoothVol * 6.5 + smoothBass * 3.2 + Math.sin(time * 2) * 0.15;
+      const spriteScale = 10.5 + smoothVol * 7.0 + smoothBass * 3.5 + Math.sin(time * 2) * 0.15;
       bloomSprite.scale.set(spriteScale, spriteScale, 1);
-      bloomSpriteMat.opacity = Math.min(0.95, 0.52 + smoothVol * 0.48);
+      bloomSpriteMat.opacity = Math.min(0.95, 0.58 + smoothVol * 0.42);
       bloomSpriteMat.color.lerp(targetMid, 0.14);
 
-      coreLight.intensity = 4.5 + smoothVol * 14.0;
-      pointLight.intensity = 2.8 + smoothVol * 9.0;
+      coreLight.intensity = 5.0 + smoothVol * 15.0;
+      pointLight.intensity = 3.2 + smoothVol * 10.0;
       pointLight.color.lerp(targetMid, 0.14);
 
-      // 5. Geodesic Wireframe Deformation (Image 2)
-      geodesicMesh.rotation.y -= 0.002 * pulseMod;
-      geodesicMesh.rotation.x += 0.0012 * smoothMid;
+      // 4. Geodesic Wireframe Deformation (Image 2)
+      geodesicMesh.rotation.y -= 0.0025 * pulseMod;
+      geodesicMesh.rotation.x += 0.0015 * smoothMid;
       geodesicMat.color.lerp(targetMid, 0.14);
-      geodesicMat.opacity = 0.25 + smoothVol * 0.5;
+      geodesicMat.opacity = 0.28 + smoothVol * 0.48;
 
-      const geoPosAttr = geodesicGeom.attributes.position as THREE.BufferAttribute;
-      const geoPosArr = geoPosAttr.array as Float32Array;
-      const vertexCount = geoPosAttr.count;
+      const geoPositions = geodesicGeom.attributes.position as THREE.BufferAttribute;
+      const geoArr = geoPositions.array as Float32Array;
+      const geoLen = geoArr.length / 3;
 
-      for (let i = 0; i < vertexCount; i++) {
+      for (let i = 0; i < geoLen; i++) {
         const bx = baseGeodesicPos[i * 3];
         const by = baseGeodesicPos[i * 3 + 1];
         const bz = baseGeodesicPos[i * 3 + 2];
 
-        let deform = 1.0;
-        if (isActiveAudio && freqArray.length > 0) {
-          const binIdx = 1 + ((i * 7) % 44);
-          const binVal = (freqArray[binIdx] || 0) / 255;
-          const waveSample = timeArray.length > 0 ? (timeArray[i % timeArray.length] - 128) / 128 : 0;
-          deform =
-            1.0 +
-            binVal * (currentState === 'listening' ? 0.36 : 0.30) +
-            waveSample * 0.14 * smoothVol;
-        } else if (currentState === 'processing') {
-          deform = 1.0 + Math.sin(time * 8 + bx * 2 + by * 2) * 0.09;
-        }
+        const harmonic = Math.sin(bx * 3.5 + time * 4.0) * Math.cos(by * 3.5 - time * 3.0);
+        const disp = 1.0 + harmonic * (smoothBass * 0.28 + smoothMid * 0.18);
 
-        geoPosArr[i * 3] = bx * deform;
-        geoPosArr[i * 3 + 1] = by * deform;
-        geoPosArr[i * 3 + 2] = bz * deform;
+        geoArr[i * 3] = bx * disp;
+        geoArr[i * 3 + 1] = by * disp;
+        geoArr[i * 3 + 2] = bz * disp;
       }
-      geoPosAttr.needsUpdate = true;
+      geoPositions.needsUpdate = true;
 
-      // 6. 3D Acoustic Wave Point-Cloud Shell (Image 4 & Image 2)
-      // Displaces 2,400 points in 3D using spherical harmonics and live FFT
-      const shellPosAttr = waveShellGeom.attributes.position as THREE.BufferAttribute;
-      const shellPosArr = shellPosAttr.array as Float32Array;
+      // 5. 3D Acoustic Wave Shell Harmonic Deformation (Images 2 & 4)
+      const shellPositions = waveShellGeom.attributes.position as THREE.BufferAttribute;
+      const shellArr = shellPositions.array as Float32Array;
 
-      waveShellPoints.rotation.y += 0.0015 * (1 + smoothMid * 2.5);
-      waveShellPoints.rotation.z -= 0.0008 * (1 + smoothTreble * 3.0);
-      waveShellMat.color.lerp(targetMid, 0.14);
-      waveShellMat.size = 0.34 + smoothVol * 0.22 + smoothTreble * 0.15;
+      // Acoustic deformation physics
+      const freqStride = freqArray && freqArray.length > 0 ? Math.floor(freqArray.length / 32) : 1;
+      const isListening = currentState === 'listening';
 
       for (let i = 0; i < pointCount; i++) {
         const bx = baseWaveShellPos[i * 3];
         const by = baseWaveShellPos[i * 3 + 1];
         const bz = baseWaveShellPos[i * 3 + 2];
 
-        // Spherical coordinate factors
-        const normX = bx / shellBaseR;
-        const normY = by / shellBaseR;
-        const normZ = bz / shellBaseR;
+        // Map point index to frequency spectrum bin
+        const binIdx = freqArray && freqArray.length > 0 ? ((i % 32) * freqStride) % freqArray.length : 0;
+        const binVal = freqArray ? freqArray[binIdx] / 255 : 0;
 
-        let radialFactor = 1.0;
+        // Spherical harmonic wave ripples
+        const wave1 = Math.sin(bx * 2.2 + time * 3.6) * Math.cos(bz * 2.2 - time * 2.8);
+        const wave2 = Math.sin(by * 4.5 - time * 5.2) * Math.cos(bx * 3.8 + time * 4.0);
 
-        if (isActiveAudio) {
-          // Harmonic wave distortion
-          const wave1 = Math.sin(normX * 8.0 + time * 6.0) * Math.cos(normY * 8.0 - time * 5.0);
-          const wave2 = Math.cos(normZ * 12.0 + time * 8.0) * smoothTreble;
-          const fftBin = 1 + ((i * 5) % 40);
-          const fftVal = ((freqArray[fftBin] || 0) / 255) * 0.8;
-
-          if (currentState === 'listening') {
-            // Ingest mode: ripples pull inward toward core
-            radialFactor = 1.0 - smoothVol * 0.35 + wave1 * (0.15 + smoothMid * 0.35) + fftVal * 0.25;
-          } else {
-            // Projection mode: sound shockwave billows outward
-            radialFactor = 1.0 + smoothVol * 0.45 + wave1 * (0.2 + smoothMid * 0.4) + wave2 * 0.18 + fftVal * 0.35;
-          }
-        } else if (currentState === 'processing') {
-          radialFactor = 1.0 + Math.sin(normX * 6 + normY * 6 + time * 10) * 0.12;
+        let dynamicR: number;
+        if (isListening) {
+          // Acoustic Ingestion Vortex: shell contracts inward while audio ripples along surface
+          const suckEffect = 0.88 - smoothVol * 0.18;
+          const ripple = (wave1 * 0.6 + wave2 * 0.4) * (smoothVol * 0.55 + binVal * 0.35);
+          dynamicR = shellBaseR * suckEffect + ripple;
+        } else if (currentState === 'speaking') {
+          // J.A.R.V.I.S. Voice Projection: acoustic shockwaves billow outward
+          const outwardBlast = 1.0 + smoothVol * 0.42 + smoothBass * 0.35;
+          const ripple = (wave1 * 0.7 + wave2 * 0.5) * (smoothMid * 0.6 + binVal * 0.4);
+          dynamicR = shellBaseR * outwardBlast + ripple;
         } else {
-          // Ambient breathing ripple
-          radialFactor = 1.0 + Math.sin(normX * 4 + time * 2) * Math.cos(normY * 4 + time * 1.5) * 0.05;
+          // Ambient idle breathing
+          const gentleBreath = Math.sin(time * 1.5 + bx * 0.8) * 0.08;
+          dynamicR = shellBaseR + gentleBreath;
         }
 
-        shellPosArr[i * 3] = bx * radialFactor;
-        shellPosArr[i * 3 + 1] = by * radialFactor;
-        shellPosArr[i * 3 + 2] = bz * radialFactor;
+        const len = Math.sqrt(bx * bx + by * by + bz * bz) || 1;
+        const dirX = bx / len;
+        const dirY = by / len;
+        const dirZ = bz / len;
+
+        shellArr[i * 3] = dirX * dynamicR;
+        shellArr[i * 3 + 1] = dirY * dynamicR;
+        shellArr[i * 3 + 2] = dirZ * dynamicR;
       }
-      shellPosAttr.needsUpdate = true;
+      shellPositions.needsUpdate = true;
 
-      // 7. Scribed Orbital Tracks Rotation & Color (Image 1)
-      orbitalGroup.rotation.z += 0.001 * speedMult + smoothBass * 0.015;
-      orbRing1Mat.color.lerp(targetMid, 0.14);
-      orbRing2Mat.color.lerp(targetRim, 0.14);
-      orbTickMat.color.lerp(targetMid, 0.14);
+      // Color and size modulation for point shell
+      waveShellMat.color.lerp(targetMid, 0.14);
+      waveShellMat.size = 0.38 + smoothVol * 0.45 + smoothBass * 0.22;
+      waveShellMat.opacity = Math.min(1.0, 0.75 + smoothVol * 0.35);
 
-      // 8. 120-Bar Radial Equalizer Dial (Image 2)
+      // 6. 3D Inclined Celestial Gyroscope Rings (Image 2)
+      // Rotates smoothly in 3D, accelerating on vocal mid/treble transients
+      gyroGroup1.rotation.z += 0.0016 * speedMult + smoothMid * 0.015;
+      gyroGroup2.rotation.z -= 0.0012 * speedMult + smoothBass * 0.012;
+
+      gyroRingMat.color.lerp(targetMid, 0.14);
+      gyroInnerMat.color.lerp(targetRim, 0.14);
+      gyroTickMat.color.lerp(targetMid, 0.14);
+      gyroRing2Mat.color.lerp(targetRim, 0.14);
+
+      // Orbiting beacon sparks along inclined track
+      const bPosAttr = beaconGeom.attributes.position as THREE.BufferAttribute;
+      const bPosArr = bPosAttr.array as Float32Array;
+      for (let b = 0; b < beaconCount; b++) {
+        const beaconAngle = time * (0.8 + b * 0.2) + (b * Math.PI * 2) / beaconCount;
+        bPosArr[b * 3] = Math.cos(beaconAngle) * gyroRingRadius;
+        bPosArr[b * 3 + 1] = Math.sin(beaconAngle) * gyroRingRadius;
+        bPosArr[b * 3 + 2] = Math.sin(time * 3 + b) * 0.12;
+      }
+      bPosAttr.needsUpdate = true;
+      beaconMat.color.lerp(targetCore, 0.14);
+
+      // 7. Concentric Schematic Arcs & Telemetry (Image 3)
+      arcMeshes.forEach((arc, idx) => {
+        arc.rotation.z += (idx % 2 === 0 ? 1 : -1) * (0.002 + idx * 0.001) * speedMult + smoothMid * 0.008;
+        const mat = arc.material as THREE.LineBasicMaterial;
+        mat.color.lerp(targetMid, 0.14);
+        mat.opacity = 0.6 + smoothVol * 0.4;
+      });
+
+      // 8. Live 120-Bar Radial Equalizer Dial
       dialLineSegments.rotation.z -= 0.0006 * speedMult + smoothBass * 0.016;
+      dialLineMaterial.color.lerp(targetMid, 0.14);
+
       const dialPosAttr = dialLineGeom.attributes.position as THREE.BufferAttribute;
-      const dialPosArray = dialPosAttr.array as Float32Array;
+      const dialArr = dialPosAttr.array as Float32Array;
+      const numBins = freqArray ? freqArray.length : 0;
 
       for (let i = 0; i < dialTicks; i++) {
         const angle = (i / dialTicks) * Math.PI * 2;
         const isMajor = i % 10 === 0;
         const isMid = i % 5 === 0;
-        const baseTickLen = isMajor ? 0.35 : isMid ? 0.2 : 0.1;
+        const rInner = 5.95;
 
-        let targetBinEnergy = 0;
-        if (isActiveAudio && freqArray.length > 0) {
-          const quadrantPos = i % 30;
-          const mirroredBin = quadrantPos < 15 ? 1 + quadrantPos * 2 : 1 + (29 - quadrantPos) * 2;
-          targetBinEnergy = ((freqArray[mirroredBin] || 0) / 255) * (0.6 + smoothVol * 0.95);
-        } else if (currentState === 'processing') {
-          targetBinEnergy = Math.max(0, Math.sin(angle * 4 - time * 8)) * 0.45;
-        }
+        // Symmetric frequency spectrum mapping
+        const foldedIndex = i < dialTicks / 2 ? i : dialTicks - 1 - i;
+        const freqBinIndex = numBins > 0 ? Math.floor((foldedIndex / (dialTicks / 2)) * (numBins * 0.7)) : 0;
+        const rawAmp = (freqArray && isActiveAudio) ? freqArray[freqBinIndex] / 255 : 0;
 
-        smoothedTickBins[i] +=
-          (targetBinEnergy - smoothedTickBins[i]) *
-          (targetBinEnergy > smoothedTickBins[i] ? 0.48 : 0.18);
+        // Smooth bin values with fast attack / gentle decay
+        smoothedTickBins[i] += (rawAmp - smoothedTickBins[i]) * (rawAmp > smoothedTickBins[i] ? 0.45 : 0.16);
+        const dynamicAmp = smoothedTickBins[i] * 1.5;
 
-        const rInner = 5.85 - smoothedTickBins[i] * 0.25;
-        const rOuter = 5.85 + baseTickLen + smoothedTickBins[i] * 1.55;
+        const baseExtension = isMajor ? 0.38 : isMid ? 0.22 : 0.12;
+        const rOuter = rInner + baseExtension + dynamicAmp + smoothVol * 0.4;
 
-        dialPosArray[i * 6] = Math.cos(angle) * rInner;
-        dialPosArray[i * 6 + 1] = Math.sin(angle) * rInner;
-        dialPosArray[i * 6 + 2] = smoothedTickBins[i] * 0.2;
-        dialPosArray[i * 6 + 3] = Math.cos(angle) * rOuter;
-        dialPosArray[i * 6 + 4] = Math.sin(angle) * rOuter;
-        dialPosArray[i * 6 + 5] = smoothedTickBins[i] * 0.35;
+        dialArr[i * 6] = Math.cos(angle) * rInner;
+        dialArr[i * 6 + 1] = Math.sin(angle) * rInner;
+        dialArr[i * 6 + 2] = 0;
+        dialArr[i * 6 + 3] = Math.cos(angle) * rOuter;
+        dialArr[i * 6 + 4] = Math.sin(angle) * rOuter;
+        dialArr[i * 6 + 5] = 0;
       }
       dialPosAttr.needsUpdate = true;
-      dialLineMaterial.color.lerp(targetMid, 0.14);
 
-      // 9. Time-Domain Oscilloscope Waveform Ribbon
+      // 9. Outer Oscilloscope Time-Domain Ribbon
+      waveRing.rotation.z += 0.0004 * speedMult;
+      waveMat.color.lerp(targetMid, 0.14);
+
       const wavePosAttr = waveGeom.attributes.position as THREE.BufferAttribute;
-      const wavePosArray = wavePosAttr.array as Float32Array;
+      const waveArr = wavePosAttr.array as Float32Array;
+      const timeLen = timeArray ? timeArray.length : 0;
 
       for (let i = 0; i < waveSegments; i++) {
         const theta = (i / waveSegments) * Math.PI * 2;
-        let offset = 0;
+        let ampOffset = 0;
 
-        if (isActiveAudio) {
-          if (timeArray && timeArray.length > 0) {
-            const timeIndex = Math.floor((i / waveSegments) * timeArray.length);
-            const timeVal = (timeArray[timeIndex] - 128) / 128;
-            offset += timeVal * (1.2 + smoothVol * 1.9);
-          }
-          if (freqArray && freqArray.length > 0) {
-            const freqIndex = 1 + Math.floor(((i % 45) / 45) * 40);
-            const freqVal = (freqArray[freqIndex] || 0) / 255;
-            offset += freqVal * 0.85;
-          }
-        } else if (currentState === 'processing') {
-          offset = Math.sin(theta * 8 + time * 10) * 0.25;
+        if (timeArray && isActiveAudio && timeLen > 0) {
+          const sampleIdx = Math.floor((i / waveSegments) * timeLen);
+          // timeArray ranges 0..255 with 128 as zero-crossing center
+          const rawSample = (timeArray[sampleIdx] - 128) / 128;
+          ampOffset = rawSample * (0.35 + smoothVol * 0.85);
+        } else {
+          // Idle gentle harmonic oscillation
+          ampOffset = Math.sin(theta * 6.0 + time * 3.0) * 0.05;
         }
 
-        const r = baseWaveRadius + offset;
-        wavePosArray[i * 3] = Math.cos(theta) * r;
-        wavePosArray[i * 3 + 1] = Math.sin(theta) * r;
-        wavePosArray[i * 3 + 2] = Math.sin(theta * 3 + time * 3) * (smoothVol * 0.55);
+        const r = baseWaveRadius + ampOffset;
+        waveArr[i * 3] = Math.cos(theta) * r;
+        waveArr[i * 3 + 1] = Math.sin(theta) * r;
+        waveArr[i * 3 + 2] = 0;
       }
       wavePosAttr.needsUpdate = true;
-      waveMat.color.lerp(targetMid, 0.14);
+
       outerHorizonMat.color.lerp(targetRim, 0.14);
 
-      // 10. Ambient Stardust Constellation Embers (Image 5)
-      const stardustPosAttr = stardustGeom.attributes.position as THREE.BufferAttribute;
-      const stardustPosArr = stardustPosAttr.array as Float32Array;
+      // 10. Ambient Floating Stardust Embers (Image 5)
+      stardustCloud.rotation.y += 0.0003;
+      stardustCloud.rotation.x = Math.sin(time * 0.05) * 0.05;
+      stardustMat.color.lerp(targetMid, 0.14);
+
+      const starPosAttr = stardustGeom.attributes.position as THREE.BufferAttribute;
+      const starArr = starPosAttr.array as Float32Array;
 
       for (let i = 0; i < stardustCount; i++) {
         const d = stardustData[i];
-        d.theta += d.speed * (1.0 + smoothVol * 2.8 + smoothTreble * 2.5);
-        d.phi += d.speed * 0.4;
+        d.theta += d.speed * (1.0 + smoothVol * 2.0);
 
-        const radialShift =
-          currentState === 'listening'
-            ? -smoothVol * 0.9 // Pulled inward
-            : currentState === 'speaking'
-            ? smoothVol * 1.1 + Math.sin(d.r * 2 - time * 5) * smoothMid * 0.5 // Projected outward
-            : Math.sin(time * d.pulseSpeed) * 0.08;
-
-        const currentR = Math.max(2.8, d.r + radialShift);
-
-        stardustPosArr[i * 3] = currentR * Math.cos(d.theta) * Math.cos(d.phi);
-        stardustPosArr[i * 3 + 1] = currentR * Math.sin(d.theta) * Math.cos(d.phi);
-        stardustPosArr[i * 3 + 2] = currentR * Math.sin(d.phi);
+        const currentR = d.r + Math.sin(time * d.pulseSpeed + d.phi) * (0.12 + smoothBass * 0.35);
+        starArr[i * 3] = currentR * Math.cos(d.theta) * Math.cos(d.phi);
+        starArr[i * 3 + 1] = currentR * Math.sin(d.theta) * Math.cos(d.phi);
+        starArr[i * 3 + 2] = currentR * Math.sin(d.phi);
       }
-      stardustPosAttr.needsUpdate = true;
-      stardustMat.color.lerp(targetMid, 0.14);
+      starPosAttr.needsUpdate = true;
 
-      // Render Scene
       renderer.render(scene, camera);
     };
 
-    animFrameId = requestAnimationFrame(animate);
+    animate();
 
-    // Resize Observer
+    // Resize Handler
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
       const h = container.clientHeight;
+      if (w === 0 || h === 0) return;
       updateCamera(w, h);
       renderer.setSize(w, h);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     };
 
     const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(container);
 
-    // Cleanup
     return () => {
       cancelAnimationFrame(animFrameId);
       resizeObserver.disconnect();
@@ -975,7 +1004,6 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       });
       coreCoronaTex.dispose();
       sparkTex.dispose();
-      flareTex.dispose();
       renderer.dispose();
 
       if (container.contains(renderer.domElement)) {
@@ -988,7 +1016,6 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     <div
       ref={mountRef}
       className="relative w-full h-full cursor-pointer select-none"
-      title="Click or tap to toggle listening"
     />
   );
 };

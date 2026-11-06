@@ -61,13 +61,13 @@ export const YouTubeMediaHUD: React.FC = () => {
       <div className="fixed top-16 right-4 sm:right-6 z-40 animate-in fade-in duration-200">
         <button
           onClick={() => setIsMinimized(false)}
-          className="flex items-center space-x-2 px-3 py-1.5 rounded-full border border-cyan-500/60 bg-black/85 backdrop-blur-md shadow-[0_0_15px_rgba(0,240,255,0.3)] text-cyan-300 hover:border-cyan-400 transition-all text-xs font-orbitron"
+          className="flex items-center space-x-2 px-3 py-1.5 rounded-full border border-amber-500/60 bg-black/85 backdrop-blur-md shadow-[0_0_15px_rgba(245,158,11,0.3)] text-amber-300 hover:border-amber-400 transition-all text-xs font-orbitron"
           title="Expand YouTube Audio Player"
         >
           {ytState.playlistId ? (
-            <ListMusic className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
+            <ListMusic className={`w-3.5 h-3.5 text-amber-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
           ) : (
-            <Music className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
+            <Music className={`w-3.5 h-3.5 text-amber-400 ${ytState.isPlaying ? 'animate-bounce' : ''}`} />
           )}
           <span className="text-[10px] tracking-wider truncate max-w-[120px]">
             {ytState.isPlaying
@@ -76,7 +76,7 @@ export const YouTubeMediaHUD: React.FC = () => {
                 : 'PLAYING'
               : 'PAUSED'}
           </span>
-          <ChevronDown className="w-3 h-3 text-cyan-400" />
+          <ChevronDown className="w-3 h-3 text-amber-400" />
         </button>
       </div>
     );
@@ -84,25 +84,25 @@ export const YouTubeMediaHUD: React.FC = () => {
 
   return (
     <div className="fixed top-16 right-3 sm:right-6 z-40 max-w-[320px] sm:max-w-sm w-full animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-auto">
-      <div className="relative rounded-xl border border-cyan-500/60 bg-black/90 backdrop-blur-xl p-3.5 shadow-[0_0_25px_rgba(0,240,255,0.22)] font-mono-tech space-y-2.5">
+      <div className="relative rounded-xl border border-amber-500/60 bg-black/90 backdrop-blur-xl p-3.5 shadow-[0_0_25px_rgba(245,158,11,0.22)] font-mono-tech space-y-2.5">
         {/* Sci-Fi Corner Accents */}
-        <div className="absolute top-0 left-0 w-2.5 h-2.5 border-t-2 border-l-2 border-cyan-400" />
-        <div className="absolute top-0 right-0 w-2.5 h-2.5 border-t-2 border-r-2 border-cyan-400" />
-        <div className="absolute bottom-0 left-0 w-2.5 h-2.5 border-b-2 border-l-2 border-cyan-400" />
-        <div className="absolute bottom-0 right-0 w-2.5 h-2.5 border-b-2 border-r-2 border-cyan-400" />
+        <div className="absolute top-0 left-0 w-2.5 h-2.5 border-t-2 border-l-2 border-amber-400" />
+        <div className="absolute top-0 right-0 w-2.5 h-2.5 border-t-2 border-r-2 border-amber-400" />
+        <div className="absolute bottom-0 left-0 w-2.5 h-2.5 border-b-2 border-l-2 border-amber-400" />
+        <div className="absolute bottom-0 right-0 w-2.5 h-2.5 border-b-2 border-r-2 border-amber-400" />
 
         {/* Header Bar */}
-        <div className="flex items-center justify-between border-b border-cyan-950 pb-2">
+        <div className="flex items-center justify-between border-b border-amber-950 pb-2">
           <div className="flex items-center space-x-2">
-            <div className="w-6 h-6 rounded bg-cyan-950/60 border border-cyan-500/50 flex items-center justify-center">
+            <div className="w-6 h-6 rounded bg-amber-950/60 border border-amber-500/50 flex items-center justify-center">
               {ytState.playlistId ? (
-                <ListMusic className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
+                <ListMusic className={`w-3.5 h-3.5 text-amber-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
               ) : (
-                <Radio className={`w-3.5 h-3.5 text-cyan-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
+                <Radio className={`w-3.5 h-3.5 text-amber-400 ${ytState.isPlaying ? 'animate-pulse' : ''}`} />
               )}
             </div>
             <div>
-              <div className="font-orbitron text-[10px] font-bold text-cyan-200 tracking-wider flex items-center space-x-1.5">
+              <div className="font-orbitron text-[10px] font-bold text-amber-200 tracking-wider flex items-center space-x-1.5">
                 <span>{ytState.playlistId ? 'PLAYLIST STREAM // YT' : 'AUDIO STREAM // YT'}</span>
                 {ytState.isDucked && (
                   <span className="text-[8px] px-1 py-0.2 rounded bg-amber-950/80 border border-amber-600/70 text-amber-300 animate-pulse">
@@ -110,7 +110,7 @@ export const YouTubeMediaHUD: React.FC = () => {
                   </span>
                 )}
               </div>
-              <div className="text-[8px] text-cyan-500/80">ACOUSTIC SUB-SYSTEM ACTIVE</div>
+              <div className="text-[8px] text-amber-500/80">ACOUSTIC SUB-SYSTEM ACTIVE</div>
             </div>
           </div>
           <div className="flex items-center space-x-1">
@@ -123,7 +123,7 @@ export const YouTubeMediaHUD: React.FC = () => {
                 }
                 target="_blank"
                 rel="noreferrer"
-                className="p-1 rounded text-cyan-500 hover:text-cyan-200 hover:bg-cyan-950/40 transition-colors"
+                className="p-1 rounded text-amber-500 hover:text-amber-200 hover:bg-amber-950/40 transition-colors"
                 title={ytState.playlistId ? 'Open Playlist in YouTube' : 'Open Video in YouTube'}
               >
                 <ExternalLink className="w-3 h-3" />
@@ -131,7 +131,7 @@ export const YouTubeMediaHUD: React.FC = () => {
             )}
             <button
               onClick={() => setIsMinimized(true)}
-              className="p-1 rounded text-cyan-500 hover:text-cyan-200 hover:bg-cyan-950/40 transition-colors"
+              className="p-1 rounded text-amber-500 hover:text-amber-200 hover:bg-amber-950/40 transition-colors"
               title="Minimize Player"
             >
               <ChevronUp className="w-3.5 h-3.5" />
@@ -149,7 +149,7 @@ export const YouTubeMediaHUD: React.FC = () => {
                 ? `Track ID: ${ytState.videoId}`
                 : 'Acoustic Stream')}
           </div>
-          <div className="text-[9px] text-cyan-400/70 flex items-center justify-between">
+          <div className="text-[9px] text-amber-400/70 flex items-center justify-between">
             <span className="truncate max-w-[170px]">
               {ytState.playlistId
                 ? `LIST: ${ytState.playlistId.slice(0, 10)}...${typeof ytState.playlistIndex === 'number' ? ` [#${ytState.playlistIndex + 1}]` : ''}`
@@ -168,7 +168,7 @@ export const YouTubeMediaHUD: React.FC = () => {
             {ytState.playlistId && (
               <button
                 onClick={previousTrack}
-                className="p-1.5 rounded-lg border border-cyan-800 bg-black/60 text-cyan-400 hover:border-cyan-500 hover:text-cyan-200 transition-colors"
+                className="p-1.5 rounded-lg border border-amber-800 bg-black/60 text-amber-400 hover:border-amber-500 hover:text-amber-200 transition-colors"
                 title="Previous Track"
               >
                 <SkipBack className="w-3 h-3" />
@@ -179,8 +179,8 @@ export const YouTubeMediaHUD: React.FC = () => {
               onClick={togglePlayPause}
               className={`p-2 rounded-lg border transition-all ${
                 ytState.isPlaying
-                  ? 'border-cyan-400 bg-cyan-950/70 text-cyan-200 shadow-[0_0_10px_rgba(0,240,255,0.4)]'
-                  : 'border-cyan-800 bg-black/60 text-cyan-400 hover:border-cyan-500'
+                  ? 'border-amber-400 bg-amber-950/70 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.4)]'
+                  : 'border-amber-800 bg-black/60 text-amber-400 hover:border-amber-500'
               }`}
               title={ytState.isPlaying ? 'Pause' : 'Play'}
             >
@@ -190,7 +190,7 @@ export const YouTubeMediaHUD: React.FC = () => {
             {ytState.playlistId && (
               <button
                 onClick={nextTrack}
-                className="p-1.5 rounded-lg border border-cyan-800 bg-black/60 text-cyan-400 hover:border-cyan-500 hover:text-cyan-200 transition-colors"
+                className="p-1.5 rounded-lg border border-amber-800 bg-black/60 text-amber-400 hover:border-amber-500 hover:text-amber-200 transition-colors"
                 title="Next Track"
               >
                 <SkipForward className="w-3 h-3" />
@@ -210,13 +210,13 @@ export const YouTubeMediaHUD: React.FC = () => {
           <div className="flex items-center space-x-2">
             <button
               onClick={toggleMute}
-              className="p-1.5 text-cyan-400 hover:text-cyan-200 transition-colors"
+              className="p-1.5 text-amber-400 hover:text-amber-200 transition-colors"
               title={ytState.isMuted ? 'Unmute' : 'Mute'}
             >
               {ytState.isMuted ? (
                 <VolumeX className="w-3.5 h-3.5 text-red-400" />
               ) : (
-                <Volume2 className="w-3.5 h-3.5 text-cyan-300" />
+                <Volume2 className="w-3.5 h-3.5 text-amber-300" />
               )}
             </button>
             <input
@@ -225,10 +225,10 @@ export const YouTubeMediaHUD: React.FC = () => {
               max="100"
               value={ytState.volume}
               onChange={(e) => setVolume(Number(e.target.value))}
-              className="w-16 sm:w-20 accent-cyan-400 cursor-pointer h-1.5 bg-cyan-950 rounded-lg appearance-none"
+              className="w-16 sm:w-20 accent-cyan-400 cursor-pointer h-1.5 bg-amber-950 rounded-lg appearance-none"
               title={`Volume: ${ytState.volume}%`}
             />
-            <span className="text-[9px] text-cyan-400 w-6 text-right font-mono-tech">
+            <span className="text-[9px] text-amber-400 w-6 text-right font-mono-tech">
               {ytState.volume}%
             </span>
           </div>
