@@ -70,8 +70,8 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   onToggleWakeWordScope,
   onSelectVoicePreset,
 }) => {
-  const [currentTime, setCurrentTime] = useState<string>('');
-  const [coreFreq, setCoreFreq] = useState<number>(4.82);
+  const [currentTime, setCurrentTime] = useState<string>(() => new Date().toTimeString().split(' ')[0]);
+  const coreFreq = 4.80;
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showMobileHudDrawer, setShowMobileHudDrawer] = useState(false);
   const [showBiometricsModal, setShowBiometricsModal] = useState(false);
@@ -88,13 +88,11 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
-      const timeStr =
-        now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
-      setCurrentTime(timeStr);
-      setCoreFreq(4.8 + Math.sin(Date.now() / 2000) * 0.15);
+      setCurrentTime(now.toTimeString().split(' ')[0]);
     };
 
-    const timer = setInterval(updateClock, 50);
+    updateClock();
+    const timer = setInterval(updateClock, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -185,7 +183,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
       {/* TOP SCI-FI STATUS BAR */}
       <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-3 sm:px-6 py-2.5 sm:py-4 border-b border-amber-900/40 bg-black/70 backdrop-blur-md pt-safe">
         {/* Left: Branding & Core ID */}
-        <div className="flex items-center space-x-2 sm:space-x-4">
+        <div className="flex items-center space-x-2 sm:space-x-4 shrink-0">
           <div className="flex items-center space-x-1.5 sm:space-x-2">
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded border border-amber-500/60 flex items-center justify-center bg-amber-950/30 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.3)] shrink-0">
               <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 animate-pulse" />
@@ -207,9 +205,9 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
         </div>
 
         {/* Center: Live System Status Badge (Mobile & Desktop) */}
-        <div className="flex items-center space-x-2 sm:space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
           <div
-            className={`flex items-center space-x-1.5 px-2.5 py-1 sm:px-3.5 sm:py-1 rounded-full border text-[10px] sm:text-xs font-orbitron tracking-wider sm:tracking-widest ${badge.bg} transition-colors duration-300`}
+            className={`flex items-center space-x-1.5 px-2.5 py-1 sm:px-3.5 sm:py-1 rounded-full border text-[10px] sm:text-xs font-orbitron tracking-wider sm:tracking-widest ${badge.bg} transition-colors duration-200 shrink-0`}
           >
             <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${badge.dot}`} />
             <span className="hidden sm:inline">{badge.text}</span>
@@ -220,7 +218,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           {onToggleWakeWordMode && (
             <button
               onClick={onToggleWakeWordMode}
-              className={`hidden md:flex items-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-all ${
+              className={`hidden md:flex items-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-colors duration-200 shrink-0 ${
                 isWakeWordActive
                   ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50'
                   : 'border-amber-900/50 bg-black/60 text-amber-500 hover:text-amber-300'
@@ -244,7 +242,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           {onToggleWakeWordScope && (
             <button
               onClick={onToggleWakeWordScope}
-              className={`hidden lg:flex items-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-all ${
+              className={`hidden lg:flex items-center justify-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-colors duration-200 shrink-0 min-w-[155px] ${
                 wakeWordScope === 'background'
                   ? 'border-amber-500/60 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50'
                   : 'border-amber-900/60 bg-black/60 text-amber-400 hover:text-amber-200'
@@ -258,7 +256,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           )}
 
           {/* Battery Status (Desktop) */}
-          <div className="hidden md:flex items-center space-x-1.5 text-[10px] font-mono-tech text-amber-400/80 bg-black/60 px-2.5 py-1 rounded border border-amber-950">
+          <div className="hidden md:flex items-center space-x-1.5 text-[10px] font-mono-tech text-amber-400/80 bg-black/60 px-2.5 py-1 rounded border border-amber-950 shrink-0">
             {battery.charging ? (
               <BatteryCharging className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             ) : (
@@ -270,19 +268,19 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             </span>
           </div>
 
-          <div className="hidden lg:flex items-center space-x-1.5 text-[10px] font-mono-tech text-amber-400/80 bg-black/60 px-2 py-1 rounded border border-amber-950">
+          <div className="hidden lg:flex items-center space-x-1.5 text-[10px] font-mono-tech text-amber-400/80 bg-black/60 px-2 py-1 rounded border border-amber-950 shrink-0">
             <Wifi className="w-3 h-3 text-emerald-400" />
             <span>n8n LINK</span>
           </div>
         </div>
 
         {/* Right: Telemetry Clock, Mobile HUD Toggle, Voice & Lock Actions */}
-        <div className="flex items-center space-x-1.5 sm:space-x-3">
-          <div className="text-right hidden sm:block">
-            <div className="font-orbitron text-[11px] sm:text-xs tracking-wider sm:tracking-widest text-amber-300 text-glow-amber">
-              {currentTime || '00:00:00.000'}
+        <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
+          <div className="text-right hidden sm:block w-24 sm:w-28 shrink-0 tabular-nums">
+            <div className="font-orbitron text-[11px] sm:text-xs tracking-wider sm:tracking-widest text-amber-300 text-glow-amber tabular-nums">
+              {currentTime || '00:00:00'}
             </div>
-            <div className="text-[8px] sm:text-[9px] font-mono-tech text-amber-500/70 hidden md:block">
+            <div className="text-[8px] sm:text-[9px] font-mono-tech text-amber-500/70 hidden md:block whitespace-nowrap">
               CORE FREQ: {coreFreq.toFixed(2)} GHz // T: 312K
             </div>
           </div>
