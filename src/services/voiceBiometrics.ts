@@ -1,16 +1,23 @@
 /**
  * Voice Biometrics & Speaker Recognition Engine
  * 
- * Computes acoustic spectral fingerprints (Fundamental Pitch F0, Formant Energy Bands,
- * Spectral Centroid, and Timbre Dynamics) using Web Audio API to enroll and identify
- * authorized speakers (e.g., Samuel vs. other voices) in real time.
+ * Features:
+ * - 16-dimensional Mel/Bark spectral formant energy vectors
+ * - Fundamental frequency (F0) estimation & spectral centroid dynamics
+ * - Continuous online momentum learning (adapts to vocal changes over time)
+ * - Autonomous Passive Voice Discovery: Automatically clusters and remembers new
+ *   unregistered voices (family/friends) without requiring manual calibration.
+ * - Conversational Self-Introduction Learning: Automatically associates detected names
+ *   ("I'm Sarah", "My name is David", "This is Alex") to newly discovered voiceprints.
  */
 
 export interface VoiceProfile {
   id: string;
   name: string;
   isOwner: boolean;
+  isAutoDiscovered?: boolean;
   enrolledAt: string;
+  lastHeardAt: string;
   samplesCount: number;
   // Normalized 16-dimensional acoustic vector
   vector: number[];
@@ -26,15 +33,21 @@ export interface SpeakerIdentificationResult {
   confidence: number; // 0..1
   isOwner: boolean;
   isUnknown: boolean;
+  isNewlyDiscovered?: boolean;
 }
 
 const STORAGE_KEY = 'jarvis_voice_profiles';
 const OWNER_GATE_KEY = 'jarvis_owner_gate_enabled';
+const AUTO_LEARN_KEY = 'jarvis_auto_learn_voices_enabled';
 
 // 16 Critical Mel/Bark frequency band edges (Hz) covering human vocal resonance
 const BAND_EDGES_HZ = [
   85, 130, 200, 300, 450, 650, 900, 1250, 1700, 2300, 3050, 4000, 5200, 6700, 8500, 11000
 ];
+
+// Regex to catch natural human self-introductions or owner introductions
+const SELF_INTRO_REGEX = /\b(?:i am|i'm|my name is|this is|call me|it is|it's)\s+([a-zA-Z]+)(?:\b|[.,?!])/i;
+const OWNER_INTRO_REGEX = /\b(?:this is my (?:friend|brother|sister|wife|husband|mom|dad|cousin|colleague|partner)|meet my friend|meet)\s+([a-zA-Z]+)(?:\b|[.,?!])/i;
 
 class VoiceBiometricsEngine {
   private profiles: VoiceProfile[] = [];
@@ -53,7 +66,7 @@ class VoiceBiometricsEngine {
       if (raw) {
         this.profiles = JSON.parse(raw);
       } else {
-        // If empty, initialize default profile template for Samuel
+        // If empty, initialize default owner profile template for Samuel
         this.profiles = [];
       }
     } catch {
@@ -92,9 +105,34 @@ class VoiceBiometricsEngine {
     } catch {}
   }
 
+  public isAutoLearnEnabled(): boolean {
+    try {
+      const val = localStorage.getItem(AUTO_LEARN_KEY);
+      // Default to true so Jarvis automatically remembers new guests
+      return val === null ? true : val === 'true';
+    } catch {
+      return true;
+    }
+  }
+
+  public setAutoLearnEnabled(enabled: boolean) {
+    try {
+      localStorage.setItem(AUTO_LEARN_KEY, enabled ? 'true' : 'false');
+    } catch {}
+  }
+
   public deleteProfile(profileId: string) {
     this.profiles = this.profiles.filter((p) => p.id !== profileId);
     this.saveProfiles();
+  }
+
+  public renameProfile(profileId: string, newName: string) {
+    const target = this.profiles.find((p) => p.id === profileId);
+    if (target && newName.trim()) {
+      target.name = newName.trim();
+      target.isAutoDiscovered = false;
+      this.saveProfiles();
+    }
   }
 
   /**
@@ -131,7 +169,6 @@ class VoiceBiometricsEngine {
     }
     const rms = Math.sqrt(sumSquares / timeDomainData.length);
     if (rms < 0.035) {
-      // Below vocal energy threshold
       return;
     }
 
@@ -156,7 +193,7 @@ class VoiceBiometricsEngine {
       bandEnergies[b] = count > 0 ? bandSum / (count * 255) : 0;
     }
 
-    // 2. Estimate Fundamental Frequency (F0) via peak harmonic analysis in 80..350Hz range
+    // 2. Estimate Fundamental Frequency (F0) in 80..350Hz range
     const f0MinBin = Math.max(1, Math.floor(80 / binWidth));
     const f0MaxBin = Math.min(frequencyData.length - 1, Math.ceil(350 / binWidth));
     let peakBin = f0MinBin;
@@ -200,13 +237,15 @@ class VoiceBiometricsEngine {
   }
 
   /**
-   * Compare the current captured utterance against all enrolled voice profiles
+   * Compare the current captured utterance against all enrolled voice profiles.
+   * If speech matches, adaptively tunes the profile. If no match and auto-learn is on,
+   * automatically registers a new auto-discovered voice profile.
    */
-  public identifySpeaker(): SpeakerIdentificationResult {
+  public identifySpeaker(spokenTranscript?: string): SpeakerIdentificationResult {
     this.isCapturing = false;
 
     if (this.currentUtteranceFrames.length < 5) {
-      // Too few frames for confident voice identification
+      // Too few acoustic frames
       const defaultOwner = this.getOwnerProfile();
       return {
         matchedProfile: defaultOwner || null,
@@ -217,7 +256,6 @@ class VoiceBiometricsEngine {
       };
     }
 
-    // Average the utterance frames to get live acoustic profile
     const liveVector = this.averageVectors(this.currentUtteranceFrames);
     const avgPitch = this.currentPitchSamples.length > 0
       ? this.currentPitchSamples.reduce((a, b) => a + b, 0) / this.currentPitchSamples.length
@@ -226,13 +264,40 @@ class VoiceBiometricsEngine {
       ? this.currentCentroidSamples.reduce((a, b) => a + b, 0) / this.currentCentroidSamples.length
       : 0.35;
 
+    // Check if user is introducing themselves in the speech transcript
+    let introducedName: string | null = null;
+    if (spokenTranscript) {
+      const selfMatch = spokenTranscript.match(SELF_INTRO_REGEX);
+      const ownerMatch = spokenTranscript.match(OWNER_INTRO_REGEX);
+      const matchedWord = (selfMatch && selfMatch[1]) || (ownerMatch && ownerMatch[1]);
+      if (matchedWord && !/^(jarvis|here|ready|sir|friday|computer)$/i.test(matchedWord)) {
+        introducedName = matchedWord.charAt(0).toUpperCase() + matchedWord.slice(1).toLowerCase();
+      }
+    }
+
+    // If no profiles registered yet, create default Owner (Samuel) or the introduced name
     if (this.profiles.length === 0) {
+      const initialName = introducedName || 'Samuel';
+      const newOwner: VoiceProfile = {
+        id: `voice_owner_${Date.now()}`,
+        name: initialName,
+        isOwner: true,
+        enrolledAt: new Date().toISOString(),
+        lastHeardAt: new Date().toISOString(),
+        samplesCount: 1,
+        vector: liveVector,
+        avgPitchHz: Math.round(avgPitch),
+        avgCentroid: Math.round(avgCentroid * 1000) / 1000,
+      };
+      this.profiles.push(newOwner);
+      this.saveProfiles();
       return {
-        matchedProfile: null,
-        name: 'Guest / Unenrolled',
-        confidence: 0.6,
-        isOwner: true, // Default to authorized if no profiles set yet
-        isUnknown: true,
+        matchedProfile: newOwner,
+        name: newOwner.name,
+        confidence: 0.96,
+        isOwner: true,
+        isUnknown: false,
+        isNewlyDiscovered: true,
       };
     }
 
@@ -240,14 +305,9 @@ class VoiceBiometricsEngine {
     let bestSimilarity = -1;
 
     for (const profile of this.profiles) {
-      // 1. Spectral cosine similarity (weight: 70%)
       const cosineSim = this.computeCosineSimilarity(liveVector, profile.vector);
-
-      // 2. Pitch similarity (weight: 20%)
       const pitchDiff = Math.abs(avgPitch - profile.avgPitchHz);
       const pitchSim = Math.max(0, 1 - pitchDiff / 100);
-
-      // 3. Timbre centroid similarity (weight: 10%)
       const centroidDiff = Math.abs(avgCentroid - profile.avgCentroid);
       const centroidSim = Math.max(0, 1 - centroidDiff * 2);
 
@@ -259,9 +319,27 @@ class VoiceBiometricsEngine {
       }
     }
 
-    // Threshold for genuine match
-    const MATCH_THRESHOLD = 0.76;
+    const MATCH_THRESHOLD = 0.74;
+
+    // 1. MATCH FOUND: Known speaker identified
     if (bestProfile && bestSimilarity >= MATCH_THRESHOLD) {
+      // If they introduced a new name, rename the profile
+      if (introducedName && bestProfile.name !== introducedName && !bestProfile.isOwner) {
+        bestProfile.name = introducedName;
+        bestProfile.isAutoDiscovered = false;
+      }
+
+      // Online Momentum Adaptation: Smoothly blend the profile with new acoustic samples
+      // alpha = 0.15 (15% new sample, 85% established memory)
+      const alpha = 0.15;
+      const updatedVector = bestProfile.vector.map((val, idx) => (1 - alpha) * val + alpha * liveVector[idx]);
+      bestProfile.vector = this.normalizeVector(updatedVector);
+      bestProfile.avgPitchHz = Math.round((1 - alpha) * bestProfile.avgPitchHz + alpha * avgPitch);
+      bestProfile.avgCentroid = Math.round(((1 - alpha) * bestProfile.avgCentroid + alpha * avgCentroid) * 1000) / 1000;
+      bestProfile.lastHeardAt = new Date().toISOString();
+      bestProfile.samplesCount = (bestProfile.samplesCount || 1) + 1;
+      this.saveProfiles();
+
       return {
         matchedProfile: bestProfile,
         name: bestProfile.name,
@@ -271,6 +349,38 @@ class VoiceBiometricsEngine {
       };
     }
 
+    // 2. UNRECOGNIZED VOICE: Auto-detect & create a persistent profile if auto-learn is enabled!
+    if (this.isAutoLearnEnabled()) {
+      const guestNumber = this.profiles.filter((p) => !p.isOwner).length + 1;
+      const assignedName = introducedName || `Guest #${guestNumber}`;
+
+      const newDiscoveredProfile: VoiceProfile = {
+        id: `voice_guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        name: assignedName,
+        isOwner: false,
+        isAutoDiscovered: !introducedName,
+        enrolledAt: new Date().toISOString(),
+        lastHeardAt: new Date().toISOString(),
+        samplesCount: 1,
+        vector: liveVector,
+        avgPitchHz: Math.round(avgPitch),
+        avgCentroid: Math.round(avgCentroid * 1000) / 1000,
+      };
+
+      this.profiles.push(newDiscoveredProfile);
+      this.saveProfiles();
+
+      return {
+        matchedProfile: newDiscoveredProfile,
+        name: newDiscoveredProfile.name,
+        confidence: 0.88,
+        isOwner: false,
+        isUnknown: false,
+        isNewlyDiscovered: true,
+      };
+    }
+
+    // 3. Fallback if auto-learn is disabled
     return {
       matchedProfile: null,
       name: 'Unrecognized Speaker',
@@ -281,7 +391,7 @@ class VoiceBiometricsEngine {
   }
 
   /**
-   * Enroll a new voice profile from currently captured utterance frames
+   * Explicit manual calibration enrollment
    */
   public enrollProfile(name: string, isOwner = false): VoiceProfile {
     if (this.currentUtteranceFrames.length < 5) {
@@ -296,7 +406,6 @@ class VoiceBiometricsEngine {
       ? this.currentCentroidSamples.reduce((a, b) => a + b, 0) / this.currentCentroidSamples.length
       : 0.35;
 
-    // If marked as owner, remove owner flag from other profiles
     if (isOwner) {
       this.profiles.forEach((p) => {
         p.isOwner = false;
@@ -307,14 +416,15 @@ class VoiceBiometricsEngine {
       id: `voice_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       name: name.trim() || 'Samuel',
       isOwner,
+      isAutoDiscovered: false,
       enrolledAt: new Date().toISOString(),
+      lastHeardAt: new Date().toISOString(),
       samplesCount: this.currentUtteranceFrames.length,
       vector,
       avgPitchHz: Math.round(avgPitchHz),
       avgCentroid: Math.round(avgCentroid * 1000) / 1000,
     };
 
-    // Remove existing profile with same name if any
     this.profiles = this.profiles.filter((p) => p.name.toLowerCase() !== newProfile.name.toLowerCase());
     this.profiles.push(newProfile);
     this.saveProfiles();

@@ -142,8 +142,8 @@ export const App: React.FC = () => {
     // Record user prompt for HUD attribution
     setLastQuery(trimmedQuery);
 
-    // Identify speaker from live acoustic vectors captured during speech
-    const speakerResult = voiceBiometrics.identifySpeaker();
+    // Identify speaker from live acoustic vectors captured during speech (with auto name-learning)
+    const speakerResult = voiceBiometrics.identifySpeaker(trimmedQuery);
     setLastSpeaker(speakerResult.name);
     setSpeakerConfidence(speakerResult.confidence);
     setIsOwner(speakerResult.isOwner);
