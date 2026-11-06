@@ -1,27 +1,27 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { MsEdgeTTS, OUTPUT_FORMAT, ProsodyOptions } from 'msedge-tts';
-
-function escapeXml(unsafe: string): string {
-  return String(unsafe)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import ttsHandler from './api/tts.js';
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    {
-      name: 'jarvis-edge-tts-middleware',
-      configureServer(server) {
-        server.middlewares.use('/api/tts', async (req, res) => {
-          try {
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  if (env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY) {
+    process.env.GEMINI_API_KEY = env.GEMINI_API_KEY;
+  }
+  if (env.VITE_GEMINI_API_KEY && !process.env.VITE_GEMINI_API_KEY) {
+    process.env.VITE_GEMINI_API_KEY = env.VITE_GEMINI_API_KEY;
+  }
+
+  return {
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        name: 'jarvis-api-tts-middleware',
+        configureServer(server) {
+          server.middlewares.use('/api/tts', async (req, res) => {
             let bodyData = '';
             if (req.method === 'POST') {
               await new Promise<void>((resolve) => {
@@ -33,54 +33,48 @@ export default defineConfig({
             }
 
             const url = new URL(req.url || '', 'http://localhost');
-            const parsedBody = bodyData ? JSON.parse(bodyData) : {};
-            const text = (parsedBody.text || url.searchParams.get('text') || '').trim();
-            const voice = (parsedBody.voice || url.searchParams.get('voice') || 'en-GB-RyanNeural').trim();
-            const rate = (parsedBody.rate || url.searchParams.get('rate') || '+4%').trim();
-            const pitch = (parsedBody.pitch || url.searchParams.get('pitch') || '-2Hz').trim();
+            const queryObj: Record<string, string> = {};
+            url.searchParams.forEach((v, k) => {
+              queryObj[k] = v;
+            });
 
-            if (!text) {
-              res.statusCode = 400;
-              res.end(JSON.stringify({ error: 'Missing text' }));
-              return;
-            }
+            const mockReq = {
+              method: req.method,
+              headers: req.headers,
+              query: queryObj,
+              body: bodyData ? JSON.parse(bodyData) : {},
+            };
 
-            const tts = new MsEdgeTTS();
-            try {
-              await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-              const prosody = new ProsodyOptions();
-              prosody.rate = rate;
-              prosody.pitch = pitch;
-              const { audioStream } = tts.toStream(escapeXml(text), prosody);
+            const mockRes = {
+              statusCode: 200,
+              setHeader(k: string, v: string) {
+                res.setHeader(k, v);
+              },
+              status(code: number) {
+                this.statusCode = code;
+                res.statusCode = code;
+                return this;
+              },
+              json(obj: unknown) {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify(obj));
+              },
+              send(buf: Buffer | string) {
+                res.end(buf);
+              },
+              end() {
+                res.end();
+              },
+            };
 
-              const chunks: Buffer[] = [];
-              await new Promise<void>((resolve, reject) => {
-                audioStream.on('data', (c) => chunks.push(Buffer.from(c)));
-                audioStream.on('end', () => resolve());
-                audioStream.on('close', () => resolve());
-                audioStream.on('error', (e) => reject(e));
-              });
-
-              const buf = Buffer.concat(chunks);
-              res.statusCode = 200;
-              res.setHeader('Content-Type', 'audio/mpeg');
-              res.setHeader('Content-Length', String(buf.length));
-              res.end(buf);
-            } finally {
-              try {
-                tts.close();
-              } catch {}
-            }
-          } catch (err) {
-            res.statusCode = 500;
-            res.end(JSON.stringify({ error: String(err) }));
-          }
-        });
+            await ttsHandler(mockReq, mockRes);
+          });
+        },
       },
+    ],
+    server: {
+      port: 5173,
+      host: true,
     },
-  ],
-  server: {
-    port: 5173,
-    host: true,
-  },
+  };
 });

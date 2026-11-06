@@ -158,7 +158,7 @@ export const App: React.FC = () => {
   } = useSpeechRecognition({
     onFinalSubmit: handleCommandSubmit,
     onWakeWordDetected: handleWakeWordDetected,
-    silenceTimeoutMs: 1800,
+    silenceTimeoutMs: 1050,
     isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
     wakeWordEnabled: isWakeWordActive,
   });

@@ -47,7 +47,7 @@ const WAKE_WORD_REGEX = /\b(?:hey\s+|ok\s+|hi\s+|yo\s+)?jarvis\b/i;
 export function useSpeechRecognition({
   onFinalSubmit,
   onWakeWordDetected,
-  silenceTimeoutMs = 1800,
+  silenceTimeoutMs = 1050,
   isJarvisSpeaking = false,
   wakeWordEnabled = true,
 }: UseSpeechRecognitionOptions = {}) {
@@ -97,11 +97,14 @@ export function useSpeechRecognition({
 
   const resetSilenceTimer = useCallback(() => {
     clearSilenceTimer();
+    const currentText = activeTranscriptRef.current.trim();
+    const hasPunctuation = /[.?!]$/.test(currentText);
+    const delay = hasPunctuation ? Math.min(silenceTimeoutMs, 750) : silenceTimeoutMs;
     silenceTimerRef.current = setTimeout(() => {
       if (activeTranscriptRef.current.trim().length > 1) {
         triggerSubmission();
       }
-    }, silenceTimeoutMs);
+    }, delay);
   }, [silenceTimeoutMs, triggerSubmission]);
 
   // Safely start or restart recognition

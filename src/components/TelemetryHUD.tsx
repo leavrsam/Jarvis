@@ -13,11 +13,16 @@ import {
   BatteryCharging,
   Battery,
   Ear,
+  KeyRound,
+  CheckCircle2,
+  Wand2,
+  Loader2,
 } from 'lucide-react';
 import {
   JarvisAudioState,
   JARVIS_NEURAL_VOICES,
   JarvisNeuralVoicePreset,
+  audioEngine,
 } from '../services/audioEngine';
 import { AudioSpectrumMeter } from './AudioSpectrumMeter';
 import { BatteryStatus } from '../hooks/useBatteryStatus';
@@ -59,6 +64,15 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   const [coreFreq, setCoreFreq] = useState<number>(4.82);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
 
+  // Gemini 3.8 TTS status & custom voice design states
+  const [geminiConfigured, setGeminiConfigured] = useState<boolean>(false);
+  const [apiKeyInput, setApiKeyInput] = useState<string>(() => audioEngine.getClientGeminiApiKey());
+  const [customVoiceId, setCustomVoiceId] = useState<string>(() =>
+    audioEngine.getCustomDesignedVoiceId()
+  );
+  const [isDesigningVoice, setIsDesigningVoice] = useState<boolean>(false);
+  const [designStatusMsg, setDesignStatusMsg] = useState<string>('');
+
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
@@ -71,6 +85,45 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
     const timer = setInterval(updateClock, 50);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    audioEngine.checkServerGeminiStatus().then((status) => {
+      setGeminiConfigured(status.geminiConfigured);
+      if (status.cachedDesignedVoiceId && !customVoiceId) {
+        setCustomVoiceId(status.cachedDesignedVoiceId);
+      }
+    });
+  }, [showVoiceModal, customVoiceId]);
+
+  const handleSaveApiKey = async () => {
+    audioEngine.setClientGeminiApiKey(apiKeyInput);
+    const status = await audioEngine.checkServerGeminiStatus();
+    setGeminiConfigured(status.geminiConfigured);
+    setDesignStatusMsg(
+      status.geminiConfigured
+        ? 'Gemini 3.8 API key active! Click "Test Voice Sample" to hear human synthesis.'
+        : 'API key cleared. Using server env var if present.'
+    );
+  };
+
+  const handleGenerateCustomVoice = async () => {
+    setIsDesigningVoice(true);
+    setDesignStatusMsg('Designing custom British Jarvis vocal persona via Gemini 3.8...');
+    try {
+      const createdId = await audioEngine.designCustomJarvisVoice();
+      if (createdId) {
+        setCustomVoiceId(createdId);
+        setDesignStatusMsg(`Custom Voice Created: ${createdId}`);
+        onTestVoice?.();
+      }
+    } catch (err: unknown) {
+      setDesignStatusMsg(
+        `Error: ${err instanceof Error ? err.message : 'Ensure GEMINI_API_KEY is valid'}`
+      );
+    } finally {
+      setIsDesigningVoice(false);
+    }
+  };
 
   const getStateBadge = () => {
     switch (state) {
@@ -126,7 +179,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                   J.A.R.V.I.S.
                 </span>
                 <span className="text-[10px] font-mono-tech px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800 text-cyan-400">
-                  SYSTEM OS v4.5
+                  SYSTEM OS v4.8
                 </span>
               </div>
               <p className="text-[9px] font-mono-tech text-cyan-500/70 tracking-wider">
@@ -209,10 +262,15 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           <button
             onClick={() => setShowVoiceModal(true)}
             className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded border border-cyan-800/60 bg-black/60 hover:bg-cyan-950/60 text-[10px] font-orbitron text-cyan-400 transition-all hover:border-cyan-500"
-            title="Configure Neural Voice Model"
+            title="Configure Gemini 3.8 Expressive Voice"
           >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                geminiConfigured ? 'bg-emerald-400' : 'bg-amber-400'
+              }`}
+            />
             <span>VOICE:</span>
-            <span className="text-cyan-200 truncate max-w-[110px]">{voiceName}</span>
+            <span className="text-cyan-200 truncate max-w-[115px]">{voiceName}</span>
           </button>
           {onLockConsole && (
             <button
@@ -254,26 +312,28 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           </div>
           <div className="space-y-1.5 text-[10px] font-mono-tech text-cyan-400/80">
             <div className="flex justify-between border-b border-cyan-950 pb-1 items-center">
-              <span className="text-cyan-600">NEURAL TTS</span>
+              <span className="text-cyan-600">VOICE ENGINE</span>
               <button
                 onClick={() => setShowVoiceModal(true)}
                 className="text-cyan-300 hover:text-cyan-100 hover:underline truncate max-w-[135px] text-right font-mono-tech"
-                title="Click to configure Neural Voice"
+                title="Click to configure Gemini 3.8 TTS"
               >
                 {voiceName}
               </button>
             </div>
             <div className="flex justify-between border-b border-cyan-950 pb-1">
-              <span className="text-cyan-600">BACKEND WEBHOOK</span>
-              <span className="text-emerald-400">ONLINE</span>
+              <span className="text-cyan-600">GEMINI 3.8 TTS</span>
+              <span className={geminiConfigured ? 'text-emerald-400' : 'text-amber-400'}>
+                {geminiConfigured ? 'ACTIVE' : 'KEY NEEDED'}
+              </span>
             </div>
             <div className="flex justify-between border-b border-cyan-950 pb-1">
-              <span className="text-cyan-600">AUDIO STREAM</span>
-              <span className="text-cyan-300">24kHz NEURAL</span>
+              <span className="text-cyan-600">n8n BRAIN</span>
+              <span className="text-emerald-400">ONLINE</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-cyan-600">INPUT PROTOCOL</span>
-              <span className="text-cyan-300">STT / CONTINUOUS</span>
+              <span className="text-cyan-600">TURN LATENCY</span>
+              <span className="text-cyan-300">750ms VAD</span>
             </div>
           </div>
         </div>
@@ -318,7 +378,11 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           <div className="space-y-1.5">
             {[
               { label: 'ARC-REACTOR OUTPUT', value: '100%', color: 'bg-cyan-500' },
-              { label: 'NEURAL AUDIO DSP', value: '24kHz', color: 'bg-emerald-500' },
+              {
+                label: 'GEMINI 3.8 VOICE',
+                value: geminiConfigured ? 'ONLINE' : 'STANDBY',
+                color: geminiConfigured ? 'bg-emerald-500' : 'bg-amber-500',
+              },
               {
                 label: 'STT STREAM CAPTURE',
                 value: isListening ? 'ACTIVE' : 'IDLE',
@@ -361,8 +425,8 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               <span className="text-cyan-300">jarvis-web</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-cyan-600">LATENCY</span>
-              <span className="text-emerald-400">~240ms</span>
+              <span className="text-cyan-600">AUDIO FORMAT</span>
+              <span className="text-emerald-400">24kHz PCM WAV</span>
             </div>
             {historyLength > 0 && onClearHistory && (
               <button
@@ -382,15 +446,15 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
         </div>
       </aside>
 
-      {/* NEURAL VOICE SELECTION MODAL */}
+      {/* GEMINI 3.8 VOICE DESIGN & SELECTION MODAL */}
       {showVoiceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <div className="relative w-full max-w-xl p-6 rounded-2xl border border-cyan-500/60 bg-black/95 shadow-[0_0_50px_rgba(0,240,255,0.25)] space-y-4">
+          <div className="relative w-full max-w-xl p-6 rounded-2xl border border-cyan-500/60 bg-black/95 shadow-[0_0_50px_rgba(0,240,255,0.25)] space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-cyan-900/80 pb-3">
               <div className="flex items-center space-x-2">
                 <Volume2 className="w-5 h-5 text-cyan-400" />
                 <h2 className="font-orbitron font-bold text-sm tracking-widest text-cyan-300">
-                  J.A.R.V.I.S. NEURAL VOCAL SYNTHESIZER (24kHz)
+                  GEMINI 3.8 EXPRESSIVE VOICE SYNTHESIZER
                 </h2>
               </div>
               <button
@@ -401,11 +465,82 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               </button>
             </div>
 
-            <p className="text-xs font-mono-tech text-cyan-400/80 leading-relaxed">
-              Powered by studio 24kHz Neural TTS & custom Stark HUD acoustic mastering. Select a vocal profile to preview immediately:
-            </p>
+            {/* Gemini API Key Status & Quick Input */}
+            <div className="p-3.5 rounded-xl border border-cyan-800/60 bg-cyan-950/20 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-xs font-orbitron text-cyan-200">
+                  <KeyRound className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>GEMINI 3.8 TTS ENGINE STATUS</span>
+                </div>
+                <span
+                  className={`flex items-center space-x-1 text-[10px] font-mono-tech px-2 py-0.5 rounded border ${
+                    geminiConfigured
+                      ? 'border-emerald-500/60 bg-emerald-950/50 text-emerald-300'
+                      : 'border-amber-500/60 bg-amber-950/50 text-amber-300'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>
+                    {geminiConfigured ? 'GEMINI 3.8 ONLINE' : 'USING EDGE FALLBACK (NO KEY)'}
+                  </span>
+                </span>
+              </div>
 
-            <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+              <p className="text-[11px] font-mono-tech text-cyan-400/80">
+                Set <code className="text-cyan-200">GEMINI_API_KEY</code> in Vercel Environment Variables, or paste your Google AI Studio key below to activate immediately:
+              </p>
+
+              <div className="flex items-center space-x-2">
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="AIzaSy... (Optional if GEMINI_API_KEY is set in Vercel)"
+                  className="flex-1 bg-black/80 border border-cyan-800 focus:border-cyan-400 rounded-lg px-3 py-1.5 text-xs font-mono-tech text-cyan-100 placeholder-cyan-700 outline-none"
+                />
+                <button
+                  onClick={handleSaveApiKey}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400 hover:bg-cyan-500/30 text-xs font-orbitron text-cyan-200 transition-colors shrink-0"
+                >
+                  SAVE KEY
+                </button>
+              </div>
+
+              {/* One-Click Custom Voice Design Generator */}
+              <div className="flex items-center justify-between pt-1 border-t border-cyan-900/50">
+                <div className="text-[10px] font-mono-tech text-cyan-400">
+                  {customVoiceId ? (
+                    <span>
+                      Custom Designed Persona ID:{' '}
+                      <strong className="text-emerald-300">{customVoiceId}</strong>
+                    </span>
+                  ) : (
+                    <span>Auto-creates persistent British Jarvis persona on first synthesis</span>
+                  )}
+                </div>
+                <button
+                  onClick={handleGenerateCustomVoice}
+                  disabled={isDesigningVoice}
+                  className="flex items-center space-x-1 px-2.5 py-1 rounded border border-cyan-600/60 bg-cyan-950/50 hover:bg-cyan-900/60 text-[10px] font-orbitron text-cyan-200 disabled:opacity-50 transition-colors"
+                >
+                  {isDesigningVoice ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="w-3 h-3 text-cyan-300" />
+                  )}
+                  <span>{customVoiceId ? 'RE-DESIGN PERSONA' : 'DESIGN JARVIS VOICE'}</span>
+                </button>
+              </div>
+
+              {designStatusMsg && (
+                <div className="text-[10px] font-mono-tech text-cyan-300 bg-black/60 px-2.5 py-1 rounded border border-cyan-900">
+                  {designStatusMsg}
+                </div>
+              )}
+            </div>
+
+            {/* Voice Presets List */}
+            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
               {JARVIS_NEURAL_VOICES.map((preset) => {
                 const isCurrent = preset.id === activeVoicePresetId;
                 return (
@@ -431,8 +566,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                           {preset.name}
                         </div>
                         <div className="text-[10px] font-mono-tech text-cyan-400">
-                          {preset.accent} • Rate {preset.rate} • Pitch {preset.pitch}{' '}
-                          {preset.hudDsp ? '• Stark HUD Mastering' : '• Direct Studio'}
+                          {preset.accent} • Model: {preset.model}
                         </div>
                         <div className="text-[11px] font-sans text-cyan-500/90">
                           {preset.description}
