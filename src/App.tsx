@@ -433,6 +433,18 @@ export const App: React.FC = () => {
     );
   }, []);
 
+  const handleVoicePreview = useCallback((text: string) => {
+    inConversationRef.current = false;
+    audioEngine.ensureContext();
+    setLastResponse(text);
+    setAudioState('speaking');
+    audioEngine.speak(
+      text,
+      () => setAudioState('speaking'),
+      () => setAudioState('idle')
+    );
+  }, []);
+
   const handleSelectVoicePreset = useCallback((preset: JarvisNeuralVoicePreset) => {
     inConversationRef.current = false;
     const updated = audioEngine.setVoicePreset(preset.id);
@@ -496,6 +508,7 @@ export const App: React.FC = () => {
         historyLength={history.length}
         onClearHistory={() => setHistory([])}
         onTestVoice={handleVoiceTest}
+        onPreviewVoice={handleVoicePreview}
         onLockConsole={handleLockConsole}
         onToggleWakeWordMode={handleToggleWakeWordMode}
         onToggleWakeWordScope={handleToggleWakeWordScope}

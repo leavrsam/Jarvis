@@ -29,6 +29,7 @@ import {
 import { AudioSpectrumMeter } from './AudioSpectrumMeter';
 import { BatteryStatus } from '../hooks/useBatteryStatus';
 import { VoiceBiometricsModal } from './VoiceBiometricsModal';
+import { VoiceLab } from './VoiceLab';
 
 export type WakeWordMode = 'charging_only' | 'always' | 'off';
 export type WakeWordScope = 'background' | 'active_only';
@@ -46,6 +47,7 @@ interface TelemetryHUDProps {
   historyLength: number;
   onClearHistory?: () => void;
   onTestVoice?: () => void;
+  onPreviewVoice?: (text: string) => void;
   onLockConsole?: () => void;
   onToggleWakeWordMode?: () => void;
   onToggleWakeWordScope?: () => void;
@@ -65,6 +67,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   historyLength,
   onClearHistory,
   onTestVoice,
+  onPreviewVoice,
   onLockConsole,
   onToggleWakeWordMode,
   onToggleWakeWordScope,
@@ -792,6 +795,12 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Voice Lab: remix voice identity, delivery direction, and EQ polish */}
+            <VoiceLab
+              onPreview={(text) => onPreviewVoice?.(text)}
+              onVoiceChanged={(id) => setCustomVoiceId(id)}
+            />
 
             {/* Voice Presets List */}
             <div className="max-h-60 sm:max-h-64 overflow-y-auto space-y-2 pr-1">

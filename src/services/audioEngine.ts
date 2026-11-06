@@ -28,11 +28,11 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     model: 'gemini-3.8-flash-tts',
     voice: 'AUTO_DESIGN_JARVIS',
     edgeVoice: 'en-GB-ThomasNeural',
-    accent: 'en-GB • Paul Bettany Emulation',
+    accent: 'en-GB • Custom Designed AI Butler',
     description:
-      'Cinema-accurate Gemini 3.8 Flash TTS Voice Design custom-modeled on Paul Bettany as J.A.R.V.I.S. in Iron Man.',
+      'Gemini 3.8 Flash TTS with your custom-designed British AI butler voice. Tune it in the Voice Lab.',
     style:
-      'Paul Bettany as JARVIS: calm, unshakeable composure, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication',
+      'Calm, understated and precise. Quick, even pacing with brief natural pauses. Soft-spoken and close, never theatrical or upbeat. A faint, dry, amused politeness, as if addressing someone he knows very well.',
     rate: '+0%',
     pitch: '-2Hz',
     hudDsp: true,
@@ -45,11 +45,11 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     model: 'gemini-3.8-flash-lite-tts',
     voice: 'AUTO_DESIGN_JARVIS',
     edgeVoice: 'en-GB-ThomasNeural',
-    accent: 'en-GB • Low-Latency Paul Bettany',
+    accent: 'en-GB • Low-Latency Custom Voice',
     description:
-      'Fastest Gemini 3.8 Lite TTS model with Paul Bettany voice design for rapid conversational turn-taking.',
+      'Fastest Gemini 3.8 Lite TTS model with your custom voice for rapid conversational turn-taking.',
     style:
-      'Paul Bettany as JARVIS: crisp, responsive, composed British gentleman AI butler, natural conversational cadence with dry wit',
+      'Crisp, responsive and composed. Quick, natural conversational cadence, soft-spoken, with a faint dry wit.',
     rate: '+0%',
     pitch: '-2Hz',
     hudDsp: true,
@@ -106,6 +106,24 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
   },
 ];
 
+export interface JarvisVoiceTuning {
+  /** Acting direction sent with every line. Empty = use the preset's style. */
+  style: string;
+  /** Low-mid chest resonance around 190 Hz, in dB */
+  warmthDb: number;
+  /** Consonant crispness around 3.6 kHz, in dB */
+  presenceDb: number;
+  /** Level of the short "suit intercom" reflection, 0-0.3 */
+  intercomWet: number;
+}
+
+export const DEFAULT_VOICE_TUNING: JarvisVoiceTuning = {
+  style: '',
+  warmthDb: 2.2,
+  presenceDb: 2.4,
+  intercomWet: 0.08,
+};
+
 // Short holding phrases, pre-synthesized so they play with zero latency
 const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.', 'Just a moment, sir.', 'On it, sir.'];
 const ACK_PHRASES_GUEST = ['One moment, please.', 'Just a moment.'];
@@ -149,6 +167,10 @@ class JarvisAudioEngine {
   private lastAckPhrase = '';
   private lastPrewarmAt = 0;
 
+  // Voice Lab tuning (persisted per device)
+  private voiceTuning: JarvisVoiceTuning = { ...DEFAULT_VOICE_TUNING };
+  private voiceHistory: string[] = [];
+
   constructor() {
     this.initVoicePreset();
   }
@@ -168,6 +190,15 @@ class JarvisAudioEngine {
       } else if (savedCustomVoiceId === 'voice_g67uthl21vr5') {
         localStorage.removeItem('jarvis_custom_designed_voice_id');
         this.customDesignedVoiceId = '';
+      }
+      const savedTuning = localStorage.getItem('jarvis_voice_tuning');
+      if (savedTuning) {
+        this.voiceTuning = { ...DEFAULT_VOICE_TUNING, ...JSON.parse(savedTuning) };
+      }
+      const savedHistory = localStorage.getItem('jarvis_voice_history');
+      if (savedHistory) {
+        const parsed = JSON.parse(savedHistory);
+        if (Array.isArray(parsed)) this.voiceHistory = parsed.filter((v) => typeof v === 'string');
       }
       const savedKey = localStorage.getItem('jarvis_gemini_api_key');
       if (savedKey) {
@@ -254,29 +285,71 @@ class JarvisAudioEngine {
     return { geminiConfigured: Boolean(this.clientGeminiApiKey), cachedDesignedVoiceId: null };
   }
 
-  public async designCustomJarvisVoice(prompt?: string): Promise<string | null> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.clientGeminiApiKey) {
-      headers['x-gemini-api-key'] = this.clientGeminiApiKey;
-    }
+  /**
+   * Create a new designed voice. With baseVoice, the prompt describes changes relative to that voice
+   * ("a touch lighter and quicker"); without it, the prompt describes the whole voice.
+   */
+  public async designCustomJarvisVoice(prompt?: string, baseVoice?: string): Promise<string | null> {
     const res = await fetch('/api/tts', {
       method: 'POST',
-      headers,
+      headers: this.buildTtsHeaders(),
       body: JSON.stringify({
         action: 'design_voice',
         prompt,
+        baseVoice,
       }),
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || `HTTP ${res.status}`);
+      throw new Error(errJson.details || errJson.error || `HTTP ${res.status}`);
     }
     const data = await res.json();
     if (data.voiceId) {
+      if (this.customDesignedVoiceId) this.rememberVoice(this.customDesignedVoiceId);
+      this.rememberVoice(data.voiceId);
       this.setCustomDesignedVoiceId(data.voiceId);
       return data.voiceId;
     }
     return null;
+  }
+
+  private rememberVoice(voiceId: string) {
+    this.voiceHistory = [voiceId, ...this.voiceHistory.filter((v) => v !== voiceId)].slice(0, 10);
+    try {
+      localStorage.setItem('jarvis_voice_history', JSON.stringify(this.voiceHistory));
+    } catch {}
+  }
+
+  /** Recently designed voice ids, newest first, so you can A/B and revert. */
+  public getVoiceHistory(): string[] {
+    const all = this.customDesignedVoiceId
+      ? [this.customDesignedVoiceId, ...this.voiceHistory]
+      : this.voiceHistory;
+    return Array.from(new Set(all));
+  }
+
+  public getVoiceTuning(): JarvisVoiceTuning {
+    return { ...this.voiceTuning };
+  }
+
+  public setVoiceTuning(patch: Partial<JarvisVoiceTuning>): JarvisVoiceTuning {
+    this.voiceTuning = { ...this.voiceTuning, ...patch };
+    try {
+      localStorage.setItem('jarvis_voice_tuning', JSON.stringify(this.voiceTuning));
+    } catch {}
+    return this.getVoiceTuning();
+  }
+
+  public resetVoiceTuning(): JarvisVoiceTuning {
+    this.voiceTuning = { ...DEFAULT_VOICE_TUNING };
+    try {
+      localStorage.removeItem('jarvis_voice_tuning');
+    } catch {}
+    return this.getVoiceTuning();
+  }
+
+  private getEffectiveStyle(): string {
+    return this.voiceTuning.style.trim() || this.selectedPreset.style;
   }
 
   public ensureContext(): AudioContext {
@@ -406,7 +479,7 @@ class JarvisAudioEngine {
     const chestWarmth = this.ctx.createBiquadFilter();
     chestWarmth.type = 'peaking';
     chestWarmth.frequency.setValueAtTime(190, this.ctx.currentTime);
-    chestWarmth.gain.setValueAtTime(2.2, this.ctx.currentTime);
+    chestWarmth.gain.setValueAtTime(this.voiceTuning.warmthDb, this.ctx.currentTime);
     chestWarmth.Q.setValueAtTime(1.1, this.ctx.currentTime);
 
     const clarityCut = this.ctx.createBiquadFilter();
@@ -418,7 +491,7 @@ class JarvisAudioEngine {
     const presenceBoost = this.ctx.createBiquadFilter();
     presenceBoost.type = 'peaking';
     presenceBoost.frequency.setValueAtTime(3650, this.ctx.currentTime);
-    presenceBoost.gain.setValueAtTime(2.4, this.ctx.currentTime);
+    presenceBoost.gain.setValueAtTime(this.voiceTuning.presenceDb, this.ctx.currentTime);
     presenceBoost.Q.setValueAtTime(1.2, this.ctx.currentTime);
 
     const airShelf = this.ctx.createBiquadFilter();
@@ -445,7 +518,7 @@ class JarvisAudioEngine {
     wetFilter.Q.setValueAtTime(0.9, this.ctx.currentTime);
 
     const wetGain = this.ctx.createGain();
-    wetGain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+    wetGain.gain.setValueAtTime(this.voiceTuning.intercomWet, this.ctx.currentTime);
 
     const masterOut = this.ctx.createGain();
     masterOut.gain.setValueAtTime(1.06, this.ctx.currentTime);
@@ -512,7 +585,8 @@ class JarvisAudioEngine {
       preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId
         ? this.customDesignedVoiceId
         : preset.voice;
-    const cacheKey = `${preset.id}::${effectiveVoice}::${spokenText}`;
+    const style = this.getEffectiveStyle();
+    const cacheKey = `${preset.id}::${effectiveVoice}::${style}::${spokenText}`;
 
     const cached = this.audioBufferCache.get(cacheKey);
     if (cached) return cached;
@@ -533,7 +607,7 @@ class JarvisAudioEngine {
           model: preset.model,
           voice: effectiveVoice,
           edgeVoice: preset.edgeVoice,
-          style: preset.style,
+          style,
           rate: preset.rate,
           pitch: preset.pitch,
         }),

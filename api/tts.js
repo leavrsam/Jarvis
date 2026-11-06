@@ -11,11 +11,13 @@ const ALLOWED_EDGE_VOICES = new Set([
   'en-US-AndrewNeural',
 ]);
 
+// Describes the character archetype rather than naming a real actor: voice design works from
+// descriptions of vocal qualities, and prompts naming real people may be refused or ignored.
 const DEFAULT_JARVIS_VOICE_PROMPT =
-  'An exact emulation of Paul Bettany as J.A.R.V.I.S. in the Marvel Iron Man films: an aristocratic, refined British gentleman in his early 40s with a warm, resonant baritone voice, speaking with calm, effortless composure, crisp Received Pronunciation diction, quiet dry wit, subtle breathiness, and polite understated warmth.';
+  'A refined English gentleman AI butler in his late 30s: light, clear baritone, crisp Received Pronunciation with precise, slightly clipped consonants, quick but unhurried delivery, soft-spoken and close to the microphone, unflappable calm with a faint undercurrent of dry amusement.';
 
 const DEFAULT_JARVIS_STYLE =
-  'Paul Bettany as JARVIS: calm, unshakeable composure, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication';
+  'Calm, understated and precise. Quick, even pacing with brief natural pauses. Soft-spoken and close, never theatrical or upbeat. A faint, dry, amused politeness, as if addressing someone he knows very well.';
 
 // Server-side in-memory cache for the project's custom designed Jarvis voice ID
 let cachedDesignedVoiceId = 'voice_5r8hqutci8lm';
@@ -30,48 +32,53 @@ function escapeXml(unsafe) {
     .replace(/'/g, '&apos;');
 }
 
-async function resolveOrCreateDesignedJarvisVoice(ai, customPrompt) {
-  if (cachedDesignedVoiceId && !customPrompt) {
+async function createDesignedVoice(ai, prompt, baseVoice) {
+  const prompted = { input: prompt };
+  if (baseVoice) prompted.base_voice = baseVoice;
+  const created = await ai.voices.create({
+    store: true,
+    voice: {
+      model: 'gemini-3.8-flash-tts',
+      type: 'prompted',
+      display_name: `J.A.R.V.I.S. Mk-VII ${new Date().toISOString().slice(0, 16)}`,
+      gender: 'male',
+      language_code: 'en-GB',
+      prompted,
+    },
+  });
+  if (!created?.id) throw new Error('Voice Design returned no voice id');
+  return { voiceId: created.id, sampleAudio: created.sample_audio?.data || null };
+}
+
+async function resolveOrCreateDesignedJarvisVoice(ai, customPrompt, baseVoice) {
+  // Explicit design/remix request from the Voice Lab: surface errors instead of silently swapping voices
+  if (customPrompt) {
+    const result = await createDesignedVoice(ai, customPrompt, baseVoice);
+    cachedDesignedVoiceId = result.voiceId;
+    return result;
+  }
+
+  if (cachedDesignedVoiceId) {
     return { voiceId: cachedDesignedVoiceId, sampleAudio: null };
   }
 
   try {
-    if (!customPrompt) {
-      const listRes = await ai.voices.list({
-        type: ['prompted'],
-        search: 'J.A.R.V.I.S. Mk-VII',
-        page_size: 10,
-      });
-      const existing = listRes?.voices?.find(
-        (v) => v.display_name === 'J.A.R.V.I.S. Mk-VII' && v.id
-      );
-      if (existing?.id) {
-        cachedDesignedVoiceId = existing.id;
-        return { voiceId: existing.id, sampleAudio: null };
-      }
-    }
-
-    const created = await ai.voices.create({
-      store: true,
-      voice: {
-        model: 'gemini-3.8-flash-tts',
-        type: 'prompted',
-        display_name: 'J.A.R.V.I.S. Mk-VII',
-        gender: 'male',
-        language_code: 'en-GB',
-        prompted: {
-          input: customPrompt || DEFAULT_JARVIS_VOICE_PROMPT,
-        },
-      },
+    const listRes = await ai.voices.list({
+      type: ['prompted'],
+      search: 'J.A.R.V.I.S. Mk-VII',
+      page_size: 10,
     });
-
-    if (created?.id) {
-      cachedDesignedVoiceId = created.id;
-      return {
-        voiceId: created.id,
-        sampleAudio: created.sample_audio?.data || null,
-      };
+    const existing = listRes?.voices?.find(
+      (v) => v.display_name?.startsWith('J.A.R.V.I.S. Mk-VII') && v.id
+    );
+    if (existing?.id) {
+      cachedDesignedVoiceId = existing.id;
+      return { voiceId: existing.id, sampleAudio: null };
     }
+
+    const created = await createDesignedVoice(ai, DEFAULT_JARVIS_VOICE_PROMPT);
+    cachedDesignedVoiceId = created.voiceId;
+    return created;
   } catch (err) {
     console.warn('[/api/tts] Voice Design lookup/create fallback:', err?.message || err);
     try {
@@ -97,7 +104,9 @@ async function synthesizeWithGemini(apiKey, params) {
   const ai = new GoogleGenAI({ apiKey });
 
   if (params.action === 'design_voice') {
-    const result = await resolveOrCreateDesignedJarvisVoice(ai, params.prompt);
+    const prompt = (params.prompt || '').toString().trim().slice(0, 1000);
+    const baseVoice = (params.baseVoice || '').toString().trim() || undefined;
+    const result = await resolveOrCreateDesignedJarvisVoice(ai, prompt || DEFAULT_JARVIS_VOICE_PROMPT, baseVoice);
     return {
       isJson: true,
       payload: {

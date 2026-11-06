@@ -1,0 +1,243 @@
+import React, { useState } from 'react';
+import { FlaskConical, Loader2, Play, RotateCcw, Wand2 } from 'lucide-react';
+import { audioEngine, DEFAULT_VOICE_TUNING, JarvisVoiceTuning } from '../services/audioEngine';
+
+const DEFAULT_TEST_LINE =
+  'Good evening, sir. I have taken the liberty of running a full diagnostic. Everything appears to be in order, although your coffee has gone cold again.';
+
+// Quick relative adjustments for "remix" (applied on top of the current voice)
+const REMIX_SUGGESTIONS = [
+  'A touch lighter and younger',
+  'Slightly deeper and warmer',
+  'Quicker, more clipped delivery',
+  'Softer, closer to the microphone',
+  'Drier, more understated',
+  'More precise, crisper consonants',
+];
+
+interface VoiceLabProps {
+  onPreview: (text: string) => void;
+  onVoiceChanged: (voiceId: string) => void;
+}
+
+export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged }) => {
+  const [tuning, setTuning] = useState<JarvisVoiceTuning>(() => audioEngine.getVoiceTuning());
+  const [styleDraft, setStyleDraft] = useState<string>(() => audioEngine.getVoiceTuning().style);
+  const [testLine, setTestLine] = useState(DEFAULT_TEST_LINE);
+  const [remixPrompt, setRemixPrompt] = useState('');
+  const [isRemixing, setIsRemixing] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [history, setHistory] = useState<string[]>(() => audioEngine.getVoiceHistory());
+  const [activeVoice, setActiveVoice] = useState<string>(() => audioEngine.getCustomDesignedVoiceId());
+
+  const updateTuning = (patch: Partial<JarvisVoiceTuning>) => {
+    setTuning(audioEngine.setVoiceTuning(patch));
+  };
+
+  const applyStyle = () => {
+    updateTuning({ style: styleDraft.trim() });
+    setStatusMsg('Delivery direction saved. Press Play to hear it.');
+  };
+
+  const handleRemix = async (fromScratch: boolean) => {
+    const prompt = remixPrompt.trim();
+    if (!prompt) {
+      setStatusMsg('Describe the change first, e.g. "a touch lighter and quicker".');
+      return;
+    }
+    setIsRemixing(true);
+    setStatusMsg(fromScratch ? 'Designing a new voice...' : `Remixing ${activeVoice || 'current voice'}...`);
+    try {
+      const base = fromScratch ? undefined : activeVoice || undefined;
+      const newId = await audioEngine.designCustomJarvisVoice(prompt, base);
+      if (newId) {
+        setActiveVoice(newId);
+        setHistory(audioEngine.getVoiceHistory());
+        onVoiceChanged(newId);
+        setStatusMsg(`New voice ${newId} is active. Playing test line...`);
+        onPreview(testLine);
+      }
+    } catch (err: unknown) {
+      setStatusMsg(`Voice Design error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsRemixing(false);
+    }
+  };
+
+  const useVoice = (voiceId: string) => {
+    audioEngine.setCustomDesignedVoiceId(voiceId);
+    setActiveVoice(voiceId);
+    onVoiceChanged(voiceId);
+    setStatusMsg(`Switched to ${voiceId}.`);
+    onPreview(testLine);
+  };
+
+  const slider = (
+    label: string,
+    hint: string,
+    key: 'warmthDb' | 'presenceDb' | 'intercomWet',
+    min: number,
+    max: number,
+    step: number,
+    format: (v: number) => string
+  ) => (
+    <label className="block space-y-1">
+      <div className="flex justify-between text-[10px] font-mono-tech">
+        <span className="text-amber-300">{label}</span>
+        <span className="text-amber-200">{format(tuning[key])}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={tuning[key]}
+        onChange={(e) => updateTuning({ [key]: Number(e.target.value) })}
+        className="w-full accent-amber-400"
+      />
+      <div className="text-[9px] text-amber-500/80">{hint}</div>
+    </label>
+  );
+
+  return (
+    <div className="p-3 sm:p-3.5 rounded-xl border border-amber-800/60 bg-amber-950/20 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2 text-xs font-orbitron text-amber-200">
+          <FlaskConical className="w-3.5 h-3.5 text-amber-400" />
+          <span>VOICE LAB</span>
+        </div>
+        <button
+          onClick={() => {
+            setTuning(audioEngine.resetVoiceTuning());
+            setStyleDraft('');
+            setStatusMsg('Tuning reset to defaults.');
+          }}
+          className="flex items-center space-x-1 text-[9px] font-mono-tech text-amber-400 hover:text-amber-200"
+        >
+          <RotateCcw className="w-3 h-3" />
+          <span>RESET</span>
+        </button>
+      </div>
+
+      {/* Test line */}
+      <div className="space-y-1.5">
+        <div className="text-[10px] font-mono-tech text-amber-300">Test line</div>
+        <textarea
+          value={testLine}
+          onChange={(e) => setTestLine(e.target.value)}
+          rows={2}
+          className="w-full bg-black/80 border border-amber-800 focus:border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-100 outline-none resize-none"
+        />
+        <button
+          onClick={() => onPreview(testLine)}
+          className="w-full flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500 text-black hover:bg-amber-400 text-xs font-orbitron font-bold"
+        >
+          <Play className="w-3.5 h-3.5" />
+          <span>PLAY</span>
+        </button>
+      </div>
+
+      {/* 1. Voice identity: remix the designed voice */}
+      <div className="space-y-1.5 pt-2 border-t border-amber-900/50">
+        <div className="text-[10px] font-mono-tech text-amber-300">
+          1. Voice identity <span className="text-amber-500/80">(timbre, age, depth: creates a new voice)</span>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {REMIX_SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setRemixPrompt(s)}
+              className="px-2 py-0.5 rounded-full border border-amber-800 text-[9px] text-amber-300 hover:border-amber-500"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <input
+          value={remixPrompt}
+          onChange={(e) => setRemixPrompt(e.target.value)}
+          placeholder="Describe the change, e.g. a touch lighter and quicker"
+          className="w-full bg-black/80 border border-amber-800 focus:border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-100 placeholder-amber-800 outline-none"
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleRemix(false)}
+            disabled={isRemixing}
+            className="flex-1 flex items-center justify-center space-x-1 px-2 py-1.5 rounded border border-amber-600/60 bg-amber-950/50 hover:bg-amber-900/60 text-[10px] font-orbitron text-amber-200 disabled:opacity-50"
+          >
+            {isRemixing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+            <span>REMIX CURRENT</span>
+          </button>
+          <button
+            onClick={() => handleRemix(true)}
+            disabled={isRemixing}
+            title="Treat the text as a full description and design a brand-new voice"
+            className="px-2 py-1.5 rounded border border-amber-900 text-[10px] font-orbitron text-amber-400 hover:border-amber-600 disabled:opacity-50"
+          >
+            NEW FROM TEXT
+          </button>
+        </div>
+        {history.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[9px] text-amber-500/80">Recent voices (tap to A/B):</div>
+            <div className="flex flex-wrap gap-1">
+              {history.map((id) => (
+                <button
+                  key={id}
+                  onClick={() => useVoice(id)}
+                  className={`px-2 py-0.5 rounded border text-[9px] font-mono-tech ${
+                    id === activeVoice
+                      ? 'border-emerald-500 text-emerald-300 bg-emerald-950/40'
+                      : 'border-amber-800 text-amber-300 hover:border-amber-500'
+                  }`}
+                >
+                  {id}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 2. Delivery direction */}
+      <div className="space-y-1.5 pt-2 border-t border-amber-900/50">
+        <div className="text-[10px] font-mono-tech text-amber-300">
+          2. Delivery <span className="text-amber-500/80">(pace, mood, attitude: sent with every line)</span>
+        </div>
+        <textarea
+          value={styleDraft}
+          onChange={(e) => setStyleDraft(e.target.value)}
+          rows={3}
+          placeholder={audioEngine.getVoicePreset().style}
+          className="w-full bg-black/80 border border-amber-800 focus:border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-100 placeholder-amber-700 outline-none resize-none"
+        />
+        <button
+          onClick={applyStyle}
+          className="w-full px-2 py-1.5 rounded border border-amber-600/60 bg-amber-950/50 hover:bg-amber-900/60 text-[10px] font-orbitron text-amber-200"
+        >
+          SAVE DELIVERY
+        </button>
+      </div>
+
+      {/* 3. Polish */}
+      <div className="space-y-2 pt-2 border-t border-amber-900/50">
+        <div className="text-[10px] font-mono-tech text-amber-300">
+          3. Polish <span className="text-amber-500/80">(in-browser EQ: instant, no new voice)</span>
+        </div>
+        {slider('Chest warmth', 'Body in the low voice (190 Hz)', 'warmthDb', -3, 6, 0.5, (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`)}
+        {slider('Diction crispness', 'Sharpness of t, k, s (3.6 kHz)', 'presenceDb', -2, 6, 0.5, (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`)}
+        {slider('Suit intercom sheen', 'Short metallic reflection', 'intercomWet', 0, 0.3, 0.01, (v) => `${Math.round(v * 100)}%`)}
+        <div className="text-[9px] text-amber-600">
+          Defaults: warmth +{DEFAULT_VOICE_TUNING.warmthDb} dB, crispness +{DEFAULT_VOICE_TUNING.presenceDb} dB, sheen{' '}
+          {Math.round(DEFAULT_VOICE_TUNING.intercomWet * 100)}%. Requires the HUD DSP preset to be active.
+        </div>
+      </div>
+
+      {statusMsg && (
+        <div className="text-[10px] font-mono-tech text-amber-300 bg-black/60 px-2.5 py-1 rounded border border-amber-900">
+          {statusMsg}
+        </div>
+      )}
+    </div>
+  );
+};
