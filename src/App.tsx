@@ -356,7 +356,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-[#02040a] hud-grid">
+    <main className="relative w-full h-[100dvh] overflow-hidden bg-[#02040a] hud-grid">
       {/* Cinematic CRT Scanlines and Radial Vignette */}
       <div className="absolute inset-0 hud-scanline z-10 pointer-events-none" />
       <div className="absolute inset-0 hud-vignette z-10 pointer-events-none" />

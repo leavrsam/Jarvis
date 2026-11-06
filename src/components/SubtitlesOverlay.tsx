@@ -109,9 +109,10 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
       }
       return (
         <div className="flex flex-col items-center justify-center space-y-1 py-1">
-          <div className="flex items-center space-x-2 text-cyan-300 font-orbitron tracking-widest text-xs animate-pulse">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
-            <span>LISTENING FOR INSTRUCTIONS... [SPEAK NOW OR HIT SPACE]</span>
+          <div className="flex items-center space-x-2 text-cyan-300 font-orbitron tracking-wider sm:tracking-widest text-[11px] sm:text-xs animate-pulse">
+            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-cyan-400 animate-ping" />
+            <span className="hidden sm:inline">LISTENING FOR INSTRUCTIONS... [SPEAK NOW OR HIT SPACE]</span>
+            <span className="sm:hidden">LISTENING... [SPEAK NOW OR TAP TO STOP]</span>
           </div>
         </div>
       );
@@ -120,33 +121,34 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
     // 3. J.A.R.V.I.S. Vocal Transcript Display (Speaking or Last Response)
     if (lastResponse) {
       return (
-        <div className="space-y-1.5 py-1 w-full max-w-4xl mx-auto">
+        <div className="space-y-1.5 py-0.5 sm:py-1 w-full max-w-4xl mx-auto">
           {/* Header pill with speaker info & user query badge */}
           <div className="flex items-center justify-between border-b border-cyan-950/80 pb-1.5 px-1">
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1.5 sm:space-x-2">
               {state === 'speaking' ? (
-                <div className="flex items-center space-x-2">
-                  <span className="flex space-x-0.5 items-end h-4 mr-0.5">
-                    <span className="w-1 h-3.5 bg-cyan-400 rounded-full animate-[pulse_0.4s_ease-in-out_infinite]" />
-                    <span className="w-1 h-5 bg-cyan-300 rounded-full animate-[pulse_0.5s_ease-in-out_infinite]" />
-                    <span className="w-1 h-2.5 bg-cyan-400 rounded-full animate-[pulse_0.3s_ease-in-out_infinite]" />
-                    <span className="w-1 h-4 bg-cyan-300 rounded-full animate-[pulse_0.6s_ease-in-out_infinite]" />
+                <div className="flex items-center space-x-1.5 sm:space-x-2">
+                  <span className="flex space-x-0.5 items-end h-3.5 sm:h-4 mr-0.5">
+                    <span className="w-0.5 sm:w-1 h-3 sm:h-3.5 bg-cyan-400 rounded-full animate-[pulse_0.4s_ease-in-out_infinite]" />
+                    <span className="w-0.5 sm:w-1 h-4 sm:h-5 bg-cyan-300 rounded-full animate-[pulse_0.5s_ease-in-out_infinite]" />
+                    <span className="w-0.5 sm:w-1 h-2 sm:h-2.5 bg-cyan-400 rounded-full animate-[pulse_0.3s_ease-in-out_infinite]" />
+                    <span className="w-0.5 sm:w-1 h-3.5 sm:h-4 bg-cyan-300 rounded-full animate-[pulse_0.6s_ease-in-out_infinite]" />
                   </span>
-                  <span className="text-xs font-orbitron font-bold text-cyan-300 tracking-wider text-glow-cyan">
-                    J.A.R.V.I.S. VOCAL TRANSMISSION [LIVE]
+                  <span className="text-[11px] sm:text-xs font-orbitron font-bold text-cyan-300 tracking-wider text-glow-cyan">
+                    <span className="hidden sm:inline">J.A.R.V.I.S. VOCAL TRANSMISSION [LIVE]</span>
+                    <span className="sm:hidden">J.A.R.V.I.S. [SPEAKING]</span>
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center space-x-1.5 text-xs font-orbitron font-bold text-cyan-400 tracking-wider">
-                  <Volume2 className="w-4 h-4 text-cyan-400" />
-                  <span>J.A.R.V.I.S. TRANSCRIPT:</span>
+                <div className="flex items-center space-x-1.5 text-[11px] sm:text-xs font-orbitron font-bold text-cyan-400 tracking-wider">
+                  <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400" />
+                  <span>J.A.R.V.I.S.:</span>
                 </div>
               )}
             </div>
 
             {lastQuery && (
-              <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-900/60 text-[10px] font-mono-tech text-cyan-400/90 max-w-sm truncate">
-                <span className="text-cyan-600 font-orbitron text-[9px]">USER:</span>
+              <div className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-900/60 text-[9px] sm:text-[10px] font-mono-tech text-cyan-400/90 max-w-[130px] sm:max-w-sm truncate">
+                <span className="text-cyan-600 font-orbitron text-[8px] sm:text-[9px]">USER:</span>
                 <span className="truncate">"{lastQuery}"</span>
               </div>
             )}
@@ -154,17 +156,17 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             {onReplayResponse && (
               <button
                 onClick={() => onReplayResponse(lastResponse)}
-                className="text-[10px] font-orbitron text-cyan-400 hover:text-cyan-200 flex items-center space-x-1 px-2 py-0.5 rounded border border-cyan-900/80 hover:border-cyan-500 bg-cyan-950/40 hover:bg-cyan-900/50 transition-all shadow-[0_0_8px_rgba(0,240,255,0.2)]"
+                className="text-[9px] sm:text-[10px] font-orbitron text-cyan-400 hover:text-cyan-200 flex items-center space-x-1 px-1.5 sm:px-2 py-0.5 rounded border border-cyan-900/80 hover:border-cyan-500 bg-cyan-950/40 hover:bg-cyan-900/50 transition-all shadow-[0_0_8px_rgba(0,240,255,0.2)]"
                 title="Replay Jarvis speech"
               >
                 <RotateCcw className="w-2.5 h-2.5" />
-                <span>REPEAT</span>
+                <span className="hidden xs:inline">REPEAT</span>
               </button>
             )}
           </div>
 
           {/* Jarvis Spoken Words */}
-          <p className="text-cyan-100 font-sans text-base md:text-lg leading-relaxed text-center font-medium max-w-4xl mx-auto text-glow-cyan px-2 max-h-36 overflow-y-auto">
+          <p className="text-cyan-100 font-sans text-sm sm:text-base md:text-lg leading-relaxed text-center font-medium max-w-4xl mx-auto text-glow-cyan px-1 sm:px-2 max-h-24 sm:max-h-36 overflow-y-auto">
             "{formatVisualSubtitle(lastResponse)}"
           </p>
         </div>
@@ -174,8 +176,8 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
     // 4. Standby prompt
     return (
       <div className="text-center py-1">
-        <span className="text-xs md:text-sm font-orbitron tracking-[0.25em] text-cyan-400/60 uppercase">
-          AWAITING VOCAL INGEST // PRESS [SPACEBAR] OR SAY "HEY JARVIS"
+        <span className="text-[10px] sm:text-xs md:text-sm font-orbitron tracking-wider sm:tracking-[0.25em] text-cyan-400/60 uppercase">
+          AWAITING VOCAL INGEST // TAP MIC OR SAY "HEY JARVIS"
         </span>
       </div>
     );
@@ -183,18 +185,18 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
   return (
     <>
-      <footer className="absolute bottom-0 left-0 right-0 z-30 flex flex-col items-center pb-5 px-6 pointer-events-none">
+      <footer className="absolute bottom-0 left-0 right-0 z-30 flex flex-col items-center pb-2.5 sm:pb-5 px-3 sm:px-6 pointer-events-none pb-safe">
         {/* Main Live Subtitle & Transcript Card */}
-        <div className="w-full max-w-4xl pointer-events-auto mb-3">
-          <div className="relative rounded-2xl border border-cyan-500/40 bg-black/85 backdrop-blur-xl px-6 py-4 shadow-[0_0_35px_rgba(0,240,255,0.18)] transition-all">
+        <div className="w-full max-w-4xl pointer-events-auto mb-2 sm:mb-3">
+          <div className="relative rounded-xl sm:rounded-2xl border border-cyan-500/40 bg-black/85 backdrop-blur-xl px-3.5 py-2.5 sm:px-6 sm:py-4 shadow-[0_0_35px_rgba(0,240,255,0.18)] transition-all">
             {/* Sci-fi Corner Brackets */}
-            <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-cyan-400" />
-            <div className="absolute top-0 right-0 w-3.5 h-3.5 border-t-2 border-r-2 border-cyan-400" />
-            <div className="absolute bottom-0 left-0 w-3.5 h-3.5 border-b-2 border-l-2 border-cyan-400" />
-            <div className="absolute bottom-0 right-0 w-3.5 h-3.5 border-b-2 border-r-2 border-cyan-400" />
+            <div className="absolute top-0 left-0 w-3 h-3 sm:w-3.5 sm:h-3.5 border-t-2 border-l-2 border-cyan-400" />
+            <div className="absolute top-0 right-0 w-3 h-3 sm:w-3.5 sm:h-3.5 border-t-2 border-r-2 border-cyan-400" />
+            <div className="absolute bottom-0 left-0 w-3 h-3 sm:w-3.5 sm:h-3.5 border-b-2 border-l-2 border-cyan-400" />
+            <div className="absolute bottom-0 right-0 w-3 h-3 sm:w-3.5 sm:h-3.5 border-b-2 border-r-2 border-cyan-400" />
 
             {/* Subtitle Content */}
-            <div className="min-h-[52px] flex items-center justify-center">
+            <div className="min-h-[44px] sm:min-h-[52px] flex items-center justify-center">
               {renderSubtitleContent()}
             </div>
           </div>
@@ -202,24 +204,25 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
         {/* Manual Input Fallback Drawer */}
         {showInput && (
-          <div className="w-full max-w-xl pointer-events-auto mb-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="w-full max-w-xl pointer-events-auto mb-2 sm:mb-3 animate-in fade-in slide-in-from-bottom-2 duration-200 px-1 sm:px-0">
             <form
               onSubmit={handleManualSubmit}
               className="flex items-center space-x-2 bg-black/90 border border-cyan-500 rounded-xl p-2 shadow-[0_0_20px_rgba(0,240,255,0.25)]"
             >
-              <Terminal className="w-4 h-4 text-cyan-400 ml-2" />
+              <Terminal className="w-4 h-4 text-cyan-400 ml-2 shrink-0" />
               <input
                 type="text"
                 value={manualText}
                 onChange={(e) => setManualText(e.target.value)}
-                placeholder="Type command to override voice input..."
+                placeholder="Type command to override voice..."
                 autoFocus
-                className="flex-1 bg-transparent px-2 py-1 text-sm text-cyan-200 placeholder-cyan-600 outline-none font-mono-tech"
+                enterKeyHint="send"
+                className="flex-1 bg-transparent px-2 py-1 text-xs sm:text-sm text-cyan-200 placeholder-cyan-600 outline-none font-mono-tech"
               />
               <button
                 type="submit"
                 disabled={!manualText.trim()}
-                className="px-3 py-1 bg-cyan-500 text-black font-orbitron font-bold text-xs rounded-lg hover:bg-cyan-400 disabled:opacity-40 transition-colors flex items-center space-x-1"
+                className="px-3 py-1.5 bg-cyan-500 text-black font-orbitron font-bold text-xs rounded-lg hover:bg-cyan-400 disabled:opacity-40 transition-colors flex items-center space-x-1 shrink-0"
               >
                 <span>SEND</span>
                 <Send className="w-3 h-3" />
@@ -229,11 +232,11 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
         )}
 
         {/* Action Controls & Push-to-Talk HUD bar */}
-        <div className="flex items-center space-x-3.5 pointer-events-auto">
+        <div className="flex items-center flex-wrap justify-center gap-2 sm:gap-3.5 pointer-events-auto">
           {/* Toggle Conversation Transcript Drawer */}
           <button
             onClick={() => setShowHistoryDrawer(!showHistoryDrawer)}
-            className={`flex items-center space-x-1.5 px-3 py-2 rounded-full border transition-all ${
+            className={`flex items-center space-x-1.5 px-3 py-2 rounded-full border transition-all touch-manipulation min-h-[42px] ${
               showHistoryDrawer
                 ? 'border-cyan-400 bg-cyan-950/80 text-cyan-200 shadow-[0_0_12px_rgba(0,240,255,0.4)]'
                 : 'border-cyan-900/60 bg-black/60 text-cyan-400 hover:text-cyan-200 hover:border-cyan-600'
@@ -247,7 +250,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
           {/* Toggle Manual Command Input */}
           <button
             onClick={() => setShowInput((prev) => !prev)}
-            className={`p-2.5 rounded-full border transition-all ${
+            className={`p-2.5 rounded-full border transition-all touch-manipulation min-h-[42px] min-w-[42px] flex items-center justify-center ${
               showInput
                 ? 'border-cyan-400 bg-cyan-950/80 text-cyan-200 shadow-[0_0_10px_rgba(0,240,255,0.4)]'
                 : 'border-cyan-900/60 bg-black/60 text-cyan-500 hover:text-cyan-300 hover:border-cyan-600'
@@ -257,17 +260,24 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             <Terminal className="w-4 h-4" />
           </button>
 
-          {/* Central Push-to-Talk Mic Button */}
+          {/* Central Push-to-Talk / Tap-to-Talk Mic Button */}
           <button
-            onClick={onToggleListening}
-            className={`group relative flex items-center space-x-3 px-6 py-2.5 rounded-full border transition-all duration-300 ${
+            onClick={() => {
+              if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                try {
+                  navigator.vibrate(35);
+                } catch {}
+              }
+              onToggleListening();
+            }}
+            className={`group relative flex items-center space-x-2.5 sm:space-x-3 px-4 sm:px-6 py-2 sm:py-2.5 rounded-full border transition-all duration-300 touch-manipulation min-h-[42px] ${
               isListening
                 ? 'border-cyan-400 bg-cyan-500/25 text-white shadow-[0_0_25px_rgba(0,240,255,0.6)]'
                 : 'border-cyan-700/60 bg-black/70 hover:bg-cyan-950/40 text-cyan-300 hover:border-cyan-400 shadow-[0_0_15px_rgba(0,0,0,0.8)]'
             }`}
           >
             <div
-              className={`w-3 h-3 rounded-full ${
+              className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full ${
                 isListening ? 'bg-cyan-400 animate-ping' : 'bg-cyan-700 group-hover:bg-cyan-400'
               }`}
             />
@@ -276,8 +286,18 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             ) : (
               <MicOff className="w-4 h-4 text-cyan-500 group-hover:text-cyan-300" />
             )}
-            <span className="font-orbitron font-semibold text-xs tracking-widest uppercase">
-              {isListening ? 'LISTENING... [SPACE TO STOP]' : 'PUSH-TO-TALK [SPACE]'}
+            <span className="font-orbitron font-semibold text-[11px] sm:text-xs tracking-wider sm:tracking-widest uppercase">
+              {isListening ? (
+                <>
+                  <span className="hidden sm:inline">LISTENING... [SPACE TO STOP]</span>
+                  <span className="sm:hidden">LISTENING (STOP)</span>
+                </>
+              ) : (
+                <>
+                  <span className="hidden sm:inline">PUSH-TO-TALK [SPACE]</span>
+                  <span className="sm:hidden">TAP TO TALK</span>
+                </>
+              )}
             </span>
           </button>
 
@@ -285,7 +305,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
           {state === 'speaking' && (
             <button
               onClick={onStopSpeaking}
-              className="p-2.5 rounded-full border border-red-500/60 bg-red-950/30 text-red-300 hover:bg-red-900/50 hover:border-red-400 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-pulse"
+              className="p-2.5 rounded-full border border-red-500/60 bg-red-950/30 text-red-300 hover:bg-red-900/50 hover:border-red-400 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-pulse touch-manipulation min-h-[42px] min-w-[42px] flex items-center justify-center"
               title="Silence Jarvis Voice"
             >
               <VolumeX className="w-4 h-4" />
@@ -296,7 +316,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
       {/* FULL CONVERSATION TRANSCRIPT SLIDE-OVER DRAWER */}
       {showHistoryDrawer && (
-        <aside className="fixed top-20 right-6 bottom-24 w-full max-w-md z-40 bg-black/95 border border-cyan-500/60 rounded-2xl shadow-[0_0_50px_rgba(0,240,255,0.25)] flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in slide-in-from-right-4 duration-200">
+        <aside className="fixed inset-x-2 sm:inset-x-auto sm:right-6 top-16 sm:top-20 bottom-20 sm:bottom-24 w-auto sm:w-full sm:max-w-md z-40 bg-black/95 border border-cyan-500/60 rounded-xl sm:rounded-2xl shadow-[0_0_50px_rgba(0,240,255,0.25)] flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in duration-200">
           {/* Drawer Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-cyan-950/90 bg-cyan-950/30">
             <div className="flex items-center space-x-2">

@@ -76,7 +76,25 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       0.1,
       1000
     );
-    camera.position.z = 25;
+
+    const updateCamera = (w: number, h: number) => {
+      const aspect = w / h;
+      camera.aspect = aspect;
+      if (aspect < 1) {
+        // Portrait mobile screen: scale distance so 3D reactor (radius ~9.5) fits horizontally without clipping
+        // FOV is 45 deg, tan(22.5 deg) = 0.4142. Visible half-width at distance d is d * 0.4142 * aspect.
+        const targetZ = Math.min(54, Math.max(25, 12 / (0.4142 * aspect)));
+        camera.position.z = targetZ;
+        // On mobile, subtitles HUD sits in the bottom ~160px; elevate camera slightly so reactor is centered in available view
+        camera.position.y = 1.1;
+      } else {
+        camera.position.z = 25;
+        camera.position.y = 0;
+      }
+      camera.updateProjectionMatrix();
+    };
+
+    updateCamera(container.clientWidth, container.clientHeight);
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -534,6 +552,18 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     };
     window.addEventListener('mousemove', handleMouseMove);
 
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        const rect = container.getBoundingClientRect();
+        const nx = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+        const ny = -(((touch.clientY - rect.top) / rect.height) * 2 - 1);
+        targetTiltY = nx * 0.22;
+        targetTiltX = -ny * 0.22;
+      }
+    };
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+
     // ==========================================
     // E. MAIN ANIMATION & MULTI-BAND AUDIO REACTIVITY LOOP
     // ==========================================
@@ -832,8 +862,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       if (!container) return;
       const w = container.clientWidth;
       const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      updateCamera(w, h);
       renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
@@ -841,6 +870,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     return () => {
       cancelAnimationFrame(animFrameId);
       window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('resize', handleResize);
       if (container && renderer.domElement) {
         container.removeChild(renderer.domElement);
@@ -856,29 +886,29 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     <div
       ref={mountRef}
       onClick={onReactorClick}
-      className="relative w-full h-full flex items-center justify-center cursor-pointer select-none group"
-      title="Click Arc-Reactor to activate / toggle push-to-talk"
+      className="relative w-full h-full flex items-center justify-center cursor-pointer select-none group touch-manipulation"
+      title="Click or tap Arc-Reactor to activate / toggle push-to-talk"
     >
       {/* Sci-Fi Holographic Reticle Overlays */}
-      <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-        <div className="w-[430px] h-[430px] rounded-full border border-cyan-400/10 animate-[spin_240s_linear_infinite]" />
-        <div className="absolute w-[540px] h-[540px] rounded-full border border-dashed border-cyan-500/10 animate-[spin_320s_linear_infinite_reverse]" />
-        <div className="absolute w-[680px] h-[680px] rounded-full border border-cyan-400/5" />
+      <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden">
+        <div className="w-[280px] h-[280px] sm:w-[430px] sm:h-[430px] rounded-full border border-cyan-400/10 animate-[spin_240s_linear_infinite]" />
+        <div className="absolute w-[360px] h-[360px] sm:w-[540px] sm:h-[540px] rounded-full border border-dashed border-cyan-500/10 animate-[spin_320s_linear_infinite_reverse]" />
+        <div className="absolute w-[460px] h-[460px] sm:w-[680px] sm:h-[680px] rounded-full border border-cyan-400/5 hidden sm:block" />
 
-        <div className="absolute w-[740px] h-[1px] bg-gradient-to-r from-transparent via-cyan-500/15 to-transparent" />
-        <div className="absolute h-[740px] w-[1px] bg-gradient-to-b from-transparent via-cyan-500/15 to-transparent" />
+        <div className="absolute w-full max-w-[740px] h-[1px] bg-gradient-to-r from-transparent via-cyan-500/15 to-transparent" />
+        <div className="absolute h-full max-h-[740px] w-[1px] bg-gradient-to-b from-transparent via-cyan-500/15 to-transparent" />
 
-        <div className="absolute bottom-12 flex flex-col items-center opacity-60 group-hover:opacity-100 transition-opacity duration-300">
-          <span className="text-[10px] tracking-[0.35em] font-orbitron uppercase text-cyan-300 text-glow-cyan">
+        <div className="absolute bottom-24 sm:bottom-12 flex flex-col items-center px-4 text-center opacity-60 group-hover:opacity-100 transition-opacity duration-300">
+          <span className="text-[9px] sm:text-[10px] tracking-[0.25em] sm:tracking-[0.35em] font-orbitron uppercase text-cyan-300 text-glow-cyan">
             {state === 'listening'
-              ? 'ACOUSTIC RECEPTORS ARMED // LISTENING FOR REPLY'
+              ? 'ACOUSTIC RECEPTORS ARMED // LISTENING'
               : state === 'speaking'
               ? 'NEURAL VOCALIZER ACTIVE // SPEAKING'
               : state === 'processing'
               ? 'QUANTUM MATRIX COMPUTING'
-              : 'CLICK OR SAY "HEY JARVIS" TO ENGAGE'}
+              : 'TAP OR SAY "HEY JARVIS" TO ENGAGE'}
           </span>
-          <span className="text-[9px] font-mono-tech text-cyan-600/70 mt-1 tracking-widest">
+          <span className="text-[8px] sm:text-[9px] font-mono-tech text-cyan-600/70 mt-0.5 tracking-widest hidden sm:inline">
             STARK ARC-REACTOR MK-VII // COUPLING: 100%
           </span>
         </div>
