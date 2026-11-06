@@ -19,6 +19,7 @@ const DEFAULT_JARVIS_STYLE =
 
 // Server-side in-memory cache for the project's custom designed Jarvis voice ID
 let cachedDesignedVoiceId = 'voice_g67uthl21vr5';
+const ttsMemoryCache = new Map();
 
 function escapeXml(unsafe) {
   return String(unsafe)
@@ -251,10 +252,35 @@ export default async function handler(req, res) {
     }
 
     const preferProvider = (params.provider || 'gemini').toString().trim();
+    const cacheKey = `${preferProvider}::${params.voice || 'default'}::${rawText}`;
+    const cached = ttsMemoryCache.get(cacheKey);
+    if (cached) {
+      res.setHeader('Content-Type', cached.contentType);
+      res.setHeader('Content-Length', String(cached.buffer.length));
+      res.setHeader('X-TTS-Engine', cached.engine);
+      res.setHeader('X-Gemini-Voice-Id', cached.voiceId);
+      res.setHeader('X-Cache-Hit', 'HIT');
+      res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+      res.status(200).send(cached.buffer);
+      return;
+    }
 
     if (apiKey && preferProvider !== 'edge') {
       try {
-        const result = await synthesizeWithGemini(apiKey, params);
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Gemini TTS timed out after 2200ms')), 2200)
+        );
+        const result = await Promise.race([
+          synthesizeWithGemini(apiKey, params),
+          timeoutPromise,
+        ]);
+
+        if (ttsMemoryCache.size > 60) {
+          const oldest = ttsMemoryCache.keys().next().value;
+          if (oldest) ttsMemoryCache.delete(oldest);
+        }
+        ttsMemoryCache.set(cacheKey, result);
+
         res.setHeader('Content-Type', result.contentType);
         res.setHeader('Content-Length', String(result.buffer.length));
         res.setHeader('X-TTS-Engine', result.engine);
@@ -263,12 +289,19 @@ export default async function handler(req, res) {
         res.status(200).send(result.buffer);
         return;
       } catch (geminiErr) {
-        console.warn('[/api/tts] Gemini TTS error, falling back to Edge Neural:', geminiErr?.message || geminiErr);
+        console.warn('[/api/tts] Gemini TTS error/timeout, instantly falling back to Edge Neural:', geminiErr?.message || geminiErr);
       }
     }
 
-    // Fallback to 24kHz Edge Neural TTS
+    // Fast Fallback to 24kHz Edge Neural TTS (~300ms)
     const edgeResult = await synthesizeWithEdgeFallback(params);
+
+    if (ttsMemoryCache.size > 60) {
+      const oldest = ttsMemoryCache.keys().next().value;
+      if (oldest) ttsMemoryCache.delete(oldest);
+    }
+    ttsMemoryCache.set(cacheKey, edgeResult);
+
     res.setHeader('Content-Type', edgeResult.contentType);
     res.setHeader('Content-Length', String(edgeResult.buffer.length));
     res.setHeader('X-TTS-Engine', edgeResult.engine);

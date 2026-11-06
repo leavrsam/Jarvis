@@ -483,6 +483,9 @@ class JarvisAudioEngine {
       if (!audioBuffer) {
         const controller = new AbortController();
         this.activeAbortController = controller;
+        const fetchTimeout = setTimeout(() => {
+          controller.abort();
+        }, 4500);
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -491,21 +494,26 @@ class JarvisAudioEngine {
           headers['x-gemini-api-key'] = this.clientGeminiApiKey;
         }
 
-        const response = await fetch('/api/tts', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            text: spokenText,
-            provider: preset.provider,
-            model: preset.model,
-            voice: effectiveVoice,
-            edgeVoice: preset.edgeVoice,
-            style: preset.style,
-            rate: preset.rate,
-            pitch: preset.pitch,
-          }),
-          signal: controller.signal,
-        });
+        let response: Response;
+        try {
+          response = await fetch('/api/tts', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              text: spokenText,
+              provider: preset.provider,
+              model: preset.model,
+              voice: effectiveVoice,
+              edgeVoice: preset.edgeVoice,
+              style: preset.style,
+              rate: preset.rate,
+              pitch: preset.pitch,
+            }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(fetchTimeout);
+        }
 
         if (!response.ok) {
           throw new Error(`TTS API returned HTTP ${response.status}`);

@@ -34,10 +34,11 @@ export const App: React.FC = () => {
   const [wakeWordMode, setWakeWordMode] = useState<WakeWordMode>(() => {
     try {
       const saved = localStorage.getItem('jarvis_wakeword_mode') as WakeWordMode | null;
-      if (saved === 'charging_only' || saved === 'always' || saved === 'off') return saved;
-      return 'charging_only'; // Default: listens when charging, conserves battery when unplugged
+      if (saved === 'always' || saved === 'off') return saved;
+      // Upgrade default and legacy 'charging_only' to 'always' so "Hey Jarvis" works on battery
+      return 'always';
     } catch {
-      return 'charging_only';
+      return 'always';
     }
   });
 
@@ -286,7 +287,7 @@ export const App: React.FC = () => {
     onWakeWordDetected: handleWakeWordDetected,
     onFollowUpTimeout: handleFollowUpTimeout,
     onBargeIn: handleBargeIn,
-    silenceTimeoutMs: 1150,
+    silenceTimeoutMs: 750,
     followUpTimeoutMs: 15000,
     isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
     wakeWordEnabled: isWakeWordActive,
