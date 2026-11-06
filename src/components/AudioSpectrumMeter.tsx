@@ -61,21 +61,21 @@ export const AudioSpectrumMeter: React.FC<AudioSpectrumMeterProps> = ({
 
         const grad = ctx.createLinearGradient(0, height, 0, 0);
         if (state === 'listening') {
-          // Radiant solar-gold with hot white-gold peak
-          grad.addColorStop(0, 'rgba(217, 119, 6, 0.45)');
-          grad.addColorStop(0.6, 'rgba(251, 191, 36, 0.88)');
+          // Electric Arc Cyan with brilliant white crest (user audio input)
+          grad.addColorStop(0, 'rgba(2, 132, 199, 0.45)');
+          grad.addColorStop(0.65, 'rgba(0, 240, 255, 0.9)');
           grad.addColorStop(1, 'rgba(255, 255, 255, 1)');
         } else if (state === 'speaking') {
-          // Stark molten amber-gold harmonic spectrum
+          // Stark molten amber-gold (Jarvis vocal synth output)
           const warmMix = Math.min(1, (i / bars) * 0.6 + pitch * 0.6);
           grad.addColorStop(0, 'rgba(180, 83, 9, 0.5)');
           grad.addColorStop(0.55, warmMix > 0.4 ? 'rgba(245, 158, 11, 0.9)' : 'rgba(251, 191, 36, 0.9)');
           grad.addColorStop(1, 'rgba(255, 250, 235, 1)');
         } else {
-          // Ambient Stark Gold spectrum
-          grad.addColorStop(0, 'rgba(180, 83, 9, 0.3)');
-          grad.addColorStop(0.6, 'rgba(245, 158, 11, 0.7)');
-          grad.addColorStop(1, 'rgba(254, 243, 199, 0.95)');
+          // Harmonious dual gradient: Arc Blue bottom to Stark Gold crest
+          grad.addColorStop(0, 'rgba(2, 132, 199, 0.35)');
+          grad.addColorStop(0.55, 'rgba(0, 240, 255, 0.55)');
+          grad.addColorStop(1, 'rgba(251, 191, 36, 0.85)');
         }
 
         ctx.fillStyle = grad;
@@ -83,7 +83,7 @@ export const AudioSpectrumMeter: React.FC<AudioSpectrumMeterProps> = ({
 
         // Floating peak hold cap
         const capY = Math.max(0, height - peakCaps[i] - 2);
-        ctx.fillStyle = state === 'listening' ? '#fde047' : state === 'speaking' ? '#fbbf24' : '#f59e0b';
+        ctx.fillStyle = state === 'listening' ? '#00f0ff' : state === 'speaking' ? '#fbbf24' : '#e0ffff';
         ctx.fillRect(x, capY, barWidth, 1.5);
       }
     };

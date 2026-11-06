@@ -8,7 +8,7 @@ interface ArcReactorVisualizerProps {
 }
 
 /**
- * Procedural ultra-smooth radial soft particle glow texture
+ * Procedural dual-tone radial soft glow texture (White-Gold core fading to Arc Cyan rim)
  */
 function createRadialGlowTexture(size = 512): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -19,10 +19,10 @@ function createRadialGlowTexture(size = 512): THREE.CanvasTexture {
     const center = size / 2;
     const grad = ctx.createRadialGradient(center, center, 0, center, center, center);
     grad.addColorStop(0.0, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.12, 'rgba(255, 220, 140, 0.95)');
-    grad.addColorStop(0.32, 'rgba(250, 160, 25, 0.65)');
-    grad.addColorStop(0.58, 'rgba(217, 119, 6, 0.28)');
-    grad.addColorStop(0.82, 'rgba(180, 83, 9, 0.08)');
+    grad.addColorStop(0.15, 'rgba(255, 235, 170, 0.95)');
+    grad.addColorStop(0.35, 'rgba(245, 158, 11, 0.65)');
+    grad.addColorStop(0.60, 'rgba(0, 240, 255, 0.28)');
+    grad.addColorStop(0.82, 'rgba(2, 132, 199, 0.08)');
     grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -41,8 +41,8 @@ function createSparkTexture(): THREE.CanvasTexture {
   if (ctx) {
     const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
     grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.2, 'rgba(254, 215, 102, 0.9)');
-    grad.addColorStop(0.5, 'rgba(245, 158, 11, 0.4)');
+    grad.addColorStop(0.25, 'rgba(255, 225, 130, 0.95)');
+    grad.addColorStop(0.55, 'rgba(0, 240, 255, 0.45)');
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 128, 128);
@@ -100,18 +100,25 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.5;
+    renderer.toneMappingExposure = 1.55;
     container.appendChild(renderer.domElement);
 
-    // 2. Cinematic Stark Amber-Gold Lighting
-    const ambientLight = new THREE.AmbientLight(0xffb020, 1.1);
+    // 2. Cinematic Dual-Color Dynamic Lighting (Stark Gold + Electric Arc Blue)
+    const ambientLight = new THREE.AmbientLight(0xffb020, 0.7);
     scene.add(ambientLight);
 
-    const pointLight = new THREE.PointLight(0xff9000, 4.8, 60);
-    pointLight.position.set(0, 0, 7);
-    scene.add(pointLight);
+    // Gold Key Light (Top-Right Orbit)
+    const pointLightGold = new THREE.PointLight(0xff9d00, 3.8, 60);
+    pointLightGold.position.set(6, 6, 8);
+    scene.add(pointLightGold);
 
-    const coreLight = new THREE.PointLight(0xfffaed, 7.5, 35);
+    // Electric Cyan Fill Light (Bottom-Left Orbit)
+    const pointLightCyan = new THREE.PointLight(0x00f0ff, 3.8, 60);
+    pointLightCyan.position.set(-6, -6, 8);
+    scene.add(pointLightCyan);
+
+    // Incandescent Core Light
+    const coreLight = new THREE.PointLight(0xfffaed, 8.0, 35);
     coreLight.position.set(0, 0, 2);
     scene.add(coreLight);
 
@@ -130,7 +137,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const coreContainer = new THREE.Group();
     reactorGroup.add(coreContainer);
 
-    // Corona Bloom Sprite (Incandescent Gold / White)
+    // Corona Bloom Sprite (Dynamic Dual Tint: Cyan ↔ Gold)
     const bloomSpriteMat = new THREE.SpriteMaterial({
       map: coreCoronaTex,
       color: 0xf59e0b,
@@ -185,9 +192,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     const innerTriGeom = new THREE.BufferGeometry().setFromPoints(innerTriShape.getPoints());
     const innerTriMat = new THREE.LineBasicMaterial({
-      color: 0xfbbf24,
+      color: 0x00f0ff,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.88,
       blending: THREE.AdditiveBlending,
     });
     const innerTriOutline = new THREE.LineLoop(innerTriGeom, innerTriMat);
@@ -223,10 +230,11 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       pts.push(pts[0].clone());
 
       const statorGeom = new THREE.BufferGeometry().setFromPoints(pts);
+      // Alternate stators with subtle Gold and Arc Blue accents
       const statorMat = new THREE.LineBasicMaterial({
-        color: 0xf59e0b,
+        color: i % 2 === 0 ? 0xf59e0b : 0x00f0ff,
         transparent: true,
-        opacity: 0.78,
+        opacity: 0.8,
         blending: THREE.AdditiveBlending,
       });
       const statorMesh = new THREE.Line(statorGeom, statorMat);
@@ -234,7 +242,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       statorBlocks.push(statorMesh);
     }
 
-    // 3. Volumetric Acoustic Plasma Shader Core (Molten Amber-Gold)
+    // 3. Volumetric Acoustic Plasma Shader Core (Dual-Tone Blue & Gold Interweave)
     const plasmaVertexShader = `
       uniform float uTime;
       uniform float uBass;
@@ -273,6 +281,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       uniform vec3 uColorCore;
       uniform vec3 uColorMid;
       uniform vec3 uColorRim;
+      uniform vec3 uColorSecondary;
       varying vec3 vNormal;
       varying vec3 vViewPosition;
       varying float vDisplacement;
@@ -286,16 +295,24 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
         float fresnel = 1.0 - radial;
         float rimGlow = pow(fresnel, 2.0 - uMid * 0.5);
 
-        float plasmaWave = sin(normal.x * (6.0 + uPitch * 8.0) + uTime * 3.5)
-                         * cos(normal.y * (6.0 + uMid * 8.0) - uTime * 2.8);
+        // Dynamic dual-wave filament pattern
+        float wave1 = sin(normal.x * (6.0 + uPitch * 8.0) + uTime * 3.5);
+        float wave2 = cos(normal.y * (6.0 + uMid * 8.0) - uTime * 2.8);
+        float plasmaWave = wave1 * wave2;
         float filament = smoothstep(-0.2, 0.8, plasmaWave) * (0.3 + uMid * 0.8 + uTreble * 0.5);
 
         float hotCore = pow(radial, 3.4 - uBass * 1.4) * (1.3 + uAudioPulse * 1.2);
 
+        // Core blends from mid to core, with dual-tone secondary chromatic rim highlights
         vec3 color = mix(uColorMid, uColorCore, pow(radial, 1.4));
-        color = mix(color, uColorRim, rimGlow * 0.9);
-        color += uColorCore * filament * 0.5;
-        color += vec3(1.0, 0.96, 0.88) * (hotCore * 0.7 + clamp(vDisplacement * 2.5, 0.0, 0.6));
+        color = mix(color, uColorRim, rimGlow * 0.85);
+
+        // Secondary color ribbon (weaves Blue with Gold along the spiral)
+        float secondaryBand = clamp(sin(normal.z * 8.0 + uTime * 2.5), 0.0, 1.0);
+        color = mix(color, uColorSecondary, secondaryBand * 0.45 * (0.5 + uAudioPulse * 0.5));
+
+        color += uColorCore * filament * 0.45;
+        color += vec3(1.0, 0.98, 0.92) * (hotCore * 0.65 + clamp(vDisplacement * 2.5, 0.0, 0.6));
 
         float alpha = clamp(pow(radial, 1.05) * 0.94 + rimGlow * 0.98, 0.0, 1.0);
         alpha *= (0.88 + uAudioPulse * 0.15);
@@ -313,7 +330,8 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       uPitch: { value: 0.25 },
       uColorCore: { value: new THREE.Color(0xfffaed) },
       uColorMid: { value: new THREE.Color(0xf59e0b) },
-      uColorRim: { value: new THREE.Color(0xd97706) },
+      uColorRim: { value: new THREE.Color(0x00f0ff) },
+      uColorSecondary: { value: new THREE.Color(0x0077ff) },
     };
 
     const plasmaMaterial = new THREE.ShaderMaterial({
@@ -329,16 +347,16 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const plasmaSphere = new THREE.Mesh(plasmaSphereGeom, plasmaMaterial);
     coreContainer.add(plasmaSphere);
 
-    // 4. Geodesic Wireframe Lattice Cage (Image 2)
+    // 4. Geodesic Wireframe Lattice Cage (Image 2) - Electric Cyan
     const geodesicGeom = new THREE.IcosahedronGeometry(2.45, 3);
     const baseGeodesicPos = new Float32Array(
       (geodesicGeom.attributes.position as THREE.BufferAttribute).array
     );
     const geodesicMat = new THREE.MeshBasicMaterial({
-      color: 0xfbbf24,
+      color: 0x00f0ff,
       wireframe: true,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.38,
       blending: THREE.AdditiveBlending,
     });
     const geodesicMesh = new THREE.Mesh(geodesicGeom, geodesicMat);
@@ -346,13 +364,13 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     // ==========================================
     // B. 3D ACOUSTIC WAVE POINT-CLOUD SHELL (Image 4 & Image 2)
+    // Dynamic color gradient per vertex: Gold equator ↔ Cyan poles
     // ==========================================
-    // 2,400 points uniformly distributed on a Fibonacci Sphere surface (radius = 3.65)
-    // Points dynamically displace by live vocal harmonics in the render loop!
     const pointCount = 2400;
     const waveShellGeom = new THREE.BufferGeometry();
     const waveShellPos = new Float32Array(pointCount * 3);
     const baseWaveShellPos = new Float32Array(pointCount * 3);
+    const waveShellColors = new Float32Array(pointCount * 3);
     const shellBaseR = 3.65;
 
     const goldenRatio = (1 + Math.sqrt(5)) / 2;
@@ -371,12 +389,23 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       waveShellPos[i * 3] = baseWaveShellPos[i * 3];
       waveShellPos[i * 3 + 1] = baseWaveShellPos[i * 3 + 1];
       waveShellPos[i * 3 + 2] = baseWaveShellPos[i * 3 + 2];
+
+      // Dual-palette initial vertex colors: Gold near equator, Cyan near poles
+      const latFactor = Math.abs(z);
+      const r = THREE.MathUtils.lerp(0.98, 0.0, latFactor);
+      const g = THREE.MathUtils.lerp(0.68, 0.94, latFactor);
+      const b = THREE.MathUtils.lerp(0.12, 1.0, latFactor);
+      waveShellColors[i * 3] = r;
+      waveShellColors[i * 3 + 1] = g;
+      waveShellColors[i * 3 + 2] = b;
     }
 
     waveShellGeom.setAttribute('position', new THREE.BufferAttribute(waveShellPos, 3));
+    waveShellGeom.setAttribute('color', new THREE.BufferAttribute(waveShellColors, 3));
+
     const waveShellMat = new THREE.PointsMaterial({
       map: sparkTex,
-      color: 0xfbbf24,
+      vertexColors: true,
       size: 0.38,
       transparent: true,
       opacity: 0.9,
@@ -387,8 +416,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     reactorGroup.add(waveShellPoints);
 
     // ==========================================
-    // C. ICONIC 3D INCLINED CELESTIAL GYROSCOPE RINGS (Image 2 & Image 3)
-    // Recreating the striking diagonal orbital ring slicing through the sphere
+    // C. ICONIC 3D INCLINED CELESTIAL GYROSCOPE RINGS (Image 2) - Stark Gold
     // ==========================================
     // 1. Primary Inclined Celestial Ring (tilted ~35° on X, 18° on Y)
     const gyroGroup1 = new THREE.Group();
@@ -409,13 +437,13 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const gyroRing1 = new THREE.LineLoop(gyroRingGeom, gyroRingMat);
     gyroGroup1.add(gyroRing1);
 
-    // Concentric Inner Filament Ring
+    // Concentric Inner Filament Ring - Cyan accent
     const gyroInnerRadius = 4.45;
     const gyroInnerGeom = new THREE.BufferGeometry().setFromPoints(
       new THREE.EllipseCurve(0, 0, gyroInnerRadius, gyroInnerRadius, 0, Math.PI * 2, false, 0).getPoints(140)
     );
     const gyroInnerMat = new THREE.LineBasicMaterial({
-      color: 0xd97706,
+      color: 0x00f0ff,
       transparent: true,
       opacity: 0.65,
       blending: THREE.AdditiveBlending,
@@ -449,7 +477,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const gyroTickSegments = new THREE.LineSegments(gyroTickGeom, gyroTickMat);
     gyroGroup1.add(gyroTickSegments);
 
-    // 2. Counter-Tilted Gyroscope Orbital Ring (tilted -28° on X, -16° on Z)
+    // 2. Counter-Tilted Gyroscope Orbital Ring (tilted -28° on X, -16° on Z) - Cyan & Blue
     const gyroGroup2 = new THREE.Group();
     gyroGroup2.rotation.x = THREE.MathUtils.degToRad(-28);
     gyroGroup2.rotation.z = THREE.MathUtils.degToRad(-16);
@@ -460,15 +488,15 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       new THREE.EllipseCurve(0, 0, gyroRing2Radius, gyroRing2Radius, 0, Math.PI * 2, false, 0).getPoints(160)
     );
     const gyroRing2Mat = new THREE.LineBasicMaterial({
-      color: 0xd97706,
+      color: 0x0284c7,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.65,
       blending: THREE.AdditiveBlending,
     });
     const gyroRing2 = new THREE.LineLoop(gyroRing2Geom, gyroRing2Mat);
     gyroGroup2.add(gyroRing2);
 
-    // High-speed orbiting beacon spark nodes along inclined tracks
+    // High-speed orbiting beacon spark nodes
     const beaconCount = 6;
     const beaconGeom = new THREE.BufferGeometry();
     const beaconPos = new Float32Array(beaconCount * 3);
@@ -491,7 +519,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const telemetryGroup = new THREE.Group();
     reactorGroup.add(telemetryGroup);
 
-    // Concentric Segmented Holographic Arcs (Image 3)
+    // Concentric Segmented Holographic Arcs (Interweaving Gold & Cyan)
     const arcCount = 4;
     const arcMeshes: THREE.Line[] = [];
     for (let k = 0; k < arcCount; k++) {
@@ -501,9 +529,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
         new THREE.EllipseCurve(0, 0, arcRadius, arcRadius, 0, arcAngleSpan, false, 0).getPoints(30)
       );
       const arcMat = new THREE.LineBasicMaterial({
-        color: 0xf59e0b,
+        color: k % 2 === 0 ? 0xf59e0b : 0x00f0ff,
         transparent: true,
-        opacity: 0.7 - k * 0.1,
+        opacity: 0.72 - k * 0.1,
         blending: THREE.AdditiveBlending,
       });
       const arcMesh = new THREE.Line(arcGeom, arcMat);
@@ -512,7 +540,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       arcMeshes.push(arcMesh);
     }
 
-    // Live 120-Bar Radial Frequency Spectrum Chronograph Dial
+    // Live 120-Bar Radial Frequency Spectrum Chronograph Dial (Symmetric Gold ↔ Cyan)
     const dialTicks = 120;
     const tickPositions = new Float32Array(dialTicks * 2 * 3);
     const smoothedTickBins = new Float32Array(dialTicks);
@@ -536,13 +564,13 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const dialLineMaterial = new THREE.LineBasicMaterial({
       color: 0xf59e0b,
       transparent: true,
-      opacity: 0.82,
+      opacity: 0.85,
       blending: THREE.AdditiveBlending,
     });
     const dialLineSegments = new THREE.LineSegments(dialLineGeom, dialLineMaterial);
     telemetryGroup.add(dialLineSegments);
 
-    // Outer Time-Domain Oscilloscope Waveform Ribbon (r = 7.4)
+    // Outer Time-Domain Oscilloscope Waveform Ribbon (r = 7.4) - Electric Arc Cyan
     const waveSegments = 180;
     const waveGeom = new THREE.BufferGeometry();
     const wavePositions = new Float32Array(waveSegments * 3);
@@ -557,7 +585,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     waveGeom.setAttribute('position', new THREE.BufferAttribute(wavePositions, 3));
 
     const waveMat = new THREE.LineBasicMaterial({
-      color: 0xfbbf24,
+      color: 0x00f0ff,
       linewidth: 2,
       transparent: true,
       opacity: 0.88,
@@ -566,12 +594,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     const waveRing = new THREE.LineLoop(waveGeom, waveMat);
     telemetryGroup.add(waveRing);
 
-    // Outer Horizon Boundary with Cardinal Laser Ticks
+    // Outer Horizon Boundary with Cardinal Laser Ticks - Deep Arc Blue
     const outerHorizonGeom = new THREE.TorusGeometry(8.9, 0.02, 8, 140);
     const outerHorizonMat = new THREE.MeshBasicMaterial({
-      color: 0xd97706,
+      color: 0x0284c7,
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.45,
       blending: THREE.AdditiveBlending,
     });
     const outerHorizon = new THREE.Mesh(outerHorizonGeom, outerHorizonMat);
@@ -579,10 +607,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
     // ==========================================
     // E. FLOATING AMBIENT STARDUST CONSTELLATION EMBERS (Image 5)
+    // Dynamic blend of Gold & Arc Cyan stardust
     // ==========================================
     const stardustCount = 850;
     const stardustGeom = new THREE.BufferGeometry();
     const stardustPositions = new Float32Array(stardustCount * 3);
+    const stardustColors = new Float32Array(stardustCount * 3);
     const stardustData: { r: number; theta: number; phi: number; speed: number; pulseSpeed: number }[] = [];
 
     for (let i = 0; i < stardustCount; i++) {
@@ -594,6 +624,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       stardustPositions[i * 3 + 1] = r * Math.sin(theta) * Math.cos(phi);
       stardustPositions[i * 3 + 2] = r * Math.sin(phi);
 
+      // 55% Amber-Gold, 45% Arc Cyan embers
+      const isGold = i % 2 === 0;
+      stardustColors[i * 3] = isGold ? 0.98 : 0.0;
+      stardustColors[i * 3 + 1] = isGold ? 0.65 : 0.94;
+      stardustColors[i * 3 + 2] = isGold ? 0.12 : 1.0;
+
       stardustData.push({
         r,
         theta,
@@ -604,12 +640,14 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     }
 
     stardustGeom.setAttribute('position', new THREE.BufferAttribute(stardustPositions, 3));
+    stardustGeom.setAttribute('color', new THREE.BufferAttribute(stardustColors, 3));
+
     const stardustMat = new THREE.PointsMaterial({
       map: sparkTex,
-      color: 0xf59e0b,
-      size: 0.28,
+      vertexColors: true,
+      size: 0.3,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.75,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -651,7 +689,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     renderer.domElement.addEventListener('click', handleCanvasClick);
 
     // ==========================================
-    // G. MAIN 60FPS ACOUSTIC & SPECTRAL ANIMATION LOOP
+    // G. MAIN 60FPS DYNAMIC DUAL-PALETTE ANIMATION LOOP
     // ==========================================
     let animFrameId: number;
     const clock = new THREE.Clock();
@@ -661,6 +699,18 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
     let smoothMid = 0;
     let smoothTreble = 0;
     let smoothPitch = 0.25;
+
+    // Palette anchors
+    const colorGold = new THREE.Color(0xf59e0b);
+    const colorAmber = new THREE.Color(0xd97706);
+    const colorCyan = new THREE.Color(0x00f0ff);
+    const colorBlue = new THREE.Color(0x0284c7);
+    const colorWhite = new THREE.Color(0xfffaed);
+
+    const targetCore = new THREE.Color();
+    const targetMid = new THREE.Color();
+    const targetRim = new THREE.Color();
+    const targetSec = new THREE.Color();
 
     const animate = () => {
       animFrameId = requestAnimationFrame(animate);
@@ -691,39 +741,44 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       const freqArray = telemetry.frequencyData;
       const timeArray = telemetry.timeDomainData;
 
-      // Pure Stark Gold / Molten Amber Color Modulation (Image 2 & Image 3)
+      // DYNAMIC COLOR DUAL-PALETTE MODULATION:
+      // - LISTENING: Surges into Electric Arc Cyan & Brilliant White with Gold accents
+      // - SPEAKING: Surges into Stark Molten Amber-Gold with Cyan telemetry accents
+      // - IDLE: Harmonious dual-breathing fusion (Gold rings orbiting a glowing Cyan Arc Core)
+      // - PROCESSING: Counter-rotating dual spiral of Gold & Blue
       let pulseMod = 1.0;
-      const targetCore = new THREE.Color(0xfffaed);
-      const targetMid = new THREE.Color(0xf59e0b);
-      const targetRim = new THREE.Color(0xd97706);
 
       if (currentState === 'listening') {
-        // High-energy Solar Gold Vortex (listening to human voice)
+        // Listening: Electric Arc Cyan dominant (acoustic receptor), with golden telemetry
         pulseMod = 1.25 + smoothVol * 4.8 + smoothBass * 2.5;
-        const brightSolarGold = new THREE.Color(0xfde047);
-        const intenseAmber = new THREE.Color(0xf59e0b);
-        targetMid.copy(brightSolarGold).lerp(intenseAmber, 0.4 + smoothPitch * 0.3);
-        targetRim.setHex(0xd97706).lerp(new THREE.Color(0xb45309), smoothBass * 0.4);
         targetCore.setHex(0xffffff);
+        targetMid.copy(colorCyan).lerp(colorWhite, smoothVol * 0.7);
+        targetRim.copy(colorBlue).lerp(colorGold, smoothPitch * 0.5);
+        targetSec.copy(colorGold);
       } else if (currentState === 'speaking') {
-        // Canonical J.A.R.V.I.S. Molten Amber-Gold Voice Waves (Image 1, 2, 3)
+        // Speaking: Stark Amber-Gold dominant (AI speech hologram), with Arc Cyan rims
         pulseMod = 1.35 + smoothVol * 4.5 + smoothMid * 2.6;
-        const warmGold = new THREE.Color(0xf59e0b);
-        const moltenOrange = new THREE.Color(0xf97316);
-        targetMid.copy(warmGold).lerp(moltenOrange, smoothMid * 0.6 + smoothPitch * 0.4);
-        targetRim.setHex(0xc2410c).lerp(new THREE.Color(0x9a3412), smoothBass * 0.5);
-        targetCore.setHex(0xfffbeb).lerp(new THREE.Color(0xfef08a), smoothMid * 0.7);
+        targetCore.setHex(0xfffbeb);
+        targetMid.copy(colorGold).lerp(new THREE.Color(0xf97316), smoothMid * 0.6);
+        targetRim.copy(colorAmber).lerp(colorCyan, smoothTreble * 0.4);
+        targetSec.copy(colorCyan);
       } else if (currentState === 'processing') {
+        // Processing: Dual alternating spiral
         pulseMod = 1.6 + Math.sin(time * 8) * 0.4;
-        targetCore.setHex(0xffffff);
-        targetMid.setHex(0xfbbf24);
-        targetRim.setHex(0xea580c);
+        const wave = Math.sin(time * 6) * 0.5 + 0.5;
+        targetCore.copy(colorWhite);
+        targetMid.copy(colorGold).lerp(colorCyan, wave);
+        targetRim.copy(colorCyan).lerp(colorAmber, wave);
+        targetSec.copy(colorGold);
       } else {
-        // Idle: Deep radiant Stark Amber-Gold
+        // Idle: Balanced Dual-Palette Fusion
+        // Cyan arc core with warm Stark Gold telemetry rings
         pulseMod = 1.0 + Math.sin(time * 1.2) * 0.05;
-        targetCore.setHex(0xfffaed);
-        targetMid.setHex(0xf59e0b);
-        targetRim.setHex(0xd97706);
+        const idleWave = Math.sin(time * 0.8) * 0.5 + 0.5;
+        targetCore.copy(colorWhite);
+        targetMid.copy(colorGold).lerp(colorCyan, idleWave * 0.35);
+        targetRim.copy(colorCyan).lerp(colorAmber, 1.0 - idleWave * 0.35);
+        targetSec.copy(colorCyan);
       }
 
       // 1. Mouse/Touch Gyroscopic Parallax
@@ -740,13 +795,14 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
       // Pulse triangle and stators on audio
       triLineMat.color.lerp(targetCore, 0.14);
-      innerTriMat.color.lerp(targetMid, 0.14);
+      innerTriMat.color.lerp(targetSec, 0.14);
       triOutline.scale.setScalar(1.0 + smoothBass * 0.22 + smoothVol * 0.15);
       innerTriOutline.scale.setScalar(1.0 + smoothMid * 0.25);
 
       statorBlocks.forEach((b, idx) => {
         const mat = b.material as THREE.LineBasicMaterial;
-        mat.color.lerp(targetMid, 0.14);
+        const baseColor = idx % 2 === 0 ? targetMid : targetSec;
+        mat.color.lerp(baseColor, 0.14);
         mat.opacity = 0.55 + smoothVol * 0.45 + (idx % 2 === 0 ? smoothTreble * 0.25 : 0);
       });
 
@@ -760,6 +816,7 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       plasmaUniforms.uColorCore.value.lerp(targetCore, 0.14);
       plasmaUniforms.uColorMid.value.lerp(targetMid, 0.14);
       plasmaUniforms.uColorRim.value.lerp(targetRim, 0.14);
+      plasmaUniforms.uColorSecondary.value.lerp(targetSec, 0.14);
 
       const baseScale = 1.0 + Math.sin(time * 1.5) * 0.018;
       const audioScale = baseScale + smoothBass * 0.55 + smoothVol * 0.45;
@@ -770,15 +827,18 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       bloomSpriteMat.opacity = Math.min(0.95, 0.58 + smoothVol * 0.42);
       bloomSpriteMat.color.lerp(targetMid, 0.14);
 
+      // Dynamic Dual-Color Lighting Intensity
       coreLight.intensity = 5.0 + smoothVol * 15.0;
-      pointLight.intensity = 3.2 + smoothVol * 10.0;
-      pointLight.color.lerp(targetMid, 0.14);
+      pointLightGold.intensity = 2.5 + (currentState === 'speaking' ? smoothVol * 8.0 : smoothVol * 4.0);
+      pointLightCyan.intensity = 2.5 + (currentState === 'listening' ? smoothVol * 8.0 : smoothVol * 4.0);
+      pointLightGold.color.lerp(targetMid, 0.14);
+      pointLightCyan.color.lerp(targetSec, 0.14);
 
-      // 4. Geodesic Wireframe Deformation (Image 2)
+      // 4. Geodesic Wireframe Deformation (Image 2) - Electric Arc Cyan
       geodesicMesh.rotation.y -= 0.0025 * pulseMod;
       geodesicMesh.rotation.x += 0.0015 * smoothMid;
-      geodesicMat.color.lerp(targetMid, 0.14);
-      geodesicMat.opacity = 0.28 + smoothVol * 0.48;
+      geodesicMat.color.lerp(targetSec, 0.14);
+      geodesicMat.opacity = 0.32 + smoothVol * 0.45;
 
       const geoPositions = geodesicGeom.attributes.position as THREE.BufferAttribute;
       const geoArr = geoPositions.array as Float32Array;
@@ -798,11 +858,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       }
       geoPositions.needsUpdate = true;
 
-      // 5. 3D Acoustic Wave Shell Harmonic Deformation (Images 2 & 4)
+      // 5. 3D Acoustic Wave Shell Harmonic Deformation & Dynamic Color Blending
       const shellPositions = waveShellGeom.attributes.position as THREE.BufferAttribute;
       const shellArr = shellPositions.array as Float32Array;
+      const shellColorsAttr = waveShellGeom.attributes.color as THREE.BufferAttribute;
+      const shellColorsArr = shellColorsAttr.array as Float32Array;
 
-      // Acoustic deformation physics
       const freqStride = freqArray && freqArray.length > 0 ? Math.floor(freqArray.length / 32) : 1;
       const isListening = currentState === 'listening';
 
@@ -821,12 +882,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
         let dynamicR: number;
         if (isListening) {
-          // Acoustic Ingestion Vortex: shell contracts inward while audio ripples along surface
+          // Acoustic Ingestion Vortex
           const suckEffect = 0.88 - smoothVol * 0.18;
           const ripple = (wave1 * 0.6 + wave2 * 0.4) * (smoothVol * 0.55 + binVal * 0.35);
           dynamicR = shellBaseR * suckEffect + ripple;
         } else if (currentState === 'speaking') {
-          // J.A.R.V.I.S. Voice Projection: acoustic shockwaves billow outward
+          // J.A.R.V.I.S. Voice Projection
           const outwardBlast = 1.0 + smoothVol * 0.42 + smoothBass * 0.35;
           const ripple = (wave1 * 0.7 + wave2 * 0.5) * (smoothMid * 0.6 + binVal * 0.4);
           dynamicR = shellBaseR * outwardBlast + ripple;
@@ -844,23 +905,34 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
         shellArr[i * 3] = dirX * dynamicR;
         shellArr[i * 3 + 1] = dirY * dynamicR;
         shellArr[i * 3 + 2] = dirZ * dynamicR;
+
+        // Dynamic vertex color interpolation (Dual-Color Gold ↔ Cyan wave)
+        const lat = Math.abs(dirZ);
+        const colorMix = (currentState === 'listening')
+          ? 0.75 + lat * 0.25 // More Cyan when listening
+          : (currentState === 'speaking')
+          ? 0.15 + lat * 0.3 // More Gold when speaking
+          : 0.45 + Math.sin(time * 2 + bx) * 0.3; // Dynamic dual wave when idle
+
+        // Lerp between Stark Gold and Arc Cyan
+        shellColorsArr[i * 3] = THREE.MathUtils.lerp(0.98, 0.0, colorMix);
+        shellColorsArr[i * 3 + 1] = THREE.MathUtils.lerp(0.65, 0.94, colorMix);
+        shellColorsArr[i * 3 + 2] = THREE.MathUtils.lerp(0.12, 1.0, colorMix);
       }
       shellPositions.needsUpdate = true;
+      shellColorsAttr.needsUpdate = true;
 
-      // Color and size modulation for point shell
-      waveShellMat.color.lerp(targetMid, 0.14);
       waveShellMat.size = 0.38 + smoothVol * 0.45 + smoothBass * 0.22;
-      waveShellMat.opacity = Math.min(1.0, 0.75 + smoothVol * 0.35);
+      waveShellMat.opacity = Math.min(1.0, 0.78 + smoothVol * 0.32);
 
-      // 6. 3D Inclined Celestial Gyroscope Rings (Image 2)
-      // Rotates smoothly in 3D, accelerating on vocal mid/treble transients
+      // 6. 3D Inclined Celestial Gyroscope Rings (Image 2) - Stark Gold & Arc Cyan
       gyroGroup1.rotation.z += 0.0016 * speedMult + smoothMid * 0.015;
       gyroGroup2.rotation.z -= 0.0012 * speedMult + smoothBass * 0.012;
 
       gyroRingMat.color.lerp(targetMid, 0.14);
-      gyroInnerMat.color.lerp(targetRim, 0.14);
+      gyroInnerMat.color.lerp(targetSec, 0.14);
       gyroTickMat.color.lerp(targetMid, 0.14);
-      gyroRing2Mat.color.lerp(targetRim, 0.14);
+      gyroRing2Mat.color.lerp(targetSec, 0.14);
 
       // Orbiting beacon sparks along inclined track
       const bPosAttr = beaconGeom.attributes.position as THREE.BufferAttribute;
@@ -878,11 +950,12 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       arcMeshes.forEach((arc, idx) => {
         arc.rotation.z += (idx % 2 === 0 ? 1 : -1) * (0.002 + idx * 0.001) * speedMult + smoothMid * 0.008;
         const mat = arc.material as THREE.LineBasicMaterial;
-        mat.color.lerp(targetMid, 0.14);
-        mat.opacity = 0.6 + smoothVol * 0.4;
+        const arcTarget = idx % 2 === 0 ? targetMid : targetSec;
+        mat.color.lerp(arcTarget, 0.14);
+        mat.opacity = 0.65 + smoothVol * 0.35;
       });
 
-      // 8. Live 120-Bar Radial Equalizer Dial
+      // 8. Live 120-Bar Radial Equalizer Dial (Dynamic Dual Color Lerping)
       dialLineSegments.rotation.z -= 0.0006 * speedMult + smoothBass * 0.016;
       dialLineMaterial.color.lerp(targetMid, 0.14);
 
@@ -901,7 +974,6 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
         const freqBinIndex = numBins > 0 ? Math.floor((foldedIndex / (dialTicks / 2)) * (numBins * 0.7)) : 0;
         const rawAmp = (freqArray && isActiveAudio) ? freqArray[freqBinIndex] / 255 : 0;
 
-        // Smooth bin values with fast attack / gentle decay
         smoothedTickBins[i] += (rawAmp - smoothedTickBins[i]) * (rawAmp > smoothedTickBins[i] ? 0.45 : 0.16);
         const dynamicAmp = smoothedTickBins[i] * 1.5;
 
@@ -917,9 +989,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       }
       dialPosAttr.needsUpdate = true;
 
-      // 9. Outer Oscilloscope Time-Domain Ribbon
+      // 9. Outer Oscilloscope Time-Domain Ribbon - Electric Arc Cyan
       waveRing.rotation.z += 0.0004 * speedMult;
-      waveMat.color.lerp(targetMid, 0.14);
+      waveMat.color.lerp(targetSec, 0.14);
 
       const wavePosAttr = waveGeom.attributes.position as THREE.BufferAttribute;
       const waveArr = wavePosAttr.array as Float32Array;
@@ -931,11 +1003,9 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
 
         if (timeArray && isActiveAudio && timeLen > 0) {
           const sampleIdx = Math.floor((i / waveSegments) * timeLen);
-          // timeArray ranges 0..255 with 128 as zero-crossing center
           const rawSample = (timeArray[sampleIdx] - 128) / 128;
           ampOffset = rawSample * (0.35 + smoothVol * 0.85);
         } else {
-          // Idle gentle harmonic oscillation
           ampOffset = Math.sin(theta * 6.0 + time * 3.0) * 0.05;
         }
 
@@ -951,7 +1021,6 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       // 10. Ambient Floating Stardust Embers (Image 5)
       stardustCloud.rotation.y += 0.0003;
       stardustCloud.rotation.x = Math.sin(time * 0.05) * 0.05;
-      stardustMat.color.lerp(targetMid, 0.14);
 
       const starPosAttr = stardustGeom.attributes.position as THREE.BufferAttribute;
       const starArr = starPosAttr.array as Float32Array;

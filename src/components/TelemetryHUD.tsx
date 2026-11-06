@@ -143,22 +143,22 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
         return {
           text: 'ACOUSTIC SENSOR ARMED',
           mobileText: 'ARMED',
-          bg: 'bg-amber-500/20 text-amber-300 border-amber-400',
-          dot: 'bg-amber-400 animate-ping',
+          bg: 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(0,240,255,0.35)]',
+          dot: 'bg-cyan-300 animate-ping',
         };
       case 'processing':
         return {
           text: 'NEURAL LINK QUERYING n8n',
           mobileText: 'QUERYING',
-          bg: 'bg-amber-500/20 text-amber-300 border-amber-400',
+          bg: 'bg-amber-500/20 text-amber-300 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]',
           dot: 'bg-amber-400 animate-pulse',
         };
       case 'speaking':
         return {
           text: 'TRANSMITTING VOCAL SYNTH',
           mobileText: 'SPEAKING',
-          bg: 'bg-emerald-500/20 text-emerald-300 border-emerald-400',
-          dot: 'bg-emerald-400 animate-pulse',
+          bg: 'bg-amber-500/25 text-amber-200 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.35)]',
+          dot: 'bg-amber-300 animate-pulse',
         };
       default:
         if (isWakeWordActive) {
@@ -172,8 +172,8 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
         return {
           text: 'JARVIS MK-VII STANDBY',
           mobileText: 'STANDBY',
-          bg: 'bg-amber-950/40 text-amber-400 border-amber-800',
-          dot: 'bg-amber-500',
+          bg: 'bg-black/60 text-amber-300 border-amber-700/60 shadow-[0_0_10px_rgba(245,158,11,0.2)]',
+          dot: 'bg-cyan-400',
         };
     }
   };
