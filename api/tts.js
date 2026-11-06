@@ -12,10 +12,10 @@ const ALLOWED_EDGE_VOICES = new Set([
 ]);
 
 const DEFAULT_JARVIS_VOICE_PROMPT =
-  'A refined, articulate British AI butler in his early 40s with a warm, resonant baritone voice like Paul Bettany, speaking with calm, effortless composure, subtle dry British wit, and natural human warmth.';
+  'A refined, articulate British gentleman butler in his early 40s with a warm, resonant baritone voice, speaking with calm, effortless composure, crisp Received Pronunciation diction, and natural human warmth.';
 
 const DEFAULT_JARVIS_STYLE =
-  'calm, composed, articulate British gentleman AI assistant, warm resonant baritone, natural conversational pacing with subtle dry sophistication';
+  'calm, composed, articulate British gentleman butler, warm resonant baritone, natural conversational pacing with subtle dry sophistication';
 
 // Server-side in-memory cache for the project's custom designed Jarvis voice ID
 let cachedDesignedVoiceId = null;
@@ -72,7 +72,21 @@ async function resolveOrCreateDesignedJarvisVoice(ai, customPrompt) {
       };
     }
   } catch (err) {
-    console.warn('[/api/tts] Voice Design lookup/create fallback to prebuilt Charon:', err?.message || err);
+    console.warn('[/api/tts] Voice Design lookup/create fallback:', err?.message || err);
+    try {
+      // Fallback 1: Query Extended Voice Library for a native British (en-GB) male voice
+      const gbPrebuilt = await ai.voices.list({
+        language_code: ['en-GB'],
+        gender: ['male'],
+        type: ['prebuilt'],
+        page_size: 10,
+      });
+      const britishVoice = gbPrebuilt?.voices?.[0];
+      if (britishVoice?.id) {
+        cachedDesignedVoiceId = britishVoice.id;
+        return { voiceId: britishVoice.id, sampleAudio: null };
+      }
+    } catch {}
   }
 
   return { voiceId: 'Charon', sampleAudio: null };
