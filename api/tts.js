@@ -199,7 +199,14 @@ async function synthesizeWithGemini(apiKey, params) {
 }
 
 async function synthesizeWithEdgeFallback(params) {
-  const rawText = (params.text || '').toString().trim();
+  // Gemini understands inline tags like <short pause>; Edge would read them aloud, so turn them into pauses
+  const rawText = (params.text || '')
+    .toString()
+    .replace(/<[^>]{1,40}>/g, ', ')
+    .replace(/\s*,\s*([,.!?])/g, '$1')
+    .replace(/([.!?])\s*,/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
   const requestedVoice = (params.edgeVoice || params.voice || 'en-GB-RyanNeural').toString().trim();
   const voice = ALLOWED_EDGE_VOICES.has(requestedVoice) ? requestedVoice : 'en-GB-RyanNeural';
   const rate = (params.rate || '+4%').toString().trim();
@@ -288,7 +295,7 @@ export default async function handler(req, res) {
     }
 
     const preferProvider = (params.provider || 'gemini').toString().trim();
-    const cacheKey = `${preferProvider}::${params.voice || 'default'}::${rawText}`;
+    const cacheKey = `${preferProvider}::${params.model || ''}::${params.voice || 'default'}::${params.style || ''}::${rawText}`;
     const cached = ttsMemoryCache.get(cacheKey);
     if (cached) {
       res.setHeader('Content-Type', cached.contentType);
@@ -333,11 +340,16 @@ export default async function handler(req, res) {
     // Free Fallback to 24kHz Edge Neural TTS (~300ms) when no Gemini API key is configured
     const edgeResult = await synthesizeWithEdgeFallback(params);
 
-    if (ttsMemoryCache.size > 60) {
-      const oldest = ttsMemoryCache.keys().next().value;
-      if (oldest) ttsMemoryCache.delete(oldest);
+    // Only cache Edge audio when Edge was the intended voice. If Gemini merely timed out,
+    // don't lock the fallback voice in for this phrase; let Gemini try again next time.
+    const edgeWasIntended = !apiKey || preferProvider === 'edge';
+    if (edgeWasIntended) {
+      if (ttsMemoryCache.size > 60) {
+        const oldest = ttsMemoryCache.keys().next().value;
+        if (oldest) ttsMemoryCache.delete(oldest);
+      }
+      ttsMemoryCache.set(cacheKey, edgeResult);
     }
-    ttsMemoryCache.set(cacheKey, edgeResult);
 
     res.setHeader('Content-Type', edgeResult.contentType);
     res.setHeader('Content-Length', String(edgeResult.buffer.length));

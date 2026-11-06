@@ -15,6 +15,9 @@ import { useBatteryStatus } from './hooks/useBatteryStatus';
 const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)?.trim() || 'wolfcub';
 
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
+// How long to wait for the n8n agent before playing a spoken "One moment, sir."
+const ACK_DELAY_MS = 700;
+
 const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|thank you jarvis|thanks jarvis|goodbye|bye jarvis|stop listening|go to sleep|stand by|standby)\b/i;
 
 export const App: React.FC = () => {
@@ -105,6 +108,13 @@ export const App: React.FC = () => {
     }
   }, [audioState, isProcessing]);
 
+  // Pre-synthesize the instant "One moment, sir." phrases once unlocked
+  useEffect(() => {
+    if (isAuthenticated) {
+      void audioEngine.preloadAcknowledgements();
+    }
+  }, [isAuthenticated]);
+
   // Request notification permission when wake word is enabled
   useEffect(() => {
     if (isWakeWordActive) {
@@ -170,6 +180,11 @@ export const App: React.FC = () => {
     setIsProcessing(true);
     audioEngine.playSfx('processing');
 
+    // If the n8n agent hasn't answered quickly, cover the wait with an instant spoken acknowledgement
+    const ackTimer = setTimeout(() => {
+      audioEngine.playAcknowledgement(speakerResult.isOwner);
+    }, ACK_DELAY_MS);
+
     try {
       // POST enriched payload with speaker attribution to n8n webhook
       const rawReply = await sendJarvisCommand({
@@ -179,6 +194,7 @@ export const App: React.FC = () => {
         speakerConfidence: speakerResult.confidence,
         isAuthorizedOwner: speakerResult.isOwner,
       });
+      clearTimeout(ackTimer);
 
       // Parse YouTube playback directives, trigger player, and strip tags from vocal TTS & subtitles
       const cleanReply = handleJarvisResponse(rawReply);
@@ -211,6 +227,7 @@ export const App: React.FC = () => {
         }
       );
     } catch {
+      clearTimeout(ackTimer);
       setIsProcessing(false);
       audioEngine.playSfx('error');
       const errText = 'Neural network dispatch error. Unable to establish link with n8n matrix.';
@@ -233,6 +250,8 @@ export const App: React.FC = () => {
     inConversationRef.current = true;
     audioEngine.ensureContext();
     audioEngine.playSfx('wake');
+    // Warm up the TTS function while the user is still speaking
+    audioEngine.prewarm();
 
     // Notify if running in background
     if (document.hidden) {

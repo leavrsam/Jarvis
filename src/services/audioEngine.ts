@@ -106,6 +106,10 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
   },
 ];
 
+// Short holding phrases, pre-synthesized so they play with zero latency
+const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.', 'Just a moment, sir.', 'On it, sir.'];
+const ACK_PHRASES_GUEST = ['One moment, please.', 'Just a moment.'];
+
 class JarvisAudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -137,6 +141,13 @@ class JarvisAudioEngine {
   private customDesignedVoiceId: string = 'voice_5r8hqutci8lm';
   private clientGeminiApiKey: string = '';
   private lastActiveEngine: string = 'gemini-3.8-flash-tts';
+
+  // Instant acknowledgement ("One moment, sir.") played while the n8n agent works
+  private ackBuffers: Map<string, AudioBuffer> = new Map();
+  private ackPreloadPromise: Promise<void> | null = null;
+  private ackPromise: Promise<void> | null = null;
+  private lastAckPhrase = '';
+  private lastPrewarmAt = 0;
 
   constructor() {
     this.initVoicePreset();
@@ -458,11 +469,206 @@ class JarvisAudioEngine {
     masterOut.connect(this.ctx.destination);
   }
 
+  /**
+   * Split a reply into sentence-sized chunks so the first sentence can be
+   * synthesized and played while the rest is still being generated.
+   * The first chunk is kept short for the fastest possible time-to-first-audio.
+   */
+  private splitIntoSpeechChunks(text: string): string[] {
+    // Break only where a sentence end is followed by a new sentence (keeps "6 p.m., so" intact)
+    const sentences = text.split(/(?<=[.!?]["')\]]*)\s+(?=[A-Z0-9"'(<])/).map((s) => s.trim()).filter(Boolean);
+    const chunks: string[] = [];
+    let current = '';
+    for (const sentence of sentences) {
+      // First chunk: emit as soon as we have one sentence. Later chunks: group up to ~220 chars.
+      const limit = chunks.length === 0 ? 0 : 220;
+      if (current && (current.length + sentence.length + 1 > limit)) {
+        chunks.push(current);
+        current = sentence;
+      } else {
+        current = current ? `${current} ${sentence}` : sentence;
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+  }
+
+  private buildTtsHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.clientGeminiApiKey) {
+      headers['x-gemini-api-key'] = this.clientGeminiApiKey;
+    }
+    return headers;
+  }
+
+  /**
+   * Fetch + decode one chunk of speech. Results that came from the intended engine are cached;
+   * fallback audio is not, so a slow Gemini response doesn't lock in the backup voice.
+   */
+  private async fetchSpeechBuffer(spokenText: string, signal: AbortSignal): Promise<AudioBuffer> {
+    const ctx = this.ensureContext();
+    const preset = this.selectedPreset;
+    const effectiveVoice =
+      preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId
+        ? this.customDesignedVoiceId
+        : preset.voice;
+    const cacheKey = `${preset.id}::${effectiveVoice}::${spokenText}`;
+
+    const cached = this.audioBufferCache.get(cacheKey);
+    if (cached) return cached;
+
+    const timeoutController = new AbortController();
+    const onOuterAbort = () => timeoutController.abort();
+    signal.addEventListener('abort', onOuterAbort);
+    const fetchTimeout = setTimeout(() => timeoutController.abort(), 10000);
+
+    let response: Response;
+    try {
+      response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: this.buildTtsHeaders(),
+        body: JSON.stringify({
+          text: spokenText,
+          provider: preset.provider,
+          model: preset.model,
+          voice: effectiveVoice,
+          edgeVoice: preset.edgeVoice,
+          style: preset.style,
+          rate: preset.rate,
+          pitch: preset.pitch,
+        }),
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(fetchTimeout);
+      signal.removeEventListener('abort', onOuterAbort);
+    }
+
+    if (!response.ok) {
+      throw new Error(`TTS API returned HTTP ${response.status}`);
+    }
+
+    const engineHeader = response.headers.get('X-TTS-Engine');
+    if (engineHeader) {
+      this.lastActiveEngine = engineHeader;
+    }
+    const resolvedVoiceHeader = response.headers.get('X-Gemini-Voice-Id');
+    if (
+      resolvedVoiceHeader &&
+      resolvedVoiceHeader.startsWith('voice_') &&
+      !this.customDesignedVoiceId
+    ) {
+      this.setCustomDesignedVoiceId(resolvedVoiceHeader);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength < 256) {
+      throw new Error('Invalid audio buffer received');
+    }
+
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+
+    const usedFallback =
+      engineHeader === 'edge-neural-fallback' && preset.provider !== 'edge';
+    if (!usedFallback) {
+      if (this.audioBufferCache.size > 35) {
+        const oldestKey = this.audioBufferCache.keys().next().value;
+        if (oldestKey) this.audioBufferCache.delete(oldestKey);
+      }
+      this.audioBufferCache.set(cacheKey, audioBuffer);
+    }
+    return audioBuffer;
+  }
+
+  private playBuffer(audioBuffer: AudioBuffer, onStart?: () => void): Promise<void> {
+    const ctx = this.ensureContext();
+    return new Promise<void>((resolve) => {
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      this.activeSourceNode = source;
+
+      this.connectJarvisVocalChain(source, this.selectedPreset.hudDsp);
+
+      this.currentState = 'speaking';
+      onStart?.();
+
+      source.onended = () => {
+        if (this.activeSourceNode === source) {
+          this.activeSourceNode = null;
+        }
+        resolve();
+      };
+
+      source.start(0);
+    });
+  }
+
+  /**
+   * Warm up the TTS serverless function (avoids a cold start on the first reply).
+   * Call when the wake word fires, while the user is still talking.
+   */
+  public prewarm() {
+    const now = Date.now();
+    if (now - this.lastPrewarmAt < 60_000) return;
+    this.lastPrewarmAt = now;
+    void fetch('/api/tts', {
+      method: 'POST',
+      headers: this.buildTtsHeaders(),
+      body: JSON.stringify({ action: 'status' }),
+    }).catch(() => {});
+    void this.preloadAcknowledgements();
+  }
+
+  /**
+   * Synthesize the short "holding" phrases ahead of time so they can play instantly.
+   */
+  public async preloadAcknowledgements(): Promise<void> {
+    if (this.ackPreloadPromise) return this.ackPreloadPromise;
+    const phrases = [...ACK_PHRASES_OWNER, ...ACK_PHRASES_GUEST];
+    const controller = new AbortController();
+    this.ackPreloadPromise = Promise.all(
+      phrases.map(async (phrase) => {
+        if (this.ackBuffers.has(phrase)) return;
+        try {
+          const buffer = await this.fetchSpeechBuffer(phrase, controller.signal);
+          this.ackBuffers.set(phrase, buffer);
+        } catch {}
+      })
+    ).then(() => {
+      // Retry later if some phrases failed (e.g. first call fell back or network hiccup)
+      if (this.ackBuffers.size < phrases.length) this.ackPreloadPromise = null;
+    });
+    return this.ackPreloadPromise;
+  }
+
+  /**
+   * Play a short pre-synthesized acknowledgement ("One moment, sir.") to cover backend latency.
+   * Does nothing if no phrase is ready yet. A following speak() waits for it to finish.
+   */
+  public playAcknowledgement(isOwner: boolean) {
+    if (this.ackPromise || this.activeSourceNode) return;
+    const pool = (isOwner ? ACK_PHRASES_OWNER : ACK_PHRASES_GUEST).filter((p) => this.ackBuffers.has(p));
+    if (pool.length === 0) return;
+    let phrase = pool[Math.floor(Math.random() * pool.length)];
+    if (pool.length > 1 && phrase === this.lastAckPhrase) {
+      phrase = pool[(pool.indexOf(phrase) + 1) % pool.length];
+    }
+    this.lastAckPhrase = phrase;
+    const buffer = this.ackBuffers.get(phrase)!;
+    this.ackPromise = this.playBuffer(buffer).finally(() => {
+      this.ackPromise = null;
+    });
+  }
+
   public async speak(
     text: string,
     onStart?: () => void,
     onEnd?: () => void
   ): Promise<void> {
+    // Let a holding phrase finish naturally instead of cutting it off mid-word
+    if (this.ackPromise) {
+      await this.ackPromise;
+    }
     this.stopSpeaking();
 
     const spokenText = this.cleanSpeechText(text);
@@ -471,119 +677,50 @@ class JarvisAudioEngine {
       return;
     }
 
-    const ctx = this.ensureContext();
-    const preset = this.selectedPreset;
-    const effectiveVoice =
-      preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId
-        ? this.customDesignedVoiceId
-        : preset.voice;
+    this.ensureContext();
+    const controller = new AbortController();
+    this.activeAbortController = controller;
 
-    const cacheKey = `${preset.id}::${effectiveVoice}::${spokenText}`;
+    const chunks = this.splitIntoSpeechChunks(spokenText);
+    // Start synthesizing every chunk immediately, in parallel; play them back in order.
+    const pending = chunks.map((chunk) => {
+      const p = this.fetchSpeechBuffer(chunk, controller.signal);
+      p.catch(() => {}); // handled when awaited below
+      return p;
+    });
+
+    let started = false;
+    const handleStart = () => {
+      if (!started) {
+        started = true;
+        onStart?.();
+      }
+    };
 
     try {
-      let audioBuffer = this.audioBufferCache.get(cacheKey);
-
-      if (!audioBuffer) {
-        const controller = new AbortController();
-        this.activeAbortController = controller;
-        const fetchTimeout = setTimeout(() => {
-          controller.abort();
-        }, 10000);
-
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (this.clientGeminiApiKey) {
-          headers['x-gemini-api-key'] = this.clientGeminiApiKey;
-        }
-
-        let response: Response;
+      for (let i = 0; i < chunks.length; i++) {
+        if (controller.signal.aborted) break;
+        let buffer: AudioBuffer;
         try {
-          response = await fetch('/api/tts', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              text: spokenText,
-              provider: preset.provider,
-              model: preset.model,
-              voice: effectiveVoice,
-              edgeVoice: preset.edgeVoice,
-              style: preset.style,
-              rate: preset.rate,
-              pitch: preset.pitch,
-            }),
-            signal: controller.signal,
-          });
-        } finally {
-          clearTimeout(fetchTimeout);
+          buffer = await pending[i];
+        } catch (err) {
+          if (controller.signal.aborted) break;
+          console.warn('[JarvisAudioEngine] Neural TTS chunk failed, using browser speech for the rest:', err);
+          await this.speakFallbackBrowser(chunks.slice(i).join(' '), handleStart);
+          break;
         }
-
-        if (!response.ok) {
-          throw new Error(`TTS API returned HTTP ${response.status}`);
+        if (controller.signal.aborted) break;
+        if (this.ctx && this.ctx.state === 'suspended') {
+          await this.ctx.resume();
         }
-
-        const engineHeader = response.headers.get('X-TTS-Engine');
-        if (engineHeader) {
-          this.lastActiveEngine = engineHeader;
-        }
-        const resolvedVoiceHeader = response.headers.get('X-Gemini-Voice-Id');
-        if (
-          resolvedVoiceHeader &&
-          resolvedVoiceHeader.startsWith('voice_') &&
-          !this.customDesignedVoiceId
-        ) {
-          this.setCustomDesignedVoiceId(resolvedVoiceHeader);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        if (arrayBuffer.byteLength < 256) {
-          throw new Error('Invalid audio buffer received');
-        }
-
-        audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-
-        if (this.audioBufferCache.size > 35) {
-          const oldestKey = this.audioBufferCache.keys().next().value;
-          if (oldestKey) this.audioBufferCache.delete(oldestKey);
-        }
-        this.audioBufferCache.set(cacheKey, audioBuffer);
+        await this.playBuffer(buffer, handleStart);
       }
-
-      if (ctx.state === 'suspended') {
-        await ctx.resume();
-      }
-
-      await new Promise<void>((resolve) => {
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer!;
-        this.activeSourceNode = source;
-
-        this.connectJarvisVocalChain(source, preset.hudDsp);
-
-        this.currentState = 'speaking';
-        onStart?.();
-
-        source.onended = () => {
-          if (this.activeSourceNode === source) {
-            this.activeSourceNode = null;
-          }
-          this.currentState = 'idle';
-          onEnd?.();
-          resolve();
-        };
-
-        source.start(0);
-      });
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        this.currentState = 'idle';
-        onEnd?.();
-        return;
-      }
-      console.warn('[JarvisAudioEngine] Neural TTS fallback to browser speechSynthesis:', err);
-      await this.speakFallbackBrowser(spokenText, onStart, onEnd);
     } finally {
-      this.activeAbortController = null;
+      if (this.activeAbortController === controller) {
+        this.activeAbortController = null;
+        this.currentState = 'idle';
+      }
+      onEnd?.();
     }
   }
 
