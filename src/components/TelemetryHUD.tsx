@@ -29,12 +29,14 @@ import { AudioSpectrumMeter } from './AudioSpectrumMeter';
 import { BatteryStatus } from '../hooks/useBatteryStatus';
 
 export type WakeWordMode = 'charging_only' | 'always' | 'off';
+export type WakeWordScope = 'background' | 'active_only';
 
 interface TelemetryHUDProps {
   state: JarvisAudioState;
   isListening: boolean;
   isWakeWordActive: boolean;
   wakeWordMode: WakeWordMode;
+  wakeWordScope?: WakeWordScope;
   battery: BatteryStatus;
   voiceName: string;
   activeVoicePresetId: string;
@@ -43,6 +45,7 @@ interface TelemetryHUDProps {
   onTestVoice?: () => void;
   onLockConsole?: () => void;
   onToggleWakeWordMode?: () => void;
+  onToggleWakeWordScope?: () => void;
   onSelectVoicePreset?: (preset: JarvisNeuralVoicePreset) => void;
 }
 
@@ -51,6 +54,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   isListening,
   isWakeWordActive,
   wakeWordMode,
+  wakeWordScope = 'background',
   battery,
   voiceName,
   activeVoicePresetId,
@@ -59,6 +63,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   onTestVoice,
   onLockConsole,
   onToggleWakeWordMode,
+  onToggleWakeWordScope,
   onSelectVoicePreset,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -226,6 +231,23 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                   : wakeWordMode === 'always'
                   ? 'WAKE: ALWAYS ON'
                   : 'WAKE: DISABLED'}
+              </span>
+            </button>
+          )}
+
+          {/* Wake Word Scope Button (Desktop) */}
+          {onToggleWakeWordScope && (
+            <button
+              onClick={onToggleWakeWordScope}
+              className={`hidden lg:flex items-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-all ${
+                wakeWordScope === 'background'
+                  ? 'border-cyan-500/60 bg-cyan-950/40 text-cyan-200 hover:bg-cyan-900/50'
+                  : 'border-blue-900/60 bg-black/60 text-cyan-400 hover:text-cyan-200'
+              }`}
+              title="Click to toggle between Active-Tab-Only and Background listening"
+            >
+              <span>
+                {wakeWordScope === 'background' ? 'SCOPE: BACKGROUND ON' : 'SCOPE: ACTIVE TAB ONLY'}
               </span>
             </button>
           )}
@@ -533,23 +555,38 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               <p className="text-[10px] text-cyan-500/80">
                 Say "Hey Jarvis" or "Jarvis" to trigger vocal activation hands-free.
               </p>
-              {onToggleWakeWordMode && (
-                <button
-                  onClick={onToggleWakeWordMode}
-                  className="w-full py-2.5 px-3 rounded-lg border border-cyan-500/50 bg-cyan-950/40 hover:bg-cyan-900/50 text-xs font-orbitron text-cyan-200 flex items-center justify-between transition-colors"
-                >
-                  <span className="text-[10px] text-cyan-400">POWER MODE:</span>
-                  <span className="text-cyan-200 text-xs">
-                    {wakeWordMode === 'charging_only'
-                      ? battery.charging
-                        ? 'ON POWER (CHARGING ACTIVE)'
-                        : 'ON POWER (PAUSED ON BATTERY)'
-                      : wakeWordMode === 'always'
-                      ? 'ALWAYS ON'
-                      : 'DISABLED'}
-                  </span>
-                </button>
-              )}
+              <div className="space-y-2">
+                {onToggleWakeWordMode && (
+                  <button
+                    onClick={onToggleWakeWordMode}
+                    className="w-full py-2.5 px-3 rounded-lg border border-cyan-500/50 bg-cyan-950/40 hover:bg-cyan-900/50 text-xs font-orbitron text-cyan-200 flex items-center justify-between transition-colors"
+                  >
+                    <span className="text-[10px] text-cyan-400">POWER MODE:</span>
+                    <span className="text-cyan-200 text-xs">
+                      {wakeWordMode === 'charging_only'
+                        ? battery.charging
+                          ? 'ON POWER (CHARGING ACTIVE)'
+                          : 'ON POWER (PAUSED ON BATTERY)'
+                        : wakeWordMode === 'always'
+                        ? 'ALWAYS ON'
+                        : 'DISABLED'}
+                    </span>
+                  </button>
+                )}
+                {onToggleWakeWordScope && (
+                  <button
+                    onClick={onToggleWakeWordScope}
+                    className="w-full py-2.5 px-3 rounded-lg border border-cyan-700/60 bg-black/60 hover:bg-cyan-950/40 text-xs font-orbitron text-cyan-200 flex items-center justify-between transition-colors"
+                  >
+                    <span className="text-[10px] text-cyan-400">SCOPE:</span>
+                    <span className="text-cyan-200 text-xs">
+                      {wakeWordScope === 'background'
+                        ? 'BACKGROUND & ACTIVE'
+                        : 'ACTIVE TAB ONLY (PAUSE IN BG)'}
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Voice Engine & Test */}

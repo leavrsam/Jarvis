@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
-import { TelemetryHUD, WakeWordMode } from './components/TelemetryHUD';
+import { TelemetryHUD, WakeWordMode, WakeWordScope } from './components/TelemetryHUD';
 import { SubtitlesOverlay } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
@@ -38,9 +38,38 @@ export const App: React.FC = () => {
     }
   });
 
+  // Wake Word Scope: 'background' (active + background tabs) vs 'active_only' (active browser window only)
+  const [wakeWordScope, setWakeWordScope] = useState<WakeWordScope>(() => {
+    try {
+      const saved = localStorage.getItem('jarvis_wakeword_scope') as WakeWordScope | null;
+      if (saved === 'active_only' || saved === 'background') return saved;
+      return 'background';
+    } catch {
+      return 'background';
+    }
+  });
+
+  const [isDocumentVisible, setIsDocumentVisible] = useState<boolean>(() =>
+    typeof document !== 'undefined' ? !document.hidden : true
+  );
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      setIsDocumentVisible(!document.hidden);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', () => setIsDocumentVisible(true));
+    window.addEventListener('blur', () => setIsDocumentVisible(!document.hidden));
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
   const isWakeWordActive = isAuthenticated && (
     wakeWordMode === 'always' ||
     (wakeWordMode === 'charging_only' && battery.charging)
+  ) && (
+    wakeWordScope === 'background' || isDocumentVisible
   );
 
   const [audioState, setAudioState] = useState<JarvisAudioState>('idle');
@@ -297,6 +326,18 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  // Toggle Wake-Word Scope: 'background' <-> 'active_only'
+  const handleToggleWakeWordScope = useCallback(() => {
+    setWakeWordScope(prev => {
+      const next: WakeWordScope = prev === 'background' ? 'active_only' : 'background';
+      try {
+        localStorage.setItem('jarvis_wakeword_scope', next);
+      } catch {}
+      audioEngine.playSfx('activate');
+      return next;
+    });
+  }, []);
+
   // Voice Test Action
   const handleVoiceTest = useCallback(() => {
     inConversationRef.current = false;
@@ -367,6 +408,7 @@ export const App: React.FC = () => {
         isListening={isListening}
         isWakeWordActive={isWakeWordActive}
         wakeWordMode={wakeWordMode}
+        wakeWordScope={wakeWordScope}
         battery={battery}
         voiceName={voicePreset.shortLabel}
         activeVoicePresetId={voicePreset.id}
@@ -375,6 +417,7 @@ export const App: React.FC = () => {
         onTestVoice={handleVoiceTest}
         onLockConsole={handleLockConsole}
         onToggleWakeWordMode={handleToggleWakeWordMode}
+        onToggleWakeWordScope={handleToggleWakeWordScope}
         onSelectVoicePreset={handleSelectVoicePreset}
       />
 

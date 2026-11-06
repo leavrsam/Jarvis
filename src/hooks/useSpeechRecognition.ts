@@ -123,9 +123,10 @@ export function useSpeechRecognition({
     }
   }, []);
 
-  // Sync speaking & wake-word standby refs, and auto-restart recognition when Jarvis stops speaking
+  // Sync speaking & wake-word standby refs, and auto-restart or stop recognition dynamically
   useEffect(() => {
     const wasSpeaking = isJarvisSpeakingRef.current;
+    const wasStandby = isStandbyRef.current;
     isJarvisSpeakingRef.current = isJarvisSpeaking;
     isStandbyRef.current = wakeWordEnabled;
     setIsStandby(wakeWordEnabled);
@@ -135,6 +136,14 @@ export function useSpeechRecognition({
       if (isListeningRef.current || isStandbyRef.current) {
         restartRecognition();
       }
+    } else if (wasStandby && !wakeWordEnabled && !isListeningRef.current) {
+      // Standby mode turned off (or tab hidden in active_only mode) — abort recognition to free mic
+      try {
+        recognitionRef.current?.abort();
+      } catch {}
+    } else if (!wasStandby && wakeWordEnabled && !isJarvisSpeaking && !isListeningRef.current) {
+      // Standby mode turned on (or tab returned to focus) — start listening for wake-word immediately
+      restartRecognition();
     }
   }, [isJarvisSpeaking, wakeWordEnabled, restartRecognition]);
 
