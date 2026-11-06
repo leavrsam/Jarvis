@@ -362,6 +362,7 @@ class JarvisAudioEngine {
 
   private cleanSpeechText(raw: string): string {
     return raw
+      .replace(/PLAY_YOUTUBE(?:_PLAYLIST)?:\s*\[?[a-zA-Z0-9_-]+\]?/gi, '')
       .replace(/https?:\/\/\S+/gi, '')
       .replace(/[*_#`~[\]]/g, '')
       .replace(/J\.A\.R\.V\.I\.S\./gi, 'Jarvis')
