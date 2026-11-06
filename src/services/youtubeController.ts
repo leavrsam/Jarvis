@@ -173,9 +173,9 @@ if (typeof window !== 'undefined') {
 export function handleJarvisResponse(text: string): string {
   if (!text) return text;
 
-  // 1. Directives parsing: Check for playlist or single video
-  const playlistMatch = text.match(/PLAY_YOUTUBE_PLAYLIST:\s*([a-zA-Z0-9_-]+)/i);
-  const videoMatch = text.match(/PLAY_YOUTUBE:\s*([a-zA-Z0-9_-]{11})/i);
+  // 1. Directives parsing: Check for playlist or single video (supports optional brackets)
+  const playlistMatch = text.match(/PLAY_YOUTUBE_PLAYLIST:\s*\[?([a-zA-Z0-9_-]+)\]?/i);
+  const videoMatch = text.match(/PLAY_YOUTUBE:\s*\[?([a-zA-Z0-9_-]{11})\]?/i);
 
   if (playlistMatch) {
     const playlistId = playlistMatch[1];
@@ -267,8 +267,8 @@ export function handleJarvisResponse(text: string): string {
 
   // 3. Strip directive tags so Edge-TTS / Gemini TTS doesn't speak "PLAY_YOUTUBE..." or "PLAY_YOUTUBE_PLAYLIST..." aloud
   const cleanSpokenText = text
-    .replace(/PLAY_YOUTUBE_PLAYLIST:[^ \n\r]+/gi, '')
-    .replace(/PLAY_YOUTUBE:[^ \n\r]+/gi, '')
+    .replace(/PLAY_YOUTUBE_PLAYLIST:\s*\[?[^ \n\r\]]+\]?/gi, '')
+    .replace(/PLAY_YOUTUBE:\s*\[?[^ \n\r\]]+\]?/gi, '')
     .replace(/\b(?:PAUSE_YOUTUBE|STOP_YOUTUBE|RESUME_YOUTUBE|NEXT_YOUTUBE|PREV_YOUTUBE|PREVIOUS_YOUTUBE|SET_VOLUME:\s*\d+)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
