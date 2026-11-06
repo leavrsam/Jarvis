@@ -5,7 +5,8 @@ import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
-import { sendJarvisCommand } from './services/jarvisBackend';
+import { streamJarvisCommand } from './services/jarvisBackend';
+import { ReplyStreamProcessor } from './services/replyStream';
 import { voiceBiometrics } from './services/voiceBiometrics';
 import { handleJarvisResponse, duckVolume, restoreVolume } from './services/youtubeController';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
@@ -17,6 +18,13 @@ const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
 // How long to wait for the n8n agent before playing a spoken "One moment, sir."
 const ACK_DELAY_MS = 700;
+
+// Spoken when the n8n run fails (HTTP error, network error or a {"type":"error"} stream line)
+function failureMessage(partial: boolean): string {
+  return partial
+    ? 'My apologies, sir. I lost the link to the n8n matrix mid-reply.'
+    : 'My apologies, sir. That request failed. Unable to reach the n8n matrix.';
+}
 
 const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|thank you jarvis|thanks jarvis|goodbye|bye jarvis|stop listening|go to sleep|stand by|standby)\b/i;
 
@@ -97,6 +105,20 @@ export const App: React.FC = () => {
   // Tracks whether we are in an active multi-turn dialogue loop
   const inConversationRef = useRef(false);
   const startListeningRef = useRef<(isFollowUp?: boolean) => void>(() => {});
+  // In-flight n8n request, so a new command can cancel it
+  const requestAbortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
+
+  // Cancel the reply in progress: abort the fetch, stop audio and drop queued sentences
+  const interruptCurrentReply = useCallback(() => {
+    requestIdRef.current++;
+    if (requestAbortRef.current) {
+      requestAbortRef.current.abort();
+      requestAbortRef.current = null;
+    }
+    audioEngine.stopSpeaking();
+    setIsProcessing(false);
+  }, []);
 
   // Sync speaking state & handle intelligent YouTube audio ducking
   useEffect(() => {
@@ -173,6 +195,9 @@ export const App: React.FC = () => {
       inConversationRef.current = true;
     }
 
+    // A new command replaces any reply still streaming or being spoken
+    interruptCurrentReply();
+
     // Stop mic listening while processing and speaking
     audioEngine.stopMicListening();
     audioEngine.setState('processing');
@@ -180,74 +205,116 @@ export const App: React.FC = () => {
     setIsProcessing(true);
     audioEngine.playSfx('processing');
 
+    const requestId = requestIdRef.current;
+    const isCurrent = () => requestIdRef.current === requestId;
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
+    const t0 = performance.now();
+
     // If the n8n agent hasn't answered quickly, cover the wait with an instant spoken acknowledgement
     const ackTimer = setTimeout(() => {
       audioEngine.playAcknowledgement(speakerResult.isOwner);
     }, ACK_DELAY_MS);
 
-    try {
-      // POST enriched payload with speaker attribution to n8n webhook
-      const rawReply = await sendJarvisCommand({
-        query: trimmedQuery,
-        sessionId: 'jarvis-web',
-        speaker: speakerResult.name,
-        speakerConfidence: speakerResult.confidence,
-        isAuthorizedOwner: speakerResult.isOwner,
-      });
-      clearTimeout(ackTimer);
+    // Sentences are spoken as soon as each one is complete, back-to-back
+    const speech = audioEngine.createSpeechQueue(
+      () => {
+        if (!isCurrent()) return;
+        console.info(`[Jarvis] first audio after ${Math.round(performance.now() - t0)}ms`);
+        audioEngine.setState('speaking');
+        setAudioState('speaking');
+      },
+      () => {
+        // Automatically re-open mic for seamless multi-turn back-and-forth dialogue
+        if (isCurrent()) void resumeFollowUpListening();
+      }
+    );
 
-      // Parse YouTube playback directives, trigger player, and strip tags from vocal TTS & subtitles
-      const cleanReply = handleJarvisResponse(rawReply);
-      setLastResponse(cleanReply);
-      setHistory(prev => [
+    let gotText = false;
+    const reply = new ReplyStreamProcessor({
+      // Playback directives (PLAY_YOUTUBE: <id>, SET_VOLUME: 40, ...) are executed, never spoken
+      onDirective: (directive) => {
+        handleJarvisResponse(directive);
+      },
+      onSentence: (sentence) => speech.enqueue(sentence),
+      onDisplay: (text) => {
+        if (!gotText && text) {
+          gotText = true;
+          setIsProcessing(false);
+          audioEngine.playSfx('response');
+        }
+        setLastResponse(text);
+      },
+    });
+
+    let failed = false;
+    try {
+      // POST enriched payload with speaker attribution to n8n webhook; text streams in via onText
+      await streamJarvisCommand(
         {
           query: trimmedQuery,
-          response: cleanReply,
-          timestamp: new Date(),
+          sessionId: 'jarvis-web',
           speaker: speakerResult.name,
           speakerConfidence: speakerResult.confidence,
+          isAuthorizedOwner: speakerResult.isOwner,
         },
-        ...prev,
-      ]);
-      setIsProcessing(false);
-      audioEngine.playSfx('response');
-
-      // Vocalize response using British TTS and route into visualizer analyser
-      audioEngine.setState('speaking');
-      setAudioState('speaking');
-
-      await audioEngine.speak(
-        cleanReply,
-        () => {
-          setAudioState('speaking');
-        },
-        () => {
-          // Automatically re-open mic for seamless multi-turn back-and-forth dialogue
-          void resumeFollowUpListening();
+        {
+          signal: controller.signal,
+          onText: (delta) => {
+            if (!isCurrent()) return;
+            clearTimeout(ackTimer);
+            reply.push(delta);
+          },
         }
       );
-    } catch {
-      clearTimeout(ackTimer);
-      setIsProcessing(false);
-      audioEngine.playSfx('error');
-      const errText = 'Neural network dispatch error. Unable to establish link with n8n matrix.';
-      setLastResponse(errText);
-      setAudioState('speaking');
-      await audioEngine.speak(
-        errText,
-        () => setAudioState('speaking'),
-        () => {
-          void resumeFollowUpListening();
-        }
-      );
+    } catch (err) {
+      if (controller.signal.aborted || !isCurrent()) {
+        clearTimeout(ackTimer);
+        return; // interrupted by the user; the new command takes over
+      }
+      failed = true;
+      console.warn('[Jarvis] Reply failed:', err);
+    } finally {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
     }
-  }, [resumeFollowUpListening]);
+    clearTimeout(ackTimer);
+    if (!isCurrent()) return;
+
+    // Flush whatever is left of the reply (the last sentence may have no trailing space)
+    reply.end();
+    const finalText = reply.displayText;
+
+    if (failed) {
+      audioEngine.playSfx('error');
+      const errText = failureMessage(finalText.length > 0);
+      const shown = finalText ? `${finalText}\n${errText}` : errText;
+      setLastResponse(shown);
+      speech.enqueue(errText);
+    }
+    setIsProcessing(false);
+    if (!gotText && !failed) audioEngine.playSfx('response');
+
+    setHistory(prev => [
+      {
+        query: trimmedQuery,
+        response: failed ? (finalText ? `${finalText} [interrupted by error]` : 'Error: n8n link failed') : finalText,
+        timestamp: new Date(),
+        speaker: speakerResult.name,
+        speakerConfidence: speakerResult.confidence,
+      },
+      ...prev,
+    ]);
+
+    speech.finish();
+    await speech.done;
+  }, [resumeFollowUpListening, interruptCurrentReply]);
 
   // Handler for Wake Word ("Hey Jarvis" / "Jarvis") trigger
   const handleWakeWordDetected = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
 
     inConversationRef.current = true;
+    interruptCurrentReply();
     audioEngine.ensureContext();
     audioEngine.playSfx('wake');
     // Warm up the TTS function while the user is still speaking
@@ -268,14 +335,14 @@ export const App: React.FC = () => {
     } else {
       setLastResponse('Listening, sir...');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, interruptCurrentReply]);
 
   // Hands-Free Vocal Interruption / Barge-In Handler (Triggered while Jarvis is actively speaking)
   const handleBargeIn = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
 
-    // Immediately kill TTS audio playback
-    audioEngine.stopSpeaking();
+    // Immediately kill TTS audio playback, the queued sentences and the in-flight n8n request
+    interruptCurrentReply();
     inConversationRef.current = true;
     audioEngine.playSfx('wake');
 
@@ -286,7 +353,7 @@ export const App: React.FC = () => {
     if (trailingQuery && trailingQuery.length > 1) {
       setLastResponse('Standing by, sir...');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, interruptCurrentReply]);
 
   const handleFollowUpTimeout = useCallback(() => {
     inConversationRef.current = false;
@@ -308,7 +375,8 @@ export const App: React.FC = () => {
     onBargeIn: handleBargeIn,
     silenceTimeoutMs: 750,
     followUpTimeoutMs: 15000,
-    isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
+    // 'processing' also covers the gap between the first streamed text and the first audio
+    isJarvisSpeaking: audioState === 'speaking' || audioState === 'processing' || isProcessing || !isAuthenticated,
     currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
     wakeWordEnabled: isWakeWordActive,
   });
@@ -322,10 +390,10 @@ export const App: React.FC = () => {
     if (!isAuthenticated) return;
     audioEngine.ensureContext();
 
-    // If Jarvis is currently speaking, pressing Space / clicking the orb interrupts him and starts listening immediately!
-    if (audioState === 'speaking') {
+    // If Jarvis is speaking or still fetching a reply, pressing Space / clicking the orb interrupts him and starts listening immediately!
+    if (audioState === 'speaking' || isProcessing || requestAbortRef.current) {
       inConversationRef.current = true;
-      audioEngine.stopSpeaking();
+      interruptCurrentReply();
       audioEngine.playSfx('activate');
       await audioEngine.startMicListening();
       startListening(false);
@@ -345,7 +413,7 @@ export const App: React.FC = () => {
       startListening(false);
       setAudioState('listening');
     }
-  }, [isAuthenticated, audioState, isListening, startListening, stopListening]);
+  }, [isAuthenticated, audioState, isProcessing, isListening, startListening, stopListening, interruptCurrentReply]);
 
   // Global Hotkey Listener: Spacebar, Option+Space, Cmd+Shift+J
   useEffect(() => {
@@ -461,9 +529,9 @@ export const App: React.FC = () => {
 
   const handleStopSpeaking = useCallback(() => {
     inConversationRef.current = false;
-    audioEngine.stopSpeaking();
+    interruptCurrentReply();
     setAudioState('idle');
-  }, []);
+  }, [interruptCurrentReply]);
 
   // Lock Console action
   const handleLockConsole = useCallback(() => {
@@ -473,10 +541,10 @@ export const App: React.FC = () => {
     } catch {}
     stopListening();
     audioEngine.stopMicListening();
-    audioEngine.stopSpeaking();
+    interruptCurrentReply();
     setAudioState('idle');
     setIsAuthenticated(false);
-  }, [stopListening]);
+  }, [stopListening, interruptCurrentReply]);
 
   // Render Password Security Gate if not authenticated
   if (!isAuthenticated) {

@@ -1,7 +1,18 @@
 // Singleton Web Audio API & Gemini 3.8 Expressive TTS Engine for J.A.R.V.I.S.
 import { voiceBiometrics } from './voiceBiometrics';
+import { stripPauseTags } from './replyStream';
 
 export type JarvisAudioState = 'idle' | 'listening' | 'processing' | 'speaking';
+
+/** Sentence-by-sentence speech for a reply that is still streaming in. */
+export interface SpeechQueue {
+  /** Add a sentence. Synthesis starts immediately; playback is in order, back-to-back. */
+  enqueue(text: string): void;
+  /** No more sentences will be added. */
+  finish(): void;
+  /** Resolves once everything has played, or the queue was stopped. */
+  readonly done: Promise<void>;
+}
 
 export interface JarvisNeuralVoicePreset {
   id: string;
@@ -747,6 +758,94 @@ class JarvisAudioEngine {
     }
   }
 
+  /**
+   * Start a speech queue for a streamed reply. Each enqueued sentence is synthesized as soon as
+   * it arrives (in parallel) and played in order with no gap. stopSpeaking() cancels the queue,
+   * including sentences not yet synthesized. A playing "One moment, sir." finishes first.
+   */
+  public createSpeechQueue(onStart?: () => void, onEnd?: () => void): SpeechQueue {
+    this.stopSpeaking();
+    this.ensureContext();
+    const controller = new AbortController();
+    this.activeAbortController = controller;
+    const { signal } = controller;
+
+    const items: { text: string; buffer: Promise<AudioBuffer> }[] = [];
+    let finished = false;
+    let wake: (() => void) | null = null;
+    const wakeUp = () => {
+      const w = wake;
+      wake = null;
+      w?.();
+    };
+    signal.addEventListener('abort', wakeUp);
+
+    let started = false;
+    const handleStart = () => {
+      if (!started) {
+        started = true;
+        onStart?.();
+      }
+    };
+
+    const run = async () => {
+      try {
+        let i = 0;
+        while (!signal.aborted) {
+          if (i >= items.length) {
+            if (finished) break;
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+            continue;
+          }
+          const item = items[i++];
+          let buffer: AudioBuffer | null = null;
+          try {
+            buffer = await item.buffer;
+          } catch (err) {
+            if (signal.aborted) break;
+            console.warn('[JarvisAudioEngine] Neural TTS sentence failed, using browser speech for it:', err);
+          }
+          if (this.ackPromise) await this.ackPromise;
+          if (signal.aborted) break;
+          if (buffer) {
+            if (this.ctx && this.ctx.state === 'suspended') await this.ctx.resume();
+            await this.playBuffer(buffer, handleStart);
+          } else {
+            await this.speakFallbackBrowser(item.text, handleStart);
+          }
+        }
+      } finally {
+        signal.removeEventListener('abort', wakeUp);
+        if (this.activeAbortController === controller) {
+          this.activeAbortController = null;
+          this.currentState = 'idle';
+        }
+        onEnd?.();
+      }
+    };
+
+    const done = run();
+
+    return {
+      enqueue: (text: string) => {
+        if (finished || signal.aborted) return;
+        const spoken = this.cleanSpeechText(text);
+        if (!spoken) return;
+        const buffer = this.fetchSpeechBuffer(spoken, signal);
+        buffer.catch(() => {}); // handled in run()
+        items.push({ text: spoken, buffer });
+        wakeUp();
+      },
+      finish: () => {
+        finished = true;
+        wakeUp();
+      },
+      done,
+    };
+  }
+
   private speakFallbackBrowser(
     spokenText: string,
     onStart?: () => void,
@@ -760,7 +859,10 @@ class JarvisAudioEngine {
       }
 
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(spokenText);
+      // Browser voices would read "<short pause>" aloud; a comma gives a brief pause instead
+      const utterance = new SpeechSynthesisUtterance(
+        stripPauseTags(spokenText, ', ').replace(/\s*,\s*([,.!?])/g, '$1').replace(/\s+/g, ' ').trim()
+      );
       const voices = window.speechSynthesis.getVoices();
       const ukVoice =
         voices.find((v) => v.name.includes('RyanNeural')) ||

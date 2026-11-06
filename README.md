@@ -43,8 +43,12 @@ A full-screen, futuristic sci-fi voice assistant web HUD inspired by Stark Indus
     "sessionId": "jarvis-web"
   }
   ```
-- Endpoint: `https://n8n.wolfcubventures.com/webhook/jarvis-command`
-- Parses structured responses (`output`, `response`, `text`, or raw string) and speaks the response aloud.
+- Endpoint: `VITE_JARVIS_WEBHOOK_URL` (default `https://n8n.wolfcubventures.com/webhook/jarvis-command`; streaming test endpoint: `/webhook/jarvis-command-stream`)
+- **Streaming replies** (n8n "streaming" response mode): newline-delimited JSON events (`begin` / `item` / `end` / `error`). The `content` of each `item` is joined in order, shown on screen as it arrives, and spoken sentence by sentence, so speech starts before the full reply exists. An `error` line speaks a short failure message.
+- **Legacy replies**: an `application/json` body like `{"output": "..."}` still works (as do `response`, `message`, `text` or a raw string). The body is checked too, so a stream sent as `application/json` is still read as a stream.
+- Leading directives (`PLAY_YOUTUBE: <id>`, `PLAY_YOUTUBE_PLAYLIST: <id>`, `PAUSE_YOUTUBE`, `RESUME_YOUTUBE`, `STOP_YOUTUBE`, `NEXT_YOUTUBE`, `PREV_YOUTUBE`, `SET_VOLUME: <0-100>`) run as soon as they're complete and are never spoken. `<short pause>` tags become pauses, not words.
+- A new command (wake word, barge-in, Space or the orb) cancels the request in flight, stops the audio and clears the queued sentences.
+- The console logs `firstChunk`, `firstText` and `total` time for each request, plus time to first audio.
 
 ### 5. Text-to-Speech (TTS) Engine
 - Prioritizes British voices: `en-GB-RyanNeural` (Microsoft Edge Natural Voice), `Google UK English Male`, `Daniel`, and `en-GB` variants.
