@@ -3,9 +3,11 @@ import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD, WakeWordMode, WakeWordScope } from './components/TelemetryHUD';
 import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
+import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { sendJarvisCommand } from './services/jarvisBackend';
 import { voiceBiometrics } from './services/voiceBiometrics';
+import { handleJarvisResponse, duckVolume, restoreVolume } from './services/youtubeController';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useBatteryStatus } from './hooks/useBatteryStatus';
 
@@ -92,10 +94,15 @@ export const App: React.FC = () => {
   const inConversationRef = useRef(false);
   const startListeningRef = useRef<(isFollowUp?: boolean) => void>(() => {});
 
-  // Sync speaking state
+  // Sync speaking state & handle intelligent YouTube audio ducking
   useEffect(() => {
     isSpeakingRef.current = audioState === 'speaking';
-  }, [audioState]);
+    if (audioState === 'speaking' || audioState === 'listening' || isProcessing) {
+      duckVolume(20);
+    } else if (audioState === 'idle') {
+      restoreVolume();
+    }
+  }, [audioState, isProcessing]);
 
   // Request notification permission when wake word is enabled
   useEffect(() => {
@@ -164,7 +171,7 @@ export const App: React.FC = () => {
 
     try {
       // POST enriched payload with speaker attribution to n8n webhook
-      const reply = await sendJarvisCommand({
+      const rawReply = await sendJarvisCommand({
         query: trimmedQuery,
         sessionId: 'jarvis-web',
         speaker: speakerResult.name,
@@ -172,11 +179,13 @@ export const App: React.FC = () => {
         isAuthorizedOwner: speakerResult.isOwner,
       });
 
-      setLastResponse(reply);
+      // Parse YouTube playback directives, trigger player, and strip tags from vocal TTS & subtitles
+      const cleanReply = handleJarvisResponse(rawReply);
+      setLastResponse(cleanReply);
       setHistory(prev => [
         {
           query: trimmedQuery,
-          response: reply,
+          response: cleanReply,
           timestamp: new Date(),
           speaker: speakerResult.name,
           speakerConfidence: speakerResult.confidence,
@@ -191,7 +200,7 @@ export const App: React.FC = () => {
       setAudioState('speaking');
 
       await audioEngine.speak(
-        reply,
+        cleanReply,
         () => {
           setAudioState('speaking');
         },
@@ -471,6 +480,9 @@ export const App: React.FC = () => {
         onToggleWakeWordScope={handleToggleWakeWordScope}
         onSelectVoicePreset={handleSelectVoicePreset}
       />
+
+      {/* Futuristic Sci-Fi YouTube Audio Controller Widget */}
+      <YouTubeMediaHUD />
 
       {/* Center Holographic Arc-Reactor Three.js Visualizer */}
       <section className="relative w-full h-full flex items-center justify-center z-10">
