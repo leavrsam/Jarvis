@@ -18,6 +18,7 @@ import {
   Wand2,
   Loader2,
   X,
+  Fingerprint,
 } from 'lucide-react';
 import {
   JarvisAudioState,
@@ -27,6 +28,7 @@ import {
 } from '../services/audioEngine';
 import { AudioSpectrumMeter } from './AudioSpectrumMeter';
 import { BatteryStatus } from '../hooks/useBatteryStatus';
+import { VoiceBiometricsModal } from './VoiceBiometricsModal';
 
 export type WakeWordMode = 'charging_only' | 'always' | 'off';
 export type WakeWordScope = 'background' | 'active_only';
@@ -40,6 +42,7 @@ interface TelemetryHUDProps {
   battery: BatteryStatus;
   voiceName: string;
   activeVoicePresetId: string;
+  activeSpeakerName?: string;
   historyLength: number;
   onClearHistory?: () => void;
   onTestVoice?: () => void;
@@ -58,6 +61,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   battery,
   voiceName,
   activeVoicePresetId,
+  activeSpeakerName,
   historyLength,
   onClearHistory,
   onTestVoice,
@@ -70,6 +74,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   const [coreFreq, setCoreFreq] = useState<number>(4.82);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showMobileHudDrawer, setShowMobileHudDrawer] = useState(false);
+  const [showBiometricsModal, setShowBiometricsModal] = useState(false);
 
   // Gemini 3.8 TTS status & custom voice design states
   const [geminiConfigured, setGeminiConfigured] = useState<boolean>(false);
@@ -306,6 +311,17 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             <Volume2 className="w-3 h-3 sm:hidden text-cyan-300" />
             <span className="hidden sm:inline">VOICE:</span>
             <span className="text-cyan-200 truncate max-w-[80px] sm:max-w-[115px] hidden xs:inline">{voiceName}</span>
+          </button>
+
+          {/* Biometric Voice ID Trigger */}
+          <button
+            onClick={() => setShowBiometricsModal(true)}
+            className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1 rounded border border-cyan-800/60 bg-black/60 hover:bg-cyan-950/60 text-[10px] font-orbitron text-cyan-400 transition-all hover:border-cyan-500 shadow-[0_0_10px_rgba(0,240,255,0.15)]"
+            title="Biometric Voiceprints & Speaker Identification"
+          >
+            <Fingerprint className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-cyan-300" />
+            <span className="hidden sm:inline">VOICE ID:</span>
+            <span className="text-cyan-200 truncate max-w-[70px] sm:max-w-[95px]">{activeSpeakerName || 'PROFILE'}</span>
           </button>
 
           {/* Voice Test Action (Desktop & Tablet) */}
@@ -589,6 +605,32 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               </div>
             </div>
 
+            {/* Biometric Voice ID Configuration (Mobile) */}
+            <div className="p-3.5 rounded-xl border border-cyan-900/60 bg-black/70 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 text-xs font-orbitron text-cyan-300">
+                  <Fingerprint className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>BIOMETRIC SPEAKER ID</span>
+                </div>
+                <span className="text-[10px] font-mono-tech text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">
+                  {activeSpeakerName || 'ENROLLED'}
+                </span>
+              </div>
+              <p className="text-[10px] text-cyan-500/80">
+                Acoustic formant vectors & fundamental pitch (F₀) calibration.
+              </p>
+              <button
+                onClick={() => {
+                  setShowMobileHudDrawer(false);
+                  setShowBiometricsModal(true);
+                }}
+                className="w-full py-2 px-3 rounded-lg border border-cyan-500/60 bg-cyan-950/40 text-xs font-orbitron text-cyan-200 flex items-center justify-center space-x-2"
+              >
+                <Fingerprint className="w-3.5 h-3.5 text-cyan-400" />
+                <span>CONFIGURE VOICEPRINTS</span>
+              </button>
+            </div>
+
             {/* Voice Engine & Test */}
             <div className="p-3.5 rounded-xl border border-cyan-900/60 bg-black/70 space-y-2.5">
               <div className="flex items-center justify-between">
@@ -818,6 +860,12 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           </div>
         </div>
       )}
+
+      {/* Biometric Voice ID & Speaker Profiles Modal */}
+      <VoiceBiometricsModal
+        isOpen={showBiometricsModal}
+        onClose={() => setShowBiometricsModal(false)}
+      />
     </>
   );
 };

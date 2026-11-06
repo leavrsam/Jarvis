@@ -1,4 +1,5 @@
 // Singleton Web Audio API & Gemini 3.8 Expressive TTS Engine for J.A.R.V.I.S.
+import { voiceBiometrics } from './voiceBiometrics';
 
 export type JarvisAudioState = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -335,6 +336,7 @@ class JarvisAudioEngine {
       }
 
       this.currentState = 'listening';
+      voiceBiometrics.startUtteranceCapture();
       return true;
     } catch (err) {
       console.warn('[JarvisAudioEngine] Microphone access denied or unavailable:', err);
@@ -790,6 +792,11 @@ class JarvisAudioEngine {
     const vocalBandVolume = Math.min(1, bass * 0.45 + mid * 0.42 + treble * 0.13);
     const volume = Math.min(1, Math.max(rmsVolume, vocalBandVolume));
     const avg = totalVocalMag / 80;
+
+    // Feed real-time vocal frame to Voice Biometrics engine if listening to user
+    if (this.currentState === 'listening' && volume > 0.04) {
+      voiceBiometrics.ingestAudioFrame(this.freqData, this.timeData, this.ctx?.sampleRate || 48000);
+    }
 
     return {
       frequencyData: this.freqData,

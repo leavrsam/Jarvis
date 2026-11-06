@@ -3,9 +3,39 @@ export interface JarvisResponse {
   raw?: unknown;
 }
 
-export async function sendJarvisCommand(query: string, sessionId = "jarvis-web"): Promise<string> {
+export interface JarvisCommandPayload {
+  query: string;
+  sessionId?: string;
+  speaker?: string;
+  speakerConfidence?: number;
+  isAuthorizedOwner?: boolean;
+}
+
+export async function sendJarvisCommand(
+  payloadOrQuery: string | JarvisCommandPayload,
+  defaultSessionId = "jarvis-web"
+): Promise<string> {
   const endpoint = "https://n8n.wolfcubventures.com/webhook/jarvis-command";
   
+  let bodyPayload: Record<string, unknown>;
+  if (typeof payloadOrQuery === "string") {
+    bodyPayload = {
+      query: payloadOrQuery.trim(),
+      sessionId: defaultSessionId,
+      speaker: "Owner",
+      speakerConfidence: 1.0,
+      isAuthorizedOwner: true,
+    };
+  } else {
+    bodyPayload = {
+      query: payloadOrQuery.query.trim(),
+      sessionId: payloadOrQuery.sessionId || defaultSessionId,
+      speaker: payloadOrQuery.speaker || "Unknown",
+      speakerConfidence: payloadOrQuery.speakerConfidence ?? 0.85,
+      isAuthorizedOwner: payloadOrQuery.isAuthorizedOwner ?? true,
+    };
+  }
+
   try {
     const res = await fetch(endpoint, {
       method: "POST",
@@ -13,10 +43,7 @@ export async function sendJarvisCommand(query: string, sessionId = "jarvis-web")
         "Content-Type": "application/json",
         "Accept": "application/json",
       },
-      body: JSON.stringify({
-        query: query.trim(),
-        sessionId,
-      }),
+      body: JSON.stringify(bodyPayload),
     });
 
     if (!res.ok) {

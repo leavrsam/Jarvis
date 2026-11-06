@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD, WakeWordMode, WakeWordScope } from './components/TelemetryHUD';
-import { SubtitlesOverlay } from './components/SubtitlesOverlay';
+import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { sendJarvisCommand } from './services/jarvisBackend';
+import { voiceBiometrics } from './services/voiceBiometrics';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useBatteryStatus } from './hooks/useBatteryStatus';
 
@@ -77,7 +78,15 @@ export const App: React.FC = () => {
   const [lastQuery, setLastQuery] = useState<string>('');
   const [lastResponse, setLastResponse] = useState<string>('All systems operational. Standing by for command.');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [history, setHistory] = useState<{ query: string; response: string; timestamp: Date }[]>([]);
+  const [history, setHistory] = useState<DialogueEntry[]>([]);
+
+  // Biometric Speaker Identification State
+  const [lastSpeaker, setLastSpeaker] = useState<string>(() => {
+    const owner = voiceBiometrics.getOwnerProfile();
+    return owner ? owner.name : 'Samuel';
+  });
+  const [speakerConfidence, setSpeakerConfidence] = useState<number>(0.96);
+  const [isOwner, setIsOwner] = useState<boolean>(true);
   const isSpeakingRef = useRef(false);
   // Tracks whether we are in an active multi-turn dialogue loop
   const inConversationRef = useRef(false);
@@ -125,13 +134,19 @@ export const App: React.FC = () => {
     startListeningRef.current(true);
   }, []);
 
-  // Execute Backend Dispatch to n8n Webhook
+  // Execute Backend Dispatch to n8n Webhook with Biometric Speaker Metadata
   const handleCommandSubmit = useCallback(async (query: string) => {
     if (!query || query.trim().length === 0) return;
 
     const trimmedQuery = query.trim();
     // Record user prompt for HUD attribution
     setLastQuery(trimmedQuery);
+
+    // Identify speaker from live acoustic vectors captured during speech
+    const speakerResult = voiceBiometrics.identifySpeaker();
+    setLastSpeaker(speakerResult.name);
+    setSpeakerConfidence(speakerResult.confidence);
+    setIsOwner(speakerResult.isOwner);
 
     // Check if the user is signing off ("That's all, thanks Jarvis")
     if (CONVERSATION_END_REGEX.test(trimmedQuery)) {
@@ -148,10 +163,26 @@ export const App: React.FC = () => {
     audioEngine.playSfx('processing');
 
     try {
-      // POST { query: transcript, sessionId: "jarvis-web" } to n8n webhook
-      const reply = await sendJarvisCommand(trimmedQuery, 'jarvis-web');
+      // POST enriched payload with speaker attribution to n8n webhook
+      const reply = await sendJarvisCommand({
+        query: trimmedQuery,
+        sessionId: 'jarvis-web',
+        speaker: speakerResult.name,
+        speakerConfidence: speakerResult.confidence,
+        isAuthorizedOwner: speakerResult.isOwner,
+      });
+
       setLastResponse(reply);
-      setHistory(prev => [{ query: trimmedQuery, response: reply, timestamp: new Date() }, ...prev]);
+      setHistory(prev => [
+        {
+          query: trimmedQuery,
+          response: reply,
+          timestamp: new Date(),
+          speaker: speakerResult.name,
+          speakerConfidence: speakerResult.confidence,
+        },
+        ...prev,
+      ]);
       setIsProcessing(false);
       audioEngine.playSfx('response');
 
@@ -210,13 +241,31 @@ export const App: React.FC = () => {
     }
   }, [isAuthenticated]);
 
+  // Hands-Free Vocal Interruption / Barge-In Handler (Triggered while Jarvis is actively speaking)
+  const handleBargeIn = useCallback(async (trailingQuery?: string) => {
+    if (!isAuthenticated) return;
+
+    // Immediately kill TTS audio playback
+    audioEngine.stopSpeaking();
+    inConversationRef.current = true;
+    audioEngine.playSfx('wake');
+
+    // Instantly transition to listening
+    await audioEngine.startMicListening();
+    setAudioState('listening');
+
+    if (trailingQuery && trailingQuery.length > 1) {
+      setLastResponse('Standing by, sir...');
+    }
+  }, [isAuthenticated]);
+
   const handleFollowUpTimeout = useCallback(() => {
     inConversationRef.current = false;
     audioEngine.stopMicListening();
     setAudioState('idle');
   }, []);
 
-  // Web Speech Recognition Hook with wake-word detection & global hotkeys
+  // Web Speech Recognition Hook with wake-word detection, hands-free barge-in & global hotkeys
   const {
     isListening,
     transcript,
@@ -227,6 +276,7 @@ export const App: React.FC = () => {
     onFinalSubmit: handleCommandSubmit,
     onWakeWordDetected: handleWakeWordDetected,
     onFollowUpTimeout: handleFollowUpTimeout,
+    onBargeIn: handleBargeIn,
     silenceTimeoutMs: 1150,
     followUpTimeoutMs: 15000,
     isJarvisSpeaking: audioState === 'speaking' || isProcessing || !isAuthenticated,
@@ -412,6 +462,7 @@ export const App: React.FC = () => {
         battery={battery}
         voiceName={voicePreset.shortLabel}
         activeVoicePresetId={voicePreset.id}
+        activeSpeakerName={lastSpeaker}
         historyLength={history.length}
         onClearHistory={() => setHistory([])}
         onTestVoice={handleVoiceTest}
@@ -437,6 +488,9 @@ export const App: React.FC = () => {
         interimTranscript={interimTranscript}
         lastQuery={lastQuery}
         lastResponse={lastResponse}
+        lastSpeaker={lastSpeaker}
+        speakerConfidence={speakerConfidence}
+        isOwner={isOwner}
         isProcessing={isProcessing}
         history={history}
         onToggleListening={handleToggleListening}
