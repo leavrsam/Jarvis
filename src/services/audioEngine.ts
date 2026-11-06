@@ -42,8 +42,9 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     accent: 'en-GB • Custom Designed AI Butler',
     description:
       'Gemini 3.8 Flash TTS with your custom-designed British AI butler voice. Tune it in the Voice Lab.',
-    style:
-      'Calm, understated and precise. Quick, even pacing with brief natural pauses. Soft-spoken and close, never theatrical or upbeat. A faint, dry, amused politeness, as if addressing someone he knows very well.',
+    // Kept deliberately short: Google's TTS guide says long per-line direction causes voice drift.
+    // Identity (age, timbre, accent) lives in the designed voice itself.
+    style: 'calm, precise, dryly understated',
     rate: '+0%',
     pitch: '-2Hz',
     hudDsp: true,
@@ -83,6 +84,29 @@ export const DEFAULT_VOICE_TUNING: JarvisVoiceTuning = {
   presenceDb: 2.4,
   intercomWet: 0.08,
 };
+
+/**
+ * "Mk-VIII" refinement of the original designed voice (voice_5r8hqutci8lm), built per Google's
+ * voice-remixing guidance: start from the existing voice, change one or two traits per step,
+ * and explicitly preserve speaker identity and accent.
+ */
+export const REFINED_JARVIS_RECIPE = {
+  baseVoice: 'voice_5r8hqutci8lm',
+  steps: [
+    // Step 1, timbre: the original prompt asked for a "warm, resonant baritone" with "subtle breathiness",
+    // which reads as an older audiobook narrator. The target is lighter, cleaner and more precise.
+    'Keep the same speaker identity and English Received Pronunciation accent, but make the timbre lighter and cleaner: a clear, light baritone rather than deep and resonant, slightly younger-sounding, with no breathiness or gravel.',
+    // Step 2, delivery baseline: precise articulation, close mic, quick but unhurried.
+    'Keep the same speaker identity and accent, but make the delivery crisp and precise with slightly clipped consonants, softly projected as if close to the microphone, with a quick, even, unhurried pace and an air of calm, dry composure.',
+  ],
+  tuning: {
+    style: '',
+    // A lighter voice needs less low-mid boost; the old +2.2 dB pushed it back toward "radio baritone".
+    warmthDb: 0.5,
+    presenceDb: 2.5,
+    intercomWet: 0.1,
+  },
+} as const;
 
 // Short holding phrases, pre-synthesized so they play with zero latency
 const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.', 'Just a moment, sir.', 'On it, sir.'];
@@ -130,6 +154,7 @@ class JarvisAudioEngine {
   // Voice Lab tuning (persisted per device)
   private voiceTuning: JarvisVoiceTuning = { ...DEFAULT_VOICE_TUNING };
   private voiceHistory: string[] = [];
+  private voiceLabels: Record<string, string> = { [REFINED_JARVIS_RECIPE.baseVoice]: 'Original Mk-VII' };
 
   constructor() {
     this.initVoicePreset();
@@ -154,6 +179,10 @@ class JarvisAudioEngine {
       const savedTuning = localStorage.getItem('jarvis_voice_tuning');
       if (savedTuning) {
         this.voiceTuning = { ...DEFAULT_VOICE_TUNING, ...JSON.parse(savedTuning) };
+      }
+      const savedLabels = localStorage.getItem('jarvis_voice_labels');
+      if (savedLabels) {
+        this.voiceLabels = { ...this.voiceLabels, ...JSON.parse(savedLabels) };
       }
       const savedHistory = localStorage.getItem('jarvis_voice_history');
       if (savedHistory) {
@@ -198,6 +227,7 @@ class JarvisAudioEngine {
 
   public setCustomDesignedVoiceId(voiceId: string) {
     this.customDesignedVoiceId = voiceId.trim();
+    this.resetAcknowledgements();
     this.audioBufferCache.clear();
     try {
       if (this.customDesignedVoiceId) {
@@ -249,7 +279,11 @@ class JarvisAudioEngine {
    * Create a new designed voice. With baseVoice, the prompt describes changes relative to that voice
    * ("a touch lighter and quicker"); without it, the prompt describes the whole voice.
    */
-  public async designCustomJarvisVoice(prompt?: string, baseVoice?: string): Promise<string | null> {
+  public async designCustomJarvisVoice(
+    prompt?: string,
+    baseVoice?: string,
+    label?: string
+  ): Promise<string | null> {
     const res = await fetch('/api/tts', {
       method: 'POST',
       headers: this.buildTtsHeaders(),
@@ -267,6 +301,7 @@ class JarvisAudioEngine {
     if (data.voiceId) {
       if (this.customDesignedVoiceId) this.rememberVoice(this.customDesignedVoiceId);
       this.rememberVoice(data.voiceId);
+      if (label) this.setVoiceLabel(data.voiceId, label);
       this.setCustomDesignedVoiceId(data.voiceId);
       return data.voiceId;
     }
@@ -280,12 +315,50 @@ class JarvisAudioEngine {
     } catch {}
   }
 
-  /** Recently designed voice ids, newest first, so you can A/B and revert. */
+  /** Recently designed voice ids, newest first (original always included), so you can A/B and revert. */
   public getVoiceHistory(): string[] {
-    const all = this.customDesignedVoiceId
-      ? [this.customDesignedVoiceId, ...this.voiceHistory]
-      : this.voiceHistory;
+    const all = [
+      ...(this.customDesignedVoiceId ? [this.customDesignedVoiceId] : []),
+      ...this.voiceHistory,
+      REFINED_JARVIS_RECIPE.baseVoice,
+    ];
     return Array.from(new Set(all));
+  }
+
+  public getVoiceLabel(voiceId: string): string {
+    return this.voiceLabels[voiceId] || voiceId;
+  }
+
+  private setVoiceLabel(voiceId: string, label: string) {
+    this.voiceLabels[voiceId] = label;
+    try {
+      localStorage.setItem('jarvis_voice_labels', JSON.stringify(this.voiceLabels));
+    } catch {}
+  }
+
+  /** Drop pre-synthesized "One moment, sir." clips so they're re-made in the current voice. */
+  private resetAcknowledgements() {
+    // Re-synthesized lazily on the next wake word (prewarm), so intermediate voices don't cost extra calls.
+    this.ackBuffers.clear();
+    this.ackPreloadPromise = null;
+  }
+
+  /**
+   * Build the refined "Mk-VIII" voice by chaining remixes from the original designed voice,
+   * then apply its matching EQ. Each intermediate voice is kept in history for A/B comparison.
+   */
+  public async createRefinedJarvisVoice(onProgress?: (msg: string) => void): Promise<string> {
+    let base: string = REFINED_JARVIS_RECIPE.baseVoice;
+    const total = REFINED_JARVIS_RECIPE.steps.length;
+    for (let i = 0; i < total; i++) {
+      onProgress?.(`Step ${i + 1} of ${total}: ${i === 0 ? 'refining timbre' : 'refining delivery'}...`);
+      const label = i === total - 1 ? 'Refined Mk-VIII' : `Mk-VIII step ${i + 1} (timbre only)`;
+      const id = await this.designCustomJarvisVoice(REFINED_JARVIS_RECIPE.steps[i], base, label);
+      if (!id) throw new Error(`Voice Design returned no voice at step ${i + 1}`);
+      base = id;
+    }
+    this.setVoiceTuning({ ...REFINED_JARVIS_RECIPE.tuning });
+    return base;
   }
 
   public getVoiceTuning(): JarvisVoiceTuning {
@@ -293,6 +366,9 @@ class JarvisAudioEngine {
   }
 
   public setVoiceTuning(patch: Partial<JarvisVoiceTuning>): JarvisVoiceTuning {
+    if (patch.style !== undefined && patch.style !== this.voiceTuning.style) {
+      this.resetAcknowledgements();
+    }
     this.voiceTuning = { ...this.voiceTuning, ...patch };
     try {
       localStorage.setItem('jarvis_voice_tuning', JSON.stringify(this.voiceTuning));

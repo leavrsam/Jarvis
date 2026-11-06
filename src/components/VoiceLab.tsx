@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FlaskConical, Loader2, Play, RotateCcw, Wand2 } from 'lucide-react';
+import { FlaskConical, Loader2, Play, RotateCcw, Sparkles, Wand2 } from 'lucide-react';
 import { audioEngine, DEFAULT_VOICE_TUNING, JarvisVoiceTuning } from '../services/audioEngine';
 
 const DEFAULT_TEST_LINE =
@@ -49,7 +49,12 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
     setStatusMsg(fromScratch ? 'Designing a new voice...' : `Remixing ${activeVoice || 'current voice'}...`);
     try {
       const base = fromScratch ? undefined : activeVoice || undefined;
-      const newId = await audioEngine.designCustomJarvisVoice(prompt, base);
+      // Google's remixing guide: anchor identity explicitly and describe only the change
+      const instruction =
+        base && !/keep the same/i.test(prompt)
+          ? `Keep the same speaker identity and accent, but make it ${prompt.charAt(0).toLowerCase()}${prompt.slice(1).replace(/[.!]+$/, '')}.`
+          : prompt;
+      const newId = await audioEngine.designCustomJarvisVoice(instruction, base, `Remix: ${prompt.slice(0, 28)}`);
       if (newId) {
         setActiveVoice(newId);
         setHistory(audioEngine.getVoiceHistory());
@@ -57,6 +62,24 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
         setStatusMsg(`New voice ${newId} is active. Playing test line...`);
         onPreview(testLine);
       }
+    } catch (err: unknown) {
+      setStatusMsg(`Voice Design error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsRemixing(false);
+    }
+  };
+
+  const handleCreateRefined = async () => {
+    setIsRemixing(true);
+    try {
+      const newId = await audioEngine.createRefinedJarvisVoice((msg) => setStatusMsg(msg));
+      setActiveVoice(newId);
+      setHistory(audioEngine.getVoiceHistory());
+      setTuning(audioEngine.getVoiceTuning());
+      setStyleDraft('');
+      onVoiceChanged(newId);
+      setStatusMsg(`Refined Mk-VIII (${newId}) is now active. Tap "Original Mk-VII" below to compare.`);
+      onPreview(testLine);
     } catch (err: unknown) {
       setStatusMsg(`Voice Design error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -137,6 +160,16 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
         </button>
       </div>
 
+      {/* One-tap refined voice */}
+      <button
+        onClick={handleCreateRefined}
+        disabled={isRemixing}
+        className="w-full flex items-center justify-center space-x-1.5 px-3 py-2 rounded-lg border border-emerald-500/70 bg-emerald-950/40 hover:bg-emerald-900/50 text-[11px] font-orbitron text-emerald-200 disabled:opacity-50"
+      >
+        {isRemixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+        <span>CREATE REFINED JARVIS (MK-VIII)</span>
+      </button>
+
       {/* 1. Voice identity: remix the designed voice */}
       <div className="space-y-1.5 pt-2 border-t border-amber-900/50">
         <div className="text-[10px] font-mono-tech text-amber-300">
@@ -184,6 +217,7 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
               {history.map((id) => (
                 <button
                   key={id}
+                  title={id}
                   onClick={() => useVoice(id)}
                   className={`px-2 py-0.5 rounded border text-[9px] font-mono-tech ${
                     id === activeVoice
@@ -191,7 +225,7 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
                       : 'border-amber-800 text-amber-300 hover:border-amber-500'
                   }`}
                 >
-                  {id}
+                  {audioEngine.getVoiceLabel(id)}
                 </button>
               ))}
             </div>
