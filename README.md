@@ -79,6 +79,46 @@ npm run preview
 
 ---
 
+## 🎧 Voice Comparison Lab (pick Jarvis's TTS provider by ear)
+
+Open it from **VOICE → Compare TTS providers by ear**, or go to `/#/voice-compare` (unlock the HUD first).
+It plays the same test lines through each provider so you can compare them side by side, including a blind
+test with star ratings. It is separate from the live voice: `api/tts.js` and the audio engine are unchanged.
+
+- Each line is generated **once per voice** and cached in your browser (IndexedDB) and on the server (temp dir),
+  so replays cost nothing. ↻ regenerates a clip and calls the provider again.
+- Shown per play: time to first audio, total generation time, characters, and estimated cost at list price.
+- `<short pause>` is handled like the live pipeline: sent as-is to Gemini, turned into a comma pause elsewhere.
+
+### Provider keys
+
+Set these as **server-side** environment variables: in `.env` / `.env.local` for `npm run dev`, and in
+Vercel → Project → Settings → Environment Variables for deployments. Never prefix them with `VITE_`, which
+would bundle them into the browser. A provider whose key isn't set shows as "not configured".
+
+| Provider (voices) | Env vars | How to get a key | Free tier | List price |
+|---|---|---|---|---|
+| Google Cloud TTS, Chirp 3 HD (`en-GB-Chirp3-HD-Iapetus`, `-Algieba`) | `GOOGLE_TTS_API_KEY` | Google Cloud console → create/select a project → enable **Cloud Text-to-Speech API** → APIs & Services → Credentials → **Create API key** (restrict it to the Text-to-Speech API). Billing must be enabled. | 1M Chirp 3 HD characters/month | $30 / 1M chars |
+| Azure Speech (`en-GB-RyanNeural`, `en-GB-ThomasNeural`) | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` (e.g. `eastus`) | Azure portal → Create resource → **Speech** → pricing tier **Free F0** → Keys and Endpoint → copy Key 1 and the Location/Region. | F0: 0.5M neural chars/month | $15 / 1M chars |
+| OpenAI `gpt-4o-mini-tts` (`cedar`, `ash`) | `OPENAI_API_KEY` | platform.openai.com → API keys → **Create new secret key** (needs prepaid credit). | None | ~$0.015 / min of audio ($12 / 1M audio tokens) |
+| Deepgram Aura-2 (`aura-2-draco-en`, `aura-2-hyperion-en`) | `DEEPGRAM_API_KEY` | console.deepgram.com → sign up → API Keys → **Create a New API Key**. | $200 free credit, no card | $0.030 / 1K chars |
+| Edge TTS (`en-GB-RyanNeural`, current fallback) | none | Not needed. | Free | Free (unofficial endpoint, no SLA) |
+| Gemini 3.8 Flash TTS (your designed voice) | `GEMINI_API_KEY` | aistudio.google.com → **Get API key**. The lab also uses the key you saved in the HUD's voice settings. | Free tier is rate-limited (about 100 requests/day) | $9 / 1M audio tokens (~$0.0135 / min) |
+
+Notes:
+- Chirp 3 HD male voices available in en-GB: Achird, Algenib, Algieba, Alnilam, Charon, Enceladus, Fenrir,
+  Iapetus, Orus, Puck, Rasalgethi, Sadachbia, Sadaltager, Schedar, Umbriel, Zubenelgenubi. Change which two
+  are tested with `VOICE_LAB_GOOGLE_VOICES=Iapetus,Algieba`.
+- Deepgram Aura-2 has only one UK-English male voice (Draco). The second row uses Hyperion, an Australian male.
+- Streaming: Azure, OpenAI and Deepgram stream raw PCM and play as it arrives; Edge streams MP3 (played
+  progressively through Media Source Extensions). Google Chirp 3 HD streams only over gRPC, so this page
+  uses its REST API (not streamed). Gemini is not streamed, matching the live pipeline.
+- Prices are list prices checked in November 2026; free tiers aren't subtracted in the page's estimates.
+- The lab endpoint requires the HUD passcode header. That deters casual use of your keys but isn't strong
+  auth, since the passcode ships in the client bundle.
+
+---
+
 ## 🛠️ Tech Stack
 - **Framework**: React 19 + TypeScript + Vite 6
 - **Styling**: Tailwind CSS v4 + Custom HUD Scanline & CRT shaders

@@ -796,6 +796,16 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
               )}
             </div>
 
+            {/* Side-by-side provider comparison (separate page; doesn't touch the live voice) */}
+            <a
+              href="#/voice-compare"
+              onClick={() => setShowVoiceModal(false)}
+              className="flex items-center justify-between p-3 rounded-xl border border-amber-700/70 bg-black/50 hover:border-amber-400 text-xs font-orbitron text-amber-200"
+            >
+              <span>COMPARE TTS PROVIDERS BY EAR</span>
+              <span className="text-amber-400">→</span>
+            </a>
+
             {/* Voice Lab: remix voice identity, delivery direction, and EQ polish */}
             <VoiceLab
               onPreview={(text) => onPreviewVoice?.(text)}

@@ -2,6 +2,9 @@
   "functions": {
     "api/tts.js": {
       "maxDuration": 30
+    },
+    "api/voice-lab.js": {
+      "maxDuration": 60
     }
   }
 }
