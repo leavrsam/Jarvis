@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, EyeOff, Loader2, Play, RefreshCw, Star, Square } from 'lucide-react';
 import {
+  DEFAULT_TUNING,
   LabMetrics,
   LabVoice,
+  VoiceTuning,
   cellKey,
   loadAllCachedMetrics,
   playCell,
@@ -17,6 +19,23 @@ const TEST_LINES = [
 ];
 
 const BLIND_STORAGE_KEY = 'jarvis_voice_lab_blind';
+const TUNING_STORAGE_KEY = 'jarvis_voice_lab_tuning';
+
+function loadTunings(): Record<string, VoiceTuning> {
+  try {
+    return JSON.parse(localStorage.getItem(TUNING_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+const EXPRESSIVITY_LABELS: Record<number, string> = {
+  [-2]: '-2 very calm',
+  [-1]: '-1 calm',
+  0: '0 default',
+  1: '+1 lively',
+  2: '+2 animated',
+};
 
 interface BlindState {
   order: string[];
@@ -81,6 +100,17 @@ export const VoiceComparisonPage: React.FC = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [blind, setBlind] = useState<BlindState | null>(() => loadBlindState());
+  // Per-voice delivery tuning (Deepgram speed / Flux expressivity); each setting is its own cached clip
+  const [tunings, setTunings] = useState<Record<string, VoiceTuning>>(() => loadTunings());
+  const tuningFor = useCallback((v: LabVoice) => (v.tunable ? tunings[v.id] || DEFAULT_TUNING : undefined), [tunings]);
+  const setTuning = (id: string, patch: Partial<VoiceTuning>) =>
+    setTunings((all) => {
+      const next = { ...all, [id]: { ...(all[id] || DEFAULT_TUNING), ...patch } };
+      try {
+        localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
 
   useEffect(() => {
     const headers: Record<string, string> = { 'x-jarvis-secret': secret };
@@ -116,7 +146,8 @@ export const VoiceComparisonPage: React.FC = () => {
 
   const handlePlay = useCallback(
     async (voice: LabVoice, text: string, regenerate: boolean) => {
-      const key = cellKey(voice, text, gemini);
+      const tuning = tuningFor(voice);
+      const key = cellKey(voice, text, gemini, tuning);
       setBusy(key);
       setErrors((e) => {
         const next = { ...e };
@@ -124,7 +155,7 @@ export const VoiceComparisonPage: React.FC = () => {
         return next;
       });
       try {
-        const res = await playCell({ voice, text, regenerate, gemini, secret });
+        const res = await playCell({ voice, text, regenerate, gemini, secret, tuning });
         setResults((r) => ({ ...r, [key]: { metrics: res.metrics, fromCache: res.fromBrowserCache } }));
       } catch (err) {
         setErrors((e) => ({ ...e, [key]: String((err as Error).message || err) }));
@@ -132,7 +163,7 @@ export const VoiceComparisonPage: React.FC = () => {
         setBusy((b) => (b === key ? null : b));
       }
     },
-    [gemini, secret]
+    [gemini, secret, tuningFor]
   );
 
   const startBlind = () => {
@@ -145,7 +176,7 @@ export const VoiceComparisonPage: React.FC = () => {
     return rows
       .map((v, i) => {
         const ms = lines
-          .map((t) => results[cellKey(v, t, gemini)]?.metrics)
+          .map((t) => results[cellKey(v, t, gemini, tuningFor(v))]?.metrics)
           .filter((m): m is LabMetrics => Boolean(m && !m.serverCacheHit));
         const avg = (pick: (m: LabMetrics) => number) =>
           ms.length ? ms.reduce((s, m) => s + pick(m), 0) / ms.length : null;
@@ -161,7 +192,7 @@ export const VoiceComparisonPage: React.FC = () => {
         };
       })
       .sort((a, b) => b.rating - a.rating);
-  }, [blind, rows, lines, results, gemini]);
+  }, [blind, rows, lines, results, gemini, tuningFor]);
 
   if (!secret) {
     return (
@@ -272,6 +303,13 @@ export const VoiceComparisonPage: React.FC = () => {
                       <div className="text-[10px] text-amber-500 mt-1" title={voice.streamNote}>
                         {voice.streaming ? '● streams' : '○ no streaming'} · {voice.priceText}
                       </div>
+                      {voice.tunable && voice.configured && (
+                        <TuningControls
+                          voice={voice}
+                          tuning={tuningFor(voice) || DEFAULT_TUNING}
+                          onChange={(patch) => setTuning(voice.id, patch)}
+                        />
+                      )}
                       {!voice.configured && (
                         <div className="text-[10px] text-red-300 mt-1">
                           Not configured: set {voice.envVars.join(' + ')}
@@ -281,7 +319,7 @@ export const VoiceComparisonPage: React.FC = () => {
                   )}
                 </td>
                 {lines.map((line) => {
-                  const key = cellKey(voice, line, gemini);
+                  const key = cellKey(voice, line, gemini, tuningFor(voice));
                   const result = results[key];
                   const isBusy = busy === key;
                   const hideNumbers = Boolean(blind && !blind.revealed);
@@ -430,6 +468,50 @@ const MetricsView: React.FC<{ metrics: LabMetrics; fromCache: boolean }> = ({ me
     </div>
   </div>
 );
+
+const TuningControls: React.FC<{
+  voice: LabVoice;
+  tuning: VoiceTuning;
+  onChange: (patch: Partial<VoiceTuning>) => void;
+}> = ({ voice, tuning, onChange }) => {
+  const t = voice.tunable!;
+  const speeds: number[] = [];
+  for (let v = t.speedMin; v <= t.speedMax + 1e-9; v += 0.05) speeds.push(Math.round(v * 100) / 100);
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      <label className="text-[10px] text-amber-400">
+        speed{' '}
+        <select
+          value={tuning.speed}
+          onChange={(e) => onChange({ speed: Number(e.target.value) })}
+          className="bg-black border border-amber-800 rounded px-1 py-0.5 text-amber-200"
+        >
+          {speeds.map((v) => (
+            <option key={v} value={v}>
+              {v.toFixed(2)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {t.expressivity && (
+        <label className="text-[10px] text-amber-400">
+          delivery{' '}
+          <select
+            value={tuning.expressivity}
+            onChange={(e) => onChange({ expressivity: Number(e.target.value) })}
+            className="bg-black border border-amber-800 rounded px-1 py-0.5 text-amber-200"
+          >
+            {[-2, -1, 0, 1, 2].map((v) => (
+              <option key={v} value={v}>
+                {EXPRESSIVITY_LABELS[v]}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </div>
+  );
+};
 
 const StarRating: React.FC<{ value: number; onChange: (n: number) => void }> = ({ value, onChange }) => (
   <div className="flex gap-0.5" role="radiogroup" aria-label="Rating">

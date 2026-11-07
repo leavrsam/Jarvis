@@ -14,7 +14,17 @@ export interface LabVoice {
   costPerSecond: number | null;
   configured: boolean;
   envVars: string[];
+  /** Delivery controls the provider accepts (Deepgram only) */
+  tunable?: { speedMin: number; speedMax: number; expressivity: boolean };
 }
+
+export interface VoiceTuning {
+  speed: number;
+  /** -2 calm ... +2 animated (Deepgram Flux only) */
+  expressivity: number;
+}
+
+export const DEFAULT_TUNING: VoiceTuning = { speed: 1, expressivity: 0 };
 
 export interface LabMetrics {
   /** Request sent -> first audio audible */
@@ -102,9 +112,15 @@ export async function loadAllCachedMetrics(): Promise<Record<string, LabMetrics>
   }
 }
 
-export function cellKey(voice: LabVoice, text: string, gemini: { voice: string; style: string }): string {
+export function cellKey(
+  voice: LabVoice,
+  text: string,
+  gemini: { voice: string; style: string },
+  tuning?: VoiceTuning
+): string {
   const extra = voice.provider === 'gemini' ? `|${gemini.voice}|${gemini.style}` : '';
-  return `${voice.id}|${voice.voiceName}${extra}|${text}`;
+  const tune = voice.tunable && tuning ? `|s${tuning.speed}|e${voice.tunable.expressivity ? tuning.expressivity : 0}` : '';
+  return `${voice.id}|${voice.voiceName}${extra}${tune}|${text}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,9 +251,10 @@ export async function playCell(opts: {
   regenerate: boolean;
   gemini: { voice: string; style: string; apiKey: string };
   secret: string;
+  tuning?: VoiceTuning;
 }): Promise<PlayResult> {
-  const { voice, text, regenerate, gemini, secret } = opts;
-  const key = cellKey(voice, text, gemini);
+  const { voice, text, regenerate, gemini, secret, tuning } = opts;
+  const key = cellKey(voice, text, gemini, tuning);
 
   if (!regenerate) {
     const cached = await idbGet(key);
@@ -267,6 +284,7 @@ export async function playCell(opts: {
       regenerate,
       geminiVoice: gemini.voice,
       geminiStyle: gemini.style,
+      tuning: voice.tunable ? tuning || DEFAULT_TUNING : undefined,
     }),
   });
   if (!response.ok || !response.body) {

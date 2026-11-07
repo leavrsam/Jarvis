@@ -90,17 +90,58 @@ export const VOICES = [
     streamNote: 'Streams raw PCM over HTTP as it is generated.',
     priceText: '$0.030 / 1K characters ($200 free credit)',
     costPerChar: 0.03 / 1000,
+    // Aura-2 has no style control; speed is the only delivery knob
+    tunable: { speedMin: 0.7, speedMax: 1.5, expressivity: false },
+  },
+  // Deepgram Flux TTS: Deepgram's newer model, with eight British voices (seven male),
+  // plus speed, an "expressivity" (calm <-> animated) dial and native pause markers.
+  {
+    id: 'flux-jack',
+    provider: 'deepgram-flux',
+    providerName: 'Deepgram Flux TTS',
+    voiceName: 'flux-jack-en',
+    accent: 'British English, male: clear, professional, thoughtful',
+    streaming: false,
+    streamNote: 'Not streamed here: Flux streams only over WebSocket; this uses the batch REST API.',
+    priceText: '$0.045 / 1K characters (uses the $200 credit)',
+    costPerChar: 0.045 / 1000,
+    tunable: { speedMin: 0.5, speedMax: 1.5, expressivity: true },
   },
   {
-    id: 'deepgram-hyperion',
-    provider: 'deepgram',
-    providerName: 'Deepgram Aura-2',
-    voiceName: 'aura-2-hyperion-en',
-    accent: 'Australian English, male (no second UK male exists)',
-    streaming: true,
-    streamNote: 'Streams raw PCM over HTTP as it is generated.',
-    priceText: '$0.030 / 1K characters ($200 free credit)',
-    costPerChar: 0.03 / 1000,
+    id: 'flux-tanner',
+    provider: 'deepgram-flux',
+    providerName: 'Deepgram Flux TTS',
+    voiceName: 'flux-tanner-en',
+    accent: 'British English, male: calm, confident, professional',
+    streaming: false,
+    streamNote: 'Not streamed here: Flux streams only over WebSocket; this uses the batch REST API.',
+    priceText: '$0.045 / 1K characters (uses the $200 credit)',
+    costPerChar: 0.045 / 1000,
+    tunable: { speedMin: 0.5, speedMax: 1.5, expressivity: true },
+  },
+  {
+    id: 'flux-colin',
+    provider: 'deepgram-flux',
+    providerName: 'Deepgram Flux TTS',
+    voiceName: 'flux-colin-en',
+    accent: 'British English, male: warm, reassuring, authoritative',
+    streaming: false,
+    streamNote: 'Not streamed here: Flux streams only over WebSocket; this uses the batch REST API.',
+    priceText: '$0.045 / 1K characters (uses the $200 credit)',
+    costPerChar: 0.045 / 1000,
+    tunable: { speedMin: 0.5, speedMax: 1.5, expressivity: true },
+  },
+  {
+    id: 'flux-rufus',
+    provider: 'deepgram-flux',
+    providerName: 'Deepgram Flux TTS',
+    voiceName: 'flux-rufus-en',
+    accent: 'British English, male: intelligent, gentle delivery',
+    streaming: false,
+    streamNote: 'Not streamed here: Flux streams only over WebSocket; this uses the batch REST API.',
+    priceText: '$0.045 / 1K characters (uses the $200 credit)',
+    costPerChar: 0.045 / 1000,
+    tunable: { speedMin: 0.5, speedMax: 1.5, expressivity: true },
   },
   {
     id: 'edge-ryan',
@@ -132,6 +173,7 @@ const ENV_REQUIREMENTS = {
   azure: ['AZURE_SPEECH_KEY', 'AZURE_SPEECH_REGION'],
   openai: ['OPENAI_API_KEY'],
   deepgram: ['DEEPGRAM_API_KEY'],
+  'deepgram-flux': ['DEEPGRAM_API_KEY'],
   edge: [],
   gemini: ['GEMINI_API_KEY'],
 };
@@ -156,8 +198,16 @@ function isConfigured(provider, req) {
 // Gemini understands inline tags and receives them as-is; every other engine would read
 // them aloud, so they become a comma pause. Mirrors synthesizeWithEdgeFallback.
 // ---------------------------------------------------------------------------
-function textForEngine(text, provider) {
+export function textForEngine(text, provider, tuning) {
   if (provider === 'gemini') return text;
+  // Flux TTS has native pause markers (max 8; only allowed with speed <= 1.15), which are the
+  // closest equivalent to Gemini's tags. Otherwise fall through to the live pipeline's comma pause.
+  if (provider === 'deepgram-flux' && (!tuning || tuning.speed <= 1.15)) {
+    let count = 0;
+    text = text.replace(/<(short|long)? ?pause>/gi, (_m, kind) =>
+      ++count <= 8 ? (kind?.toLowerCase() === 'long' ? ' \\{pause:1s\\} ' : ' \\{pause:500ms\\} ') : ', '
+    );
+  }
   return text
     .replace(/<[^>]{1,40}>/g, ', ')
     .replace(/\s*,\s*([,.!?])/g, '$1')
@@ -266,13 +316,14 @@ const adapters = {
     return { format: 'pcm16', sampleRate: SAMPLE_RATE, chunks: iterateBody(response) };
   },
 
-  async deepgram(voice, text) {
+  async deepgram(voice, text, ctx) {
     const params = new URLSearchParams({
       model: voice.voiceName,
       encoding: 'linear16',
       sample_rate: String(SAMPLE_RATE),
       container: 'none',
     });
+    if (ctx.tuning && ctx.tuning.speed !== 1) params.set('speed', String(ctx.tuning.speed));
     const response = await fetch(`https://api.deepgram.com/v1/speak?${params}`, {
       method: 'POST',
       headers: {
@@ -283,6 +334,29 @@ const adapters = {
     });
     if (!response.ok) throw await upstreamError(response, 'Deepgram');
     return { format: 'pcm16', sampleRate: SAMPLE_RATE, chunks: iterateBody(response) };
+  },
+
+  async 'deepgram-flux'(voice, text, ctx) {
+    const params = new URLSearchParams({
+      model: voice.voiceName,
+      encoding: 'linear16',
+      sample_rate: String(SAMPLE_RATE),
+      container: 'wav',
+    });
+    if (ctx.tuning) {
+      if (ctx.tuning.speed !== 1) params.set('speed', String(ctx.tuning.speed));
+      if (ctx.tuning.expressivity !== 0) params.set('expressivity', String(ctx.tuning.expressivity));
+    }
+    const response = await fetch(`https://api.deepgram.com/v2/speak?${params}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw await upstreamError(response, 'Deepgram Flux');
+    return { format: 'wav', chunks: [new Uint8Array(await response.arrayBuffer())] };
   },
 
   async edge(voice, text) {
@@ -428,8 +502,22 @@ export default async function handler(req, res) {
     return;
   }
 
-  const text = textForEngine(rawText, voice.provider);
+  // Delivery tuning for voices that support it, clamped to each API's accepted values
+  let tuning = null;
+  if (voice.tunable) {
+    const t = params.tuning || {};
+    const speedRaw = Number(t.speed);
+    const speed = Number.isFinite(speedRaw)
+      ? Math.min(voice.tunable.speedMax, Math.max(voice.tunable.speedMin, Math.round(speedRaw * 20) / 20))
+      : 1;
+    const exprRaw = Math.round(Number(t.expressivity));
+    const expressivity = voice.tunable.expressivity && Number.isFinite(exprRaw) ? Math.min(2, Math.max(-2, exprRaw)) : 0;
+    tuning = { speed, expressivity };
+  }
+
+  const text = textForEngine(rawText, voice.provider, tuning);
   const ctx = {
+    tuning,
     geminiKey: geminiKey(req),
     geminiVoice: (params.geminiVoice || DEFAULT_GEMINI_VOICE).toString().trim(),
     geminiStyle: (params.geminiStyle || DEFAULT_GEMINI_STYLE).toString().trim().slice(0, 300),
@@ -439,6 +527,7 @@ export default async function handler(req, res) {
     voice.voiceName,
     text,
     voice.provider === 'gemini' ? [ctx.geminiVoice, ctx.geminiStyle] : null,
+    tuning,
   ]);
 
   // Cache hit: no provider call at all

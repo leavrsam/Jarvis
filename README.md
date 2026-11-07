@@ -101,7 +101,8 @@ would bundle them into the browser. A provider whose key isn't set shows as "not
 | Google Cloud TTS, Chirp 3 HD (`en-GB-Chirp3-HD-Iapetus`, `-Algieba`) | `GOOGLE_TTS_API_KEY` | Google Cloud console → create/select a project → enable **Cloud Text-to-Speech API** → APIs & Services → Credentials → **Create API key** (restrict it to the Text-to-Speech API). Billing must be enabled. | 1M Chirp 3 HD characters/month | $30 / 1M chars |
 | Azure Speech (`en-GB-RyanNeural`, `en-GB-ThomasNeural`) | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` (e.g. `eastus`) | Azure portal → Create resource → **Speech** → pricing tier **Free F0** → Keys and Endpoint → copy Key 1 and the Location/Region. | F0: 0.5M neural chars/month | $15 / 1M chars |
 | OpenAI `gpt-4o-mini-tts` (`cedar`, `ash`) | `OPENAI_API_KEY` | platform.openai.com → API keys → **Create new secret key** (needs prepaid credit). | None | ~$0.015 / min of audio ($12 / 1M audio tokens) |
-| Deepgram Aura-2 (`aura-2-draco-en`, `aura-2-hyperion-en`) | `DEEPGRAM_API_KEY` | console.deepgram.com → sign up → API Keys → **Create a New API Key**. | $200 free credit, no card | $0.030 / 1K chars |
+| Deepgram Aura-2 (`aura-2-draco-en`) | `DEEPGRAM_API_KEY` | console.deepgram.com → sign up → API Keys → **Create a New API Key**. | $200 free credit, no card | $0.030 / 1K chars |
+| Deepgram Flux TTS (`flux-jack-en`, `flux-tanner-en`, `flux-colin-en`, `flux-rufus-en`) | `DEEPGRAM_API_KEY` (same key) | Same as above. | Uses the same credit | $0.045 / 1K chars |
 | Edge TTS (`en-GB-RyanNeural`, current fallback) | none | Not needed. | Free | Free (unofficial endpoint, no SLA) |
 | Gemini 3.8 Flash TTS (your designed voice) | `GEMINI_API_KEY` | aistudio.google.com → **Get API key**. The lab also uses the key you saved in the HUD's voice settings. | Free tier is rate-limited (about 100 requests/day) | $9 / 1M audio tokens (~$0.0135 / min) |
 
@@ -109,10 +110,15 @@ Notes:
 - Chirp 3 HD male voices available in en-GB: Achird, Algenib, Algieba, Alnilam, Charon, Enceladus, Fenrir,
   Iapetus, Orus, Puck, Rasalgethi, Sadachbia, Sadaltager, Schedar, Umbriel, Zubenelgenubi. Change which two
   are tested with `VOICE_LAB_GOOGLE_VOICES=Iapetus,Algieba`.
-- Deepgram Aura-2 has only one UK-English male voice (Draco). The second row uses Hyperion, an Australian male.
-- Streaming: Azure, OpenAI and Deepgram stream raw PCM and play as it arrives; Edge streams MP3 (played
+- Deepgram Aura-2 has only one UK-English male voice (Draco), and its only delivery control is speed.
+  Deepgram's newer **Flux TTS** has seven British male voices (Kit, Colin, Sean, Conor, Jack, Rufus, Tanner);
+  four are in the lab. Each Deepgram row has a **speed** control, and Flux rows also have **delivery**
+  (Deepgram's beta "expressivity", -2 calm to +2 animated). Each setting is cached as its own clip. Flux
+  also gets real pauses for `<short pause>` (500 ms) and `<long pause>` (1 s), unless speed is above 1.15,
+  which Deepgram doesn't allow together with pauses.
+- Streaming: Azure, OpenAI and Deepgram Aura-2 stream raw PCM and play as it arrives; Edge streams MP3 (played
   progressively through Media Source Extensions). Google Chirp 3 HD streams only over gRPC, so this page
-  uses its REST API (not streamed). Gemini is not streamed, matching the live pipeline.
+  uses its REST API (not streamed); Flux likewise streams only over WebSocket, so its batch API is used. Gemini is not streamed, matching the live pipeline.
 - Prices are list prices checked in November 2026; free tiers aren't subtracted in the page's estimates.
 - The lab endpoint requires the HUD passcode header. That deters casual use of your keys but isn't strong
   auth, since the passcode ships in the client bundle.
