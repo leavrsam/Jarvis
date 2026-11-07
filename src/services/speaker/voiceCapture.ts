@@ -5,6 +5,8 @@
 // in memory only) while Jarvis is unlocked. Each chunk is time-stamped so the caller can pull out
 // the user's utterance and skip anything recorded while Jarvis himself was talking.
 
+import { micConstraints, onMicSettingsChange } from '../micSettings';
+
 const CHUNK = 2048;
 const KEEP_MS = 15_000;
 
@@ -50,6 +52,22 @@ class VoiceCapture {
     return () => this.listeners.delete(listener);
   }
 
+  constructor() {
+    // Echo cancellation setting changed: reopen the mic with the new settings
+    if (typeof window !== 'undefined') {
+      onMicSettingsChange(() => {
+        if (!this.isRunning()) return;
+        this.stop();
+        void this.start();
+      });
+    }
+  }
+
+  /** The live mic stream (shared with the visualizer so only one mic stream is open) */
+  getStream(): MediaStream | null {
+    return this.stream;
+  }
+
   get sampleRate(): number {
     return this.ctx?.sampleRate ?? 48000;
   }
@@ -68,7 +86,7 @@ class VoiceCapture {
     this.starting = (async () => {
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          audio: micConstraints(),
         });
         const AudioCtx =
           window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;

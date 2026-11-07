@@ -23,6 +23,7 @@ import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
 import { builtInStats, getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
 import { getListeningEngine, ListeningEngine, setListeningEngine } from '../services/listeningEngine';
+import { EchoCancelMode, getEchoCancelMode, isAndroid, setEchoCancelMode, wantsEchoCancellation } from '../services/micSettings';
 
 interface VoiceBiometricsModalProps {
   isOpen: boolean;
@@ -270,6 +271,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
                 </label>
               ))}
             </div>
+            <EchoCancelSetting />
             {engine === 'builtin' ? <BuiltInStatus /> : (
               <>
                 <ListenerStatus micPaused={micPaused} />
@@ -670,6 +672,35 @@ const ListenerStatus: React.FC<{ micPaused: boolean }> = ({ micPaused }) => {
           )}
         </>
       )}
+    </div>
+  );
+};
+
+const EchoCancelSetting: React.FC = () => {
+  const [mode, setMode] = useState<EchoCancelMode>(() => getEchoCancelMode());
+  const active = wantsEchoCancellation();
+  return (
+    <div className="p-2 rounded border border-amber-900 text-[10px] space-y-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-amber-200 font-bold">Mic echo cancellation</span>
+        {(['auto', 'off', 'on'] as EchoCancelMode[]).map((m) => (
+          <button
+            key={m}
+            onClick={() => {
+              setEchoCancelMode(m);
+              setMode(m);
+            }}
+            className={`px-2 py-0.5 rounded border font-orbitron ${mode === m ? 'border-amber-400 bg-amber-900/50 text-amber-100' : 'border-amber-800 text-amber-500'}`}
+          >
+            {m === 'auto' ? `AUTO (${isAndroid() ? 'off on Android' : 'on'})` : m.toUpperCase()}
+          </button>
+        ))}
+        <span className="text-amber-500">now {active ? 'on' : 'off'}</span>
+      </div>
+      <div className="text-amber-500">
+        On Android, echo cancellation puts the phone in call mode and plays Jarvis through the phone's own speaker, even
+        with DeX / HDMI. Keep it off to hear him on the TV. Turn it on only if he keeps hearing himself.
+      </div>
     </div>
   );
 };

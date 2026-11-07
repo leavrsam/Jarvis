@@ -1,5 +1,7 @@
 // Singleton Web Audio API & Gemini 3.8 Expressive TTS Engine for J.A.R.V.I.S.
 import { voiceBiometrics } from './voiceBiometrics';
+import { voiceCapture } from './speaker/voiceCapture';
+import { micConstraints } from './micSettings';
 import { stripPauseTags } from './replyStream';
 import { notifyAuthRequired } from './auth';
 
@@ -141,6 +143,8 @@ class JarvisAudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private micStream: MediaStream | null = null;
+  /** False when micStream is voice ID's shared stream (not ours to stop) */
+  private micStreamOwned = true;
   private micSource: MediaStreamAudioSourceNode | null = null;
 
   // Active Neural TTS playback nodes
@@ -483,14 +487,25 @@ class JarvisAudioEngine {
       this.ensureContext();
       if (!this.analyser) return false;
 
+      // The shared stream was reopened (e.g. mic settings changed): follow the new one
+      if (this.micStream && !this.micStreamOwned && this.micStream !== voiceCapture.getStream()) {
+        try {
+          this.micSource?.disconnect();
+        } catch {}
+        this.micSource = null;
+        this.micStream = null;
+      }
       if (!this.micStream) {
-        this.micStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        // Reuse the voice ID / wake word stream when it's open: a second mic stream can starve
+        // the first on some phones, and on Android may switch audio into call mode (phone speaker)
+        const shared = voiceCapture.getStream();
+        if (shared) {
+          this.micStream = shared;
+          this.micStreamOwned = false;
+        } else {
+          this.micStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+          this.micStreamOwned = true;
+        }
       }
 
       if (this.ctx && this.micStream && !this.micSource) {
@@ -514,7 +529,7 @@ class JarvisAudioEngine {
       this.micSource = null;
     }
     if (this.micStream) {
-      this.micStream.getTracks().forEach((track) => track.stop());
+      if (this.micStreamOwned) this.micStream.getTracks().forEach((track) => track.stop());
       this.micStream = null;
     }
     if (this.currentState === 'listening') {
