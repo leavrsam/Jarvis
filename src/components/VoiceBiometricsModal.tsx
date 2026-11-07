@@ -697,6 +697,16 @@ const EchoCancelSetting: React.FC = () => {
         ))}
         <span className="text-amber-500">now {active ? 'on' : 'off'}</span>
       </div>
+      <div className="text-amber-500 font-mono-tech">
+        Mic opened with:{' '}
+        {(() => {
+          const t = voiceCapture.getStream()?.getAudioTracks()[0];
+          if (!t) return 'mic not open';
+          const st = t.getSettings();
+          const f = (v: unknown) => (v === undefined ? '?' : v ? 'on' : 'off');
+          return `echo cancel ${f(st.echoCancellation)} · noise suppression ${f(st.noiseSuppression)} · auto gain ${f(st.autoGainControl)}`;
+        })()}
+      </div>
       <div className="text-amber-500">
         On Android, echo cancellation puts the phone in call mode and plays Jarvis through the phone's own speaker, even
         with DeX / HDMI. Keep it off to hear him on the TV. Turn it on only if he keeps hearing himself.

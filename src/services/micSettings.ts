@@ -31,7 +31,11 @@ export function wantsEchoCancellation(): boolean {
 }
 
 export function micConstraints(): MediaTrackConstraints {
-  return { channelCount: 1, echoCancellation: wantsEchoCancellation(), noiseSuppression: true, autoGainControl: true };
+  const aec = wantsEchoCancellation();
+  // On Android the phone's built-in noise suppression / auto gain can also switch on call mode,
+  // so without echo cancellation the mic is opened raw there
+  const processing = aec || !isAndroid();
+  return { channelCount: 1, echoCancellation: aec, noiseSuppression: processing, autoGainControl: processing };
 }
 
 export function setEchoCancelMode(mode: EchoCancelMode) {
