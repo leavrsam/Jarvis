@@ -93,6 +93,21 @@ npm run preview
 
 ---
 
+## 🔒 Server Route Protection
+
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`) share `api/_lib/requestGuard.js`:
+
+- **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
+  `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
+  No CORS headers are sent, so other sites' pages can't call these routes. Add extra origins with
+  `JARVIS_ALLOWED_ORIGINS` (comma-separated) if you ever need to.
+- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min
+  (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
+  and casual abuse rather than acting as one global limit.
+- `/api/voice-lab` additionally requires the HUD passcode header.
+
+---
+
 ## 🎧 Voice Comparison Lab (pick Jarvis's TTS provider by ear)
 
 Open it from **VOICE → Compare TTS providers by ear**, or go to `/#/voice-compare` (unlock the HUD first).

@@ -7,58 +7,11 @@
 // The request body is forwarded byte for byte, so speaker / speakerConfidence /
 // isAuthorizedOwner arrive at n8n exactly as the app set them.
 
+import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
+
 const MAX_BODY_BYTES = 16 * 1024;
-const RATE_LIMIT = 30; // requests per IP per minute
-const RATE_WINDOW_MS = 60_000;
+const limiter = createRateLimiter(30); // requests per IP per minute
 const UPSTREAM_TIMEOUT_MS = 55_000; // just under the function's 60s limit
-
-// Per-IP sliding window. In-memory, so it applies per server instance (good enough to stop a
-// runaway loop or casual abuse; not a distributed limiter).
-const hits = new Map();
-
-function clientIp(req) {
-  const forwarded = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
-  return forwarded || (req.headers['x-real-ip'] || '').toString() || req.socket?.remoteAddress || 'unknown';
-}
-
-function rateLimited(ip) {
-  const now = Date.now();
-  const recent = (hits.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS);
-  if (recent.length >= RATE_LIMIT) {
-    hits.set(ip, recent);
-    return Math.ceil((RATE_WINDOW_MS - (now - recent[0])) / 1000);
-  }
-  recent.push(now);
-  hits.set(ip, recent);
-  if (hits.size > 5000) {
-    for (const [key, times] of hits) if (!times.some((t) => now - t < RATE_WINDOW_MS)) hits.delete(key);
-  }
-  return 0;
-}
-
-/**
- * Same-origin only. Browsers send Origin on POST and Sec-Fetch-Site on all modern fetches;
- * a request from another site (or a script without these headers) is refused.
- */
-function isSameOrigin(req) {
-  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString().split(',')[0].trim();
-  const origin = (req.headers.origin || '').toString();
-  const fetchSite = (req.headers['sec-fetch-site'] || '').toString();
-  const extra = (process.env.JARVIS_ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
-
-  if (origin) {
-    if (extra.includes(origin)) return true;
-    try {
-      return new URL(origin).host === host;
-    } catch {
-      return false;
-    }
-  }
-  return fetchSite === 'same-origin';
-}
 
 function sendJson(res, status, obj, extraHeaders = {}) {
   res.statusCode = status;
@@ -92,15 +45,7 @@ export default async function handler(req, res) {
     sendJson(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
     return;
   }
-  if (!isSameOrigin(req)) {
-    sendJson(res, 403, { error: 'forbidden' });
-    return;
-  }
-  const retryAfter = rateLimited(clientIp(req));
-  if (retryAfter) {
-    sendJson(res, 429, { error: 'rate_limited' }, { 'Retry-After': String(retryAfter) });
-    return;
-  }
+  if (!guardRequest(req, res, limiter)) return;
 
   const webhookUrl = (process.env.JARVIS_WEBHOOK_URL || '').trim();
   const secret = (process.env.JARVIS_WEBHOOK_SECRET || '').trim();

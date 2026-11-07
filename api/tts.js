@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { MsEdgeTTS, OUTPUT_FORMAT, ProsodyOptions } from 'msedge-tts';
+import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
 
 const ALLOWED_EDGE_VOICES = new Set([
   'en-GB-RyanNeural',
@@ -325,19 +326,13 @@ async function synthesizeWithEdgeFallback(params) {
   }
 }
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-gemini-api-key');
-  res.setHeader(
-    'Access-Control-Expose-Headers',
-    'X-TTS-Engine, X-Gemini-Voice-Id, X-TTS-Duration-Ms, X-TTS-Error, X-TTS-Path, X-TTS-Format, X-TTS-Sample-Rate, X-TTS-First-Audio-Ms'
-  );
+// Only this app may use the endpoint (it spends the server's Gemini quota and money):
+// same-origin requests only, and at most 60 per IP per minute. A normal reply uses ~2-3.
+const ttsLimiter = createRateLimiter(60);
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+export default async function handler(req, res) {
+  // No CORS headers: other sites' pages can't call this. (Previously Access-Control-Allow-Origin: *)
+  if (!guardRequest(req, res, ttsLimiter)) return;
 
   try {
     const params = req.method === 'POST' ? req.body || {} : req.query || {};
