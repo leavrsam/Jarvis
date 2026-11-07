@@ -116,14 +116,16 @@ export interface SpeechDiagnostic {
   fallback: boolean;
 }
 
-// Gemini TTS request policy: per-sentence requests, three at a time, one retry in the same voice.
-const MAX_GEMINI_IN_FLIGHT = 3;
+// Gemini TTS request policy: per-sentence requests, two at a time, one retry in the same voice.
+const MAX_GEMINI_IN_FLIGHT = 2;
 const GEMINI_ATTEMPTS = 2;
 const GEMINI_SERVER_TIMEOUT_MS = 15000;
 
 // Short holding phrases, pre-synthesized so they play with zero latency
-const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.', 'Just a moment, sir.', 'On it, sir.'];
-const ACK_PHRASES_GUEST = ['One moment, please.', 'Just a moment.'];
+// Kept few: each is a Gemini request the first time (then saved on the device), and the TTS
+// rate limit is shared with real replies.
+const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.'];
+const ACK_PHRASES_GUEST = ['One moment, please.'];
 
 class JarvisAudioEngine {
   private ctx: AudioContext | null = null;
@@ -664,7 +666,7 @@ class JarvisAudioEngine {
     body: Record<string, unknown>,
     signal: AbortSignal,
     timeoutMs: number
-  ): Promise<{ response: Response | null; timedOut: boolean; error: string }> {
+  ): Promise<{ response: Response | null; timedOut: boolean; error: string; status: number }> {
     const timeoutController = new AbortController();
     const onOuterAbort = () => timeoutController.abort();
     signal.addEventListener('abort', onOuterAbort);
@@ -685,15 +687,16 @@ class JarvisAudioEngine {
           response.headers.get('X-TTS-Error') ||
           (await response.json().catch(() => ({})))?.details ||
           `HTTP ${response.status}`;
-        return { response: null, timedOut: false, error: String(reason) };
+        return { response: null, timedOut: false, error: String(reason), status: response.status };
       }
-      return { response, timedOut: false, error: '' };
+      return { response, timedOut: false, error: '', status: response.status };
     } catch (err) {
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       return {
         response: null,
         timedOut,
         error: timedOut ? `no audio after ${Math.round(timeoutMs / 1000)}s` : String(err),
+        status: 0,
       };
     } finally {
       clearTimeout(timer);
@@ -801,9 +804,12 @@ class JarvisAudioEngine {
         } else {
           notes.push(`attempt ${attempt}: ${result.error}`);
           // A slow Gemini won't get faster on an immediate retry; don't double the wait.
-          if (result.timedOut) break;
+          if (result.timedOut || result.status === 504 || /timed out/i.test(result.error)) break;
         }
-        if (attempt < GEMINI_ATTEMPTS) await new Promise((r) => setTimeout(r, 400));
+        // Rate limited: back off a little longer before the single retry
+        if (attempt < GEMINI_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, result.status === 429 ? 1500 : 400));
+        }
       }
     }
 
@@ -872,25 +878,80 @@ class JarvisAudioEngine {
     void this.preloadAcknowledgements();
   }
 
+  private ackStorageKey(phrase: string): string {
+    return `jarvis_ack::${this.customDesignedVoiceId}::${this.getEffectiveStyle()}::${phrase}`;
+  }
+
   /**
    * Synthesize the short "holding" phrases ahead of time so they can play instantly.
+   * They're saved on the device per voice + delivery, so after the first time they cost no
+   * Gemini requests at all. Only the Gemini voice is accepted: a holding phrase in the backup
+   * voice would sound wrong, so on failure it's simply skipped and retried later.
    */
   public async preloadAcknowledgements(): Promise<void> {
     if (this.ackPreloadPromise) return this.ackPreloadPromise;
+    const preset = this.selectedPreset;
+    if (preset.provider === 'edge') return;
     const phrases = [...ACK_PHRASES_OWNER, ...ACK_PHRASES_GUEST];
+    const ctx = this.ensureContext();
     const controller = new AbortController();
-    this.ackPreloadPromise = Promise.all(
-      phrases.map(async (phrase) => {
-        if (this.ackBuffers.has(phrase)) return;
+
+    const loadOne = async (phrase: string) => {
+      if (this.ackBuffers.has(phrase)) return;
+      const key = this.ackStorageKey(phrase);
+      try {
+        const stored = localStorage.getItem(key);
+        if (stored) {
+          const bytes = Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
+          this.ackBuffers.set(phrase, await ctx.decodeAudioData(bytes.buffer));
+          return;
+        }
+      } catch {}
+
+      const voice =
+        preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId ? this.customDesignedVoiceId : preset.voice;
+      const result = await this.withGeminiSlot(
+        () =>
+          this.requestTts(
+            {
+              text: phrase,
+              provider: preset.provider,
+              model: preset.model,
+              voice,
+              style: this.getEffectiveStyle(),
+              fallback: false,
+              geminiTimeoutMs: GEMINI_SERVER_TIMEOUT_MS,
+            },
+            controller.signal,
+            GEMINI_SERVER_TIMEOUT_MS + 3000
+          ),
+        'low'
+      );
+      if (!result.response) return;
+      const raw = await result.response.arrayBuffer();
+      if (raw.byteLength < 256) return;
+      this.ackBuffers.set(phrase, await ctx.decodeAudioData(raw.slice(0)));
+      try {
+        let binary = '';
+        const bytes = new Uint8Array(raw);
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        }
+        localStorage.setItem(key, btoa(binary));
+      } catch {
+        // Storage full or unavailable: the clip still works for this session
+      }
+    };
+
+    // One at a time: these are background work and shouldn't add to rate-limit pressure
+    this.ackPreloadPromise = (async () => {
+      for (const phrase of phrases) {
         try {
-          const buffer = await this.fetchSpeechBuffer(phrase, controller.signal, 'low');
-          this.ackBuffers.set(phrase, buffer);
+          await loadOne(phrase);
         } catch {}
-      })
-    ).then(() => {
-      // Retry later if some phrases failed (e.g. first call fell back or network hiccup)
+      }
       if (this.ackBuffers.size < phrases.length) this.ackPreloadPromise = null;
-    });
+    })();
     return this.ackPreloadPromise;
   }
 

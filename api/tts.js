@@ -100,7 +100,7 @@ async function resolveOrCreateDesignedJarvisVoice(ai, customPrompt, baseVoice) {
   return { voiceId: 'Charon', sampleAudio: null };
 }
 
-async function synthesizeWithGemini(apiKey, params) {
+async function synthesizeWithGemini(apiKey, params, timeoutMs = 15000) {
   const ai = new GoogleGenAI({ apiKey });
 
   if (params.action === 'design_voice') {
@@ -162,6 +162,12 @@ async function synthesizeWithGemini(apiKey, params) {
       generation_config: {
         speech_config: [{ voice: voiceId }],
       },
+    }, {
+      // The SDK otherwise silently retries 429/5xx up to 4 times over ~30s, which shows up as
+      // mysterious slowness and keeps hammering the rate limit. Fail fast and report instead;
+      // the timeout also cancels the underlying request rather than leaving it running.
+      retries: { strategy: 'none' },
+      timeout_ms: timeoutMs,
     });
 
     base64Audio = interaction?.output_audio?.data;
@@ -169,7 +175,14 @@ async function synthesizeWithGemini(apiKey, params) {
     path = `interactions ${Date.now() - pathStart}ms`;
   } catch (interactionErr) {
     const failedAfter = Date.now() - pathStart;
+    const status = Number(interactionErr?.status || interactionErr?.statusCode || interactionErr?.code) || 0;
     const reason = String(interactionErr?.message || interactionErr).replace(/[\r\n]+/g, ' ').slice(0, 80);
+    // Rate limits, overload and timeouts won't be fixed by a second API; retrying would double the load.
+    if (status === 429 || status >= 500 || /timed? ?out|abort/i.test(reason)) {
+      const err = new Error(`${status === 429 ? 'Rate limited (429)' : status ? `HTTP ${status}` : 'Timed out'} after ${failedAfter}ms: ${reason}`);
+      err.status = status || 504;
+      throw err;
+    }
     console.warn('[/api/tts] Interactions API synthesis fallback:', reason);
     const fallbackStart = Date.now();
 
@@ -187,6 +200,7 @@ async function synthesizeWithGemini(apiKey, params) {
         },
       ],
       config: {
+        abortSignal: AbortSignal.timeout(Math.max(1000, timeoutMs - failedAfter)),
         responseModalities: ['AUDIO'],
         speechConfig: {
           voiceConfig: {
@@ -346,7 +360,7 @@ export default async function handler(req, res) {
           );
         });
         const result = await Promise.race([
-          synthesizeWithGemini(apiKey, params),
+          synthesizeWithGemini(apiKey, params, geminiTimeoutMs),
           timeoutPromise,
         ]).finally(() => clearTimeout(timeoutHandle));
 
@@ -371,9 +385,10 @@ export default async function handler(req, res) {
           .slice(0, 200);
         console.warn('[/api/tts] Gemini TTS failed:', geminiError);
         if (!allowEdgeFallback) {
+          const status = geminiErr?.status === 429 ? 429 : /timed out/i.test(geminiError) ? 504 : 503;
           res.setHeader('X-TTS-Error', geminiError.replace(/[^\x20-\x7E]/g, ''));
           res.setHeader('X-TTS-Duration-Ms', String(Date.now() - startedAt));
-          res.status(503).json({ error: 'gemini_failed', details: geminiError });
+          res.status(status).json({ error: 'gemini_failed', details: geminiError });
           return;
         }
       }
