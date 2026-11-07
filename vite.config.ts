@@ -88,15 +88,12 @@ export default defineConfig(({ mode }) => {
               body: bodyData ? JSON.parse(bodyData) : {},
             };
 
-            const mockRes = {
-              statusCode: 200,
-              setHeader(k: string, v: string) {
-                res.setHeader(k, v);
-              },
+            // Real Node response plus the Vercel-style helpers the handler uses, so streamed audio
+            // (res.write) reaches the browser chunk by chunk, as it does on Vercel.
+            const mockRes = Object.assign(res, {
               status(code: number) {
-                this.statusCode = code;
                 res.statusCode = code;
-                return this;
+                return mockRes;
               },
               json(obj: unknown) {
                 res.setHeader('Content-Type', 'application/json');
@@ -105,10 +102,7 @@ export default defineConfig(({ mode }) => {
               send(buf: Buffer | string) {
                 res.end(buf);
               },
-              end() {
-                res.end();
-              },
-            };
+            });
 
             await ttsHandler(mockReq, mockRes);
           });

@@ -265,6 +265,19 @@ export const AutoMatchPanel: React.FC<Props> = ({
               </div>
             )}
             {report.expressivityHint && <div>{report.expressivityHint}</div>}
+            {report.after.f0SpreadSt - report.before.f0SpreadSt > 1 && (
+              <div className="text-red-300">
+                The adjustments make the pitch less steady ({fmtSt(report.before.f0SpreadSt)} to{' '}
+                {fmtSt(report.after.f0SpreadSt)}), a sign of processing artifacts. Consider leaving pitch at 0.
+              </div>
+            )}
+            {Math.abs(report.reference.f0Median - report.before.f0Median) / report.reference.f0Median < 0.05 &&
+              Math.abs(report.reference.speechSec - report.before.speechSec) / report.reference.speechSec < 0.05 && (
+                <div className="text-amber-400">
+                  Pitch and pace already match within 5%. Remaining differences are character and phrasing, which
+                  processing can't change.
+                </div>
+              )}
             {report.generated > 0 && <div className="text-amber-500">Generated {report.generated} new clips.</div>}
           </div>
 

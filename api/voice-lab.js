@@ -196,8 +196,8 @@ export const VOICES = [
     providerName: 'Gemini 3.8 Flash TTS (current voice)',
     voiceName: 'Your designed Jarvis voice',
     accent: 'Designed British voice',
-    streaming: false,
-    streamNote: 'Not streamed (the live pipeline does not stream Gemini either).',
+    streaming: true,
+    streamNote: 'Streams raw PCM as it is generated (same as the live pipeline with streaming on).',
     priceText: '$9 / 1M audio tokens (~$0.0135 / minute)',
     // 25 audio tokens per second of speech
     costPerSecond: (25 * 9) / 1e6,
@@ -412,8 +412,9 @@ const adapters = {
   },
 
   async gemini(voice, text, ctx) {
+    // Streamed, like the live pipeline: 24 kHz 16-bit PCM arrives in step.delta audio events
     const ai = new GoogleGenAI({ apiKey: ctx.geminiKey });
-    const interaction = await ai.interactions.create(
+    const stream = await ai.interactions.create(
       {
         model: 'gemini-3.8-flash-tts',
         input: [
@@ -430,18 +431,18 @@ const adapters = {
         ],
         response_format: { type: 'audio' },
         generation_config: { speech_config: [{ voice: ctx.geminiVoice }] },
+        stream: true,
       },
-      { retries: { strategy: 'none' }, timeout_ms: 25000 }
+      { retries: { strategy: 'none' }, timeout_ms: 60000 }
     );
-    const data = interaction?.output_audio?.data;
-    if (!data) throw new Error('Gemini returned no audio');
-    const mime = (interaction?.output_audio?.mime_type || 'audio/wav').toLowerCase();
-    const bytes = new Uint8Array(Buffer.from(data, 'base64'));
-    if (mime.includes('l16') || mime.includes('pcm')) {
-      const rate = Number(/rate=(\d+)/.exec(mime)?.[1]) || SAMPLE_RATE;
-      return { format: 'pcm16', sampleRate: rate, chunks: [bytes] };
+    async function* chunks() {
+      for await (const event of stream) {
+        if (event?.event_type === 'step.delta' && event.delta?.type === 'audio' && event.delta.data) {
+          yield new Uint8Array(Buffer.from(event.delta.data, 'base64'));
+        }
+      }
     }
-    return { format: mime.includes('mpeg') || mime.includes('mp3') ? 'mp3' : 'wav', chunks: [bytes] };
+    return { format: 'pcm16', sampleRate: SAMPLE_RATE, chunks: chunks() };
   },
 };
 

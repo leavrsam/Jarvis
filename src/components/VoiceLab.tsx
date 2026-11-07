@@ -27,6 +27,7 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
   const [remixPrompt, setRemixPrompt] = useState('');
   const [isRemixing, setIsRemixing] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+  const [streaming, setStreaming] = useState<boolean>(() => audioEngine.isStreamingEnabled());
   const [history, setHistory] = useState<string[]>(() => audioEngine.getVoiceHistory());
   const [activeVoice, setActiveVoice] = useState<string>(() => audioEngine.getCustomDesignedVoiceId());
 
@@ -148,6 +149,25 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
           <span>RESET</span>
         </button>
       </div>
+
+      {/* Streaming toggle */}
+      <label className="flex items-start gap-2 text-[10px] font-mono-tech text-amber-300">
+        <input
+          type="checkbox"
+          checked={streaming}
+          onChange={(e) => {
+            audioEngine.setStreamingEnabled(e.target.checked);
+            setStreaming(e.target.checked);
+          }}
+          className="mt-0.5 accent-amber-400"
+        />
+        <span>
+          Stream Gemini audio{' '}
+          <span className="text-amber-500/80">
+            (starts speaking at the first chunk and sends replies as ~2 requests instead of one per sentence)
+          </span>
+        </span>
+      </label>
 
       {/* Test line */}
       <div className="space-y-1.5">

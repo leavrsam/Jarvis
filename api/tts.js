@@ -230,6 +230,51 @@ async function synthesizeWithGemini(apiKey, params, timeoutMs = 15000) {
   };
 }
 
+/**
+ * Streaming Gemini TTS: yields raw 24 kHz 16-bit mono PCM chunks as Gemini generates them
+ * (interactions.create with stream: true -> step.delta events with audio deltas).
+ */
+async function* streamGeminiAudio(apiKey, params) {
+  const ai = new GoogleGenAI({ apiKey });
+  const rawText = (params.text || '').toString().trim();
+  const model =
+    params.model === 'gemini-3.8-flash-lite-tts' ? 'gemini-3.8-flash-lite-tts' : 'gemini-3.8-flash-tts';
+  let voiceId = (params.voice || 'AUTO_DESIGN_JARVIS').toString().trim();
+  if (voiceId === 'AUTO_DESIGN_JARVIS') {
+    voiceId = (await resolveOrCreateDesignedJarvisVoice(ai)).voiceId;
+  }
+  const style = (params.style || DEFAULT_JARVIS_STYLE).toString().trim();
+
+  const stream = await ai.interactions.create(
+    {
+      model,
+      input: [
+        {
+          type: 'user_input',
+          content: [
+            {
+              type: 'text',
+              text: rawText.slice(0, 2500),
+              annotations: [{ type: 'speech_metadata', style }],
+            },
+          ],
+        },
+      ],
+      response_format: { type: 'audio' },
+      generation_config: { speech_config: [{ voice: voiceId }] },
+      stream: true,
+    },
+    // No silent SDK retries (see synthesizeWithGemini); generous overall bound for long replies
+    { retries: { strategy: 'none' }, timeout_ms: 60000 }
+  );
+
+  for await (const event of stream) {
+    if (event?.event_type === 'step.delta' && event.delta?.type === 'audio' && event.delta.data) {
+      yield Buffer.from(event.delta.data, 'base64');
+    }
+  }
+}
+
 async function synthesizeWithEdgeFallback(params) {
   // Gemini understands inline tags like <short pause>; Edge would read them aloud, so turn them into pauses
   const rawText = (params.text || '')
@@ -286,7 +331,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-gemini-api-key');
   res.setHeader(
     'Access-Control-Expose-Headers',
-    'X-TTS-Engine, X-Gemini-Voice-Id, X-TTS-Duration-Ms, X-TTS-Error, X-TTS-Path'
+    'X-TTS-Engine, X-Gemini-Voice-Id, X-TTS-Duration-Ms, X-TTS-Error, X-TTS-Path, X-TTS-Format, X-TTS-Sample-Rate, X-TTS-First-Audio-Ms'
   );
 
   if (req.method === 'OPTIONS') {
@@ -330,7 +375,8 @@ export default async function handler(req, res) {
     }
 
     const preferProvider = (params.provider || 'gemini').toString().trim();
-    const cacheKey = `${preferProvider}::${params.model || ''}::${params.voice || 'default'}::${params.style || ''}::${rawText}`;
+    const wantsStream = params.stream === true || params.stream === 'true';
+    const cacheKey = `${wantsStream ? 'stream' : 'unary'}::${preferProvider}::${params.model || ''}::${params.voice || 'default'}::${params.style || ''}::${rawText}`;
     const cached = ttsMemoryCache.get(cacheKey);
     if (cached) {
       res.setHeader('Content-Type', cached.contentType);
@@ -338,6 +384,10 @@ export default async function handler(req, res) {
       res.setHeader('X-TTS-Engine', cached.engine);
       res.setHeader('X-Gemini-Voice-Id', cached.voiceId);
       res.setHeader('X-Cache-Hit', 'HIT');
+      if (/l16/i.test(cached.contentType)) {
+        res.setHeader('X-TTS-Format', 'pcm16');
+        res.setHeader('X-TTS-Sample-Rate', '24000');
+      }
       res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
       res.status(200).send(cached.buffer);
       return;
@@ -349,6 +399,76 @@ export default async function handler(req, res) {
     const geminiTimeoutMs = Math.min(25000, Math.max(3000, Number(params.geminiTimeoutMs) || 15000));
     const startedAt = Date.now();
     let geminiError = '';
+
+    // Streaming: audio is forwarded to the browser chunk by chunk, so playback can start at the
+    // first chunk. Errors before the first chunk are reported normally (the client falls back).
+    if (wantsStream && apiKey && preferProvider !== 'edge') {
+      const iterator = streamGeminiAudio(apiKey, params)[Symbol.asyncIterator]();
+      let first;
+      try {
+        let firstTimer;
+        first = await Promise.race([
+          iterator.next(),
+          new Promise((_, reject) => {
+            firstTimer = setTimeout(
+              () => reject(new Error(`Gemini TTS stream produced no audio within ${geminiTimeoutMs}ms`)),
+              geminiTimeoutMs
+            );
+          }),
+        ]).finally(() => clearTimeout(firstTimer));
+        if (first.done) throw new Error('Gemini TTS stream ended without audio');
+      } catch (streamErr) {
+        iterator.return?.().catch(() => {});
+        const msg = String(streamErr?.message || streamErr).replace(/[\r\n]+/g, ' ').slice(0, 200);
+        const status = Number(streamErr?.status) === 429 ? 429 : /no audio within|timed? ?out/i.test(msg) ? 504 : 503;
+        console.warn('[/api/tts] Gemini streaming failed:', msg);
+        res.setHeader('X-TTS-Error', msg.replace(/[^\x20-\x7E]/g, ''));
+        res.setHeader('X-TTS-Duration-Ms', String(Date.now() - startedAt));
+        res.status(status).json({ error: 'gemini_failed', details: msg });
+        return;
+      }
+
+      const model =
+        params.model === 'gemini-3.8-flash-lite-tts' ? 'gemini-3.8-flash-lite-tts' : 'gemini-3.8-flash-tts';
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'audio/L16;rate=24000;channels=1');
+      res.setHeader('X-TTS-Format', 'pcm16');
+      res.setHeader('X-TTS-Sample-Rate', '24000');
+      res.setHeader('X-TTS-Engine', model);
+      res.setHeader('X-TTS-First-Audio-Ms', String(Date.now() - startedAt));
+      res.setHeader('Cache-Control', 'no-store');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+      const parts = [first.value];
+      res.write(first.value);
+      try {
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) break;
+          parts.push(next.value);
+          res.write(next.value);
+        }
+      } catch (midErr) {
+        // Headers are already sent; end the audio here and let the client play what arrived
+        console.warn('[/api/tts] Gemini stream interrupted:', midErr?.message || midErr);
+        res.end();
+        return;
+      }
+      res.end();
+
+      const buffer = Buffer.concat(parts);
+      if (ttsMemoryCache.size > 60) {
+        const oldest = ttsMemoryCache.keys().next().value;
+        if (oldest) ttsMemoryCache.delete(oldest);
+      }
+      ttsMemoryCache.set(cacheKey, {
+        buffer,
+        contentType: 'audio/L16;rate=24000;channels=1',
+        engine: model,
+        voiceId: (params.voice || '').toString(),
+      });
+      return;
+    }
 
     if (apiKey && preferProvider !== 'edge') {
       try {

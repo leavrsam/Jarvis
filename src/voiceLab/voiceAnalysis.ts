@@ -227,8 +227,10 @@ export function suggestMatch(
     speed = clamp(roundTo(speedInfo.current * (target.speechSec / reference.speechSec), 0.05), speedInfo.min, speedInfo.max);
     speed = Math.round(speed * 100) / 100;
   }
+  // Pitch shifting adds artifacts, so only correct differences you'd clearly hear (> 0.75 semitone)
+  const pitch = Math.abs(current.pitchSemitones + pitchResidual) < 0.75 ? 0 : current.pitchSemitones + pitchResidual;
   return {
-    pitchSemitones: clamp(roundTo(current.pitchSemitones + pitchResidual, 0.25), -3, 3),
+    pitchSemitones: clamp(roundTo(pitch, 0.25), -3, 3),
     warmthDelta: clamp(roundTo(current.warmthDelta + bodyGap * 1.2, 0.5), -6, 6),
     presenceDelta: clamp(roundTo(current.presenceDelta + presenceGap * 1.2, 0.5), -6, 6),
     speed,

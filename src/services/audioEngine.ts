@@ -14,6 +14,15 @@ export interface SpeechQueue {
   readonly done: Promise<void>;
 }
 
+/** One TTS request's worth of speech, started immediately and played when its turn comes. */
+interface SpeechClip {
+  text: string;
+  /** Settles once the audio has fully downloaded (or failed) */
+  downloaded: Promise<void>;
+  /** Plays the clip; resolves when it has finished (or the reply was stopped) */
+  play(onStart: () => void): Promise<void>;
+}
+
 export interface JarvisNeuralVoicePreset {
   id: string;
   name: string;
@@ -171,6 +180,15 @@ class JarvisAudioEngine {
   private geminiWaiters: (() => void)[] = [];
   private geminiHighWaiting = 0;
   private speechDiagnostics: SpeechDiagnostic[] = [];
+  // Streaming TTS (on by default; Voice Lab toggle)
+  private streamingEnabled = (() => {
+    try {
+      return localStorage.getItem('jarvis_tts_streaming') !== 'off';
+    } catch {
+      return true;
+    }
+  })();
+  private streamSources = new Set<AudioBufferSourceNode>();
 
   // Voice Lab tuning (persisted per device)
   private voiceTuning: JarvisVoiceTuning = { ...DEFAULT_VOICE_TUNING };
@@ -604,7 +622,7 @@ class JarvisAudioEngine {
    * synthesized and played while the rest is still being generated.
    * The first chunk is kept short for the fastest possible time-to-first-audio.
    */
-  private splitIntoSpeechChunks(text: string): string[] {
+  private splitIntoSpeechChunks(text: string, groupLimit = 120): string[] {
     // Break only where a sentence end is followed by a new sentence (keeps "6 p.m., so" intact)
     const sentences = text.split(/(?<=[.!?]["')\]]*)\s+(?=[A-Z0-9"'(<])/).map((s) => s.trim()).filter(Boolean);
     const chunks: string[] = [];
@@ -612,7 +630,7 @@ class JarvisAudioEngine {
     for (const sentence of sentences) {
       // First chunk: one sentence, for fast first audio. Later: merge only short sentences (~120 chars),
       // since smaller Gemini requests come back much faster (Google's TTS guide recommends short turns).
-      const limit = chunks.length === 0 ? 0 : 120;
+      const limit = chunks.length === 0 ? 0 : groupLimit;
       if (current && (current.length + sentence.length + 1 > limit)) {
         chunks.push(current);
         current = sentence;
@@ -839,6 +857,256 @@ class JarvisAudioEngine {
     return audioBuffer;
   }
 
+  // -------------------------------------------------------------------------
+  // Speech clips: one TTS request each. With streaming on, a Gemini clip starts playing at its
+  // first audio chunk while the rest is still being generated, and replies are sent as fewer,
+  // larger requests (first sentence alone, the rest grouped), which matters at 10 requests/min.
+  // -------------------------------------------------------------------------
+  public isStreamingEnabled(): boolean {
+    return this.streamingEnabled;
+  }
+
+  public setStreamingEnabled(enabled: boolean) {
+    this.streamingEnabled = enabled;
+    try {
+      localStorage.setItem('jarvis_tts_streaming', enabled ? 'on' : 'off');
+    } catch {}
+  }
+
+  private useStreaming(): boolean {
+    return this.streamingEnabled && this.selectedPreset.provider !== 'edge';
+  }
+
+  private speechCacheKey(spokenText: string): string {
+    const preset = this.selectedPreset;
+    const effectiveVoice =
+      preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId ? this.customDesignedVoiceId : preset.voice;
+    return `${preset.id}::${effectiveVoice}::${this.getEffectiveStyle()}::${spokenText}`;
+  }
+
+  private startClip(text: string, signal: AbortSignal): SpeechClip {
+    const cached = this.audioBufferCache.get(this.speechCacheKey(text));
+    if (cached) {
+      return {
+        text,
+        downloaded: Promise.resolve(),
+        play: async (onStart) => {
+          if (signal.aborted) return;
+          if (this.ctx?.state === 'suspended') await this.ctx.resume();
+          await this.playBuffer(cached, onStart);
+        },
+      };
+    }
+    if (!this.useStreaming()) {
+      const pending = this.fetchSpeechBuffer(text, signal);
+      pending.catch(() => {});
+      return {
+        text,
+        downloaded: pending.then(
+          () => undefined,
+          () => undefined
+        ),
+        play: async (onStart) => {
+          let buffer: AudioBuffer;
+          try {
+            buffer = await pending;
+          } catch (err) {
+            if (signal.aborted) return;
+            console.warn('[JarvisAudioEngine] Neural TTS failed, using browser speech:', err);
+            await this.speakFallbackBrowser(text, onStart);
+            return;
+          }
+          if (signal.aborted) return;
+          if (this.ctx?.state === 'suspended') await this.ctx.resume();
+          await this.playBuffer(buffer, onStart);
+        },
+      };
+    }
+    return this.startStreamingClip(text, signal);
+  }
+
+  private startStreamingClip(text: string, signal: AbortSignal): SpeechClip {
+    const ctx = this.ensureContext();
+    const preset = this.selectedPreset;
+    const cacheKey = this.speechCacheKey(text);
+    const label = text.length > 48 ? `${text.slice(0, 45)}...` : text;
+    const state = {
+      chunks: [] as Float32Array[],
+      sampleRate: 24000,
+      done: false,
+      failed: null as Error | null,
+      listeners: new Set<() => void>(),
+    };
+    const notify = () => {
+      const ls = [...state.listeners];
+      state.listeners.clear();
+      ls.forEach((l) => l());
+    };
+    signal.addEventListener('abort', notify);
+    const changed = () => new Promise<void>((resolve) => state.listeners.add(resolve));
+
+    const download = this.withGeminiSlot(async () => {
+      const t0 = performance.now();
+      const result = await this.requestTts(
+        {
+          text,
+          provider: preset.provider,
+          model: preset.model,
+          voice:
+            preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId
+              ? this.customDesignedVoiceId
+              : preset.voice,
+          style: this.getEffectiveStyle(),
+          stream: true,
+          fallback: false,
+          geminiTimeoutMs: GEMINI_SERVER_TIMEOUT_MS,
+        },
+        signal,
+        GEMINI_SERVER_TIMEOUT_MS + 3000
+      );
+      if (!result.response?.body) throw new Error(result.error || 'no response');
+      const response = result.response;
+      const engine = response.headers.get('X-TTS-Engine') || preset.model;
+      this.lastActiveEngine = engine;
+
+      if (response.headers.get('X-TTS-Format') !== 'pcm16') {
+        // Not streamed (e.g. a non-PCM cache hit): decode it whole
+        const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+        state.sampleRate = buffer.sampleRate;
+        state.chunks.push(buffer.getChannelData(0).slice());
+        notify();
+        return { engine, firstMs: performance.now() - t0, totalMs: performance.now() - t0 };
+      }
+
+      state.sampleRate = Number(response.headers.get('X-TTS-Sample-Rate')) || 24000;
+      const reader = response.body!.getReader();
+      let leftover: Uint8Array | null = null;
+      let firstMs = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        let bytes: Uint8Array = value;
+        if (leftover) {
+          const joined = new Uint8Array(leftover.byteLength + value.byteLength);
+          joined.set(leftover, 0);
+          joined.set(value, leftover.byteLength);
+          bytes = joined;
+          leftover = null;
+        }
+        const even = bytes.byteLength - (bytes.byteLength % 2);
+        if (even < bytes.byteLength) leftover = bytes.slice(even);
+        if (!even) continue;
+        const view = new DataView(bytes.buffer, bytes.byteOffset, even);
+        const samples = new Float32Array(even / 2);
+        for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+        state.chunks.push(samples);
+        if (!firstMs) firstMs = performance.now() - t0;
+        notify();
+      }
+      return { engine, firstMs, totalMs: performance.now() - t0 };
+    }).then(
+      ({ engine, firstMs, totalMs }) => {
+        state.done = true;
+        notify();
+        // Keep the whole clip for instant replays
+        const total = state.chunks.reduce((n, c) => n + c.length, 0);
+        if (total > 0) {
+          const full = ctx.createBuffer(1, total, state.sampleRate);
+          let offset = 0;
+          for (const c of state.chunks) {
+            full.copyToChannel(c as Float32Array<ArrayBuffer>, 0, offset);
+            offset += c.length;
+          }
+          if (this.audioBufferCache.size > 35) {
+            const oldestKey = this.audioBufferCache.keys().next().value;
+            if (oldestKey) this.audioBufferCache.delete(oldestKey);
+          }
+          this.audioBufferCache.set(cacheKey, full);
+        }
+        this.recordSpeechDiagnostic({
+          text: label,
+          engine: `${engine} · streamed`,
+          ms: Math.round(totalMs),
+          note: `first audio ${(firstMs / 1000).toFixed(1)}s`,
+          fallback: false,
+        });
+      },
+      (err: unknown) => {
+        state.failed = err instanceof Error ? err : new Error(String(err));
+        notify();
+      }
+    );
+
+    const play = async (onStart: () => void) => {
+      while (!state.chunks.length && !state.done && !state.failed && !signal.aborted) await changed();
+      if (signal.aborted) return;
+
+      if (!state.chunks.length) {
+        // Stream failed before any audio: use the regular path (retry in the same voice, then Edge)
+        if (state.failed) {
+          this.recordSpeechDiagnostic({
+            text: label,
+            engine: 'stream failed, retrying unstreamed',
+            ms: 0,
+            note: state.failed.message.slice(0, 160),
+            fallback: true,
+          });
+        }
+        try {
+          const buffer = await this.fetchSpeechBuffer(text, signal);
+          if (!signal.aborted) await this.playBuffer(buffer, onStart);
+        } catch {
+          if (!signal.aborted) await this.speakFallbackBrowser(text, onStart);
+        }
+        return;
+      }
+
+      if (ctx.state === 'suspended') await ctx.resume();
+      const input = ctx.createGain();
+      this.connectJarvisVocalChain(input, preset.hudDsp);
+      this.currentState = 'speaking';
+      onStart();
+
+      let nextTime = ctx.currentTime + 0.05;
+      let scheduled = 0;
+      let lastEnded: Promise<void> = Promise.resolve();
+      while (!signal.aborted) {
+        while (scheduled < state.chunks.length) {
+          const data = state.chunks[scheduled++];
+          const buffer = ctx.createBuffer(1, data.length, state.sampleRate);
+          buffer.copyToChannel(data as Float32Array<ArrayBuffer>, 0);
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(input);
+          const at = Math.max(nextTime, ctx.currentTime + 0.02); // catch up after an underrun
+          source.start(at);
+          nextTime = at + buffer.duration;
+          this.streamSources.add(source);
+          lastEnded = new Promise<void>((resolve) => {
+            source.onended = () => {
+              this.streamSources.delete(source);
+              resolve();
+            };
+          });
+        }
+        if (state.done || state.failed) break;
+        await changed();
+      }
+      if (!signal.aborted) {
+        await Promise.race([lastEnded, new Promise<void>((r) => signal.addEventListener('abort', () => r()))]);
+      }
+      signal.removeEventListener('abort', notify);
+      setTimeout(() => {
+        try {
+          input.disconnect();
+        } catch {}
+      }, 500);
+    };
+
+    return { text, downloaded: download.then(() => undefined), play };
+  }
+
   private playBuffer(audioBuffer: AudioBuffer, onStart?: () => void): Promise<void> {
     const ctx = this.ensureContext();
     return new Promise<void>((resolve) => {
@@ -995,13 +1263,9 @@ class JarvisAudioEngine {
     const controller = new AbortController();
     this.activeAbortController = controller;
 
-    const chunks = this.splitIntoSpeechChunks(spokenText);
-    // Start synthesizing every chunk immediately, in parallel; play them back in order.
-    const pending = chunks.map((chunk) => {
-      const p = this.fetchSpeechBuffer(chunk, controller.signal);
-      p.catch(() => {}); // handled when awaited below
-      return p;
-    });
+    // Streaming: first sentence alone (fast start), the rest in ~400-char groups (fewer requests).
+    const chunks = this.splitIntoSpeechChunks(spokenText, this.useStreaming() ? 400 : 120);
+    const clips = chunks.map((chunk) => this.startClip(chunk, controller.signal));
 
     let started = false;
     const handleStart = () => {
@@ -1012,22 +1276,9 @@ class JarvisAudioEngine {
     };
 
     try {
-      for (let i = 0; i < chunks.length; i++) {
+      for (const clip of clips) {
         if (controller.signal.aborted) break;
-        let buffer: AudioBuffer;
-        try {
-          buffer = await pending[i];
-        } catch (err) {
-          if (controller.signal.aborted) break;
-          console.warn('[JarvisAudioEngine] Neural TTS chunk failed, using browser speech for the rest:', err);
-          await this.speakFallbackBrowser(chunks.slice(i).join(' '), handleStart);
-          break;
-        }
-        if (controller.signal.aborted) break;
-        if (this.ctx && this.ctx.state === 'suspended') {
-          await this.ctx.resume();
-        }
-        await this.playBuffer(buffer, handleStart);
+        await clip.play(handleStart);
       }
     } finally {
       if (this.activeAbortController === controller) {
@@ -1050,7 +1301,7 @@ class JarvisAudioEngine {
     this.activeAbortController = controller;
     const { signal } = controller;
 
-    const items: { text: string; buffer: Promise<AudioBuffer> }[] = [];
+    const clips: SpeechClip[] = [];
     let finished = false;
     let wake: (() => void) | null = null;
     const wakeUp = () => {
@@ -1059,6 +1310,28 @@ class JarvisAudioEngine {
       w?.();
     };
     signal.addEventListener('abort', wakeUp);
+
+    // Grouping: the first sentence goes out alone for a fast start. With streaming, sentences that
+    // arrive while the previous request is still downloading are batched into the next request,
+    // so a reply costs ~2 requests instead of one per sentence.
+    const streaming = this.useStreaming();
+    let pending: string[] = [];
+    let lastDownloaded = true;
+    const flush = () => {
+      if (!pending.length || signal.aborted) return;
+      const text = pending.join(' ');
+      pending = [];
+      const clip = this.startClip(text, signal);
+      clips.push(clip);
+      lastDownloaded = false;
+      clip.downloaded.then(() => {
+        if (clips[clips.length - 1] === clip) {
+          lastDownloaded = true;
+          if (pending.length) flush();
+        }
+      });
+      wakeUp();
+    };
 
     let started = false;
     const handleStart = () => {
@@ -1072,29 +1345,17 @@ class JarvisAudioEngine {
       try {
         let i = 0;
         while (!signal.aborted) {
-          if (i >= items.length) {
+          if (i >= clips.length) {
             if (finished) break;
             await new Promise<void>((resolve) => {
               wake = resolve;
             });
             continue;
           }
-          const item = items[i++];
-          let buffer: AudioBuffer | null = null;
-          try {
-            buffer = await item.buffer;
-          } catch (err) {
-            if (signal.aborted) break;
-            console.warn('[JarvisAudioEngine] Neural TTS sentence failed, using browser speech for it:', err);
-          }
+          const clip = clips[i++];
           if (this.ackPromise) await this.ackPromise;
           if (signal.aborted) break;
-          if (buffer) {
-            if (this.ctx && this.ctx.state === 'suspended') await this.ctx.resume();
-            await this.playBuffer(buffer, handleStart);
-          } else {
-            await this.speakFallbackBrowser(item.text, handleStart);
-          }
+          await clip.play(handleStart);
         }
       } finally {
         signal.removeEventListener('abort', wakeUp);
@@ -1113,12 +1374,12 @@ class JarvisAudioEngine {
         if (finished || signal.aborted) return;
         const spoken = this.cleanSpeechText(text);
         if (!spoken) return;
-        const buffer = this.fetchSpeechBuffer(spoken, signal);
-        buffer.catch(() => {}); // handled in run()
-        items.push({ text: spoken, buffer });
-        wakeUp();
+        pending.push(spoken);
+        const pendingChars = pending.reduce((n, t) => n + t.length, 0);
+        if (!streaming || clips.length === 0 || lastDownloaded || pendingChars >= 400) flush();
       },
       finish: () => {
+        flush();
         finished = true;
         wakeUp();
       },
@@ -1254,6 +1515,13 @@ class JarvisAudioEngine {
       } catch {}
       this.activeSourceNode = null;
     }
+    this.streamSources.forEach((source) => {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {}
+    });
+    this.streamSources.clear();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
