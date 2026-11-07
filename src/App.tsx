@@ -188,18 +188,16 @@ export const App: React.FC = () => {
   }, []);
 
   // Execute Backend Dispatch to n8n Webhook with Biometric Speaker Metadata
-  const handleCommandSubmit = useCallback(async (query: string) => {
+  const handleCommandSubmit = useCallback(async (query: string, source: 'voice' | 'typed' = 'voice') => {
     if (!query || query.trim().length === 0) return;
 
     const trimmedQuery = query.trim();
     // Record user prompt for HUD attribution
     setLastQuery(trimmedQuery);
 
-    // Identify speaker from live acoustic vectors captured during speech (with auto name-learning)
-    const speakerResult = voiceBiometrics.identifySpeaker(trimmedQuery);
-    setLastSpeaker(speakerResult.name);
-    setSpeakerConfidence(speakerResult.confidence);
-    setIsOwner(speakerResult.isOwner);
+    // Voice ID: the utterance audio is grabbed right now (synchronously, from the rolling mic
+    // buffer); the voiceprint is computed while the UI switches to "processing" below.
+    const speakerPromise = voiceBiometrics.identifySpeaker(trimmedQuery, source);
 
     // Check if the user is signing off ("That's all, thanks Jarvis")
     if (CONVERSATION_END_REGEX.test(trimmedQuery)) {
@@ -223,6 +221,41 @@ export const App: React.FC = () => {
     const controller = new AbortController();
     requestAbortRef.current = controller;
     const t0 = performance.now();
+
+    const speakerResult = await speakerPromise;
+    if (!isCurrent()) return;
+    setLastSpeaker(speakerResult.name);
+    setSpeakerConfidence(speakerResult.confidence);
+    setIsOwner(speakerResult.isOwner);
+    console.info(
+      `[VoiceID] ${speakerResult.name} owner=${speakerResult.isOwner} score=${speakerResult.confidence} reason=${speakerResult.reason} speech=${speakerResult.speechSeconds}s (${Math.round(performance.now() - t0)}ms)`
+    );
+
+    // Jarvis's own voice: never act on it
+    if (speakerResult.reason === 'jarvis-echo') {
+      setIsProcessing(false);
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
+      void resumeFollowUpListening();
+      return;
+    }
+
+    // Owner gate: only verified owner voice commands are carried out
+    if (source === 'voice' && voiceBiometrics.isOwnerGateEnabled() && !speakerResult.isOwner) {
+      setIsProcessing(false);
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
+      const ownerName = voiceBiometrics.getOwnerProfile()?.name || 'the owner';
+      const refusal =
+        speakerResult.reason === 'too-short'
+          ? "I didn't quite catch your voice, sir. Could you say that again?"
+          : `My apologies. I'm only taking instructions from ${ownerName} at the moment.`;
+      setLastResponse(refusal);
+      audioEngine.setState('speaking');
+      setAudioState('speaking');
+      await audioEngine.speak(refusal, undefined, () => {
+        if (isCurrent()) void resumeFollowUpListening();
+      });
+      return;
+    }
 
     // If the n8n agent hasn't answered quickly, cover the wait with an instant spoken acknowledgement
     const ackTimer = setTimeout(() => {
@@ -387,7 +420,7 @@ export const App: React.FC = () => {
     startListening,
     stopListening,
   } = useSpeechRecognition({
-    onFinalSubmit: handleCommandSubmit,
+    onFinalSubmit: (query: string) => handleCommandSubmit(query, 'voice'),
     onWakeWordDetected: handleWakeWordDetected,
     onFollowUpTimeout: handleFollowUpTimeout,
     onBargeIn: handleBargeIn,
@@ -563,6 +596,13 @@ export const App: React.FC = () => {
     void logout();
   }, [stopListening, interruptCurrentReply]);
 
+  // Voice ID: rolling mic buffer + model preload while unlocked; Jarvis's own speech is excluded
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void voiceBiometrics.activate(() => audioEngine.getJarvisIntervals());
+    return () => voiceBiometrics.deactivate();
+  }, [isAuthenticated]);
+
   // Session expired or revoked while running: back to the login screen
   useEffect(
     () =>
@@ -638,7 +678,7 @@ export const App: React.FC = () => {
         isProcessing={isProcessing}
         history={history}
         onToggleListening={handleToggleListening}
-        onSubmitText={handleCommandSubmit}
+        onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
         onStopSpeaking={handleStopSpeaking}
         onReplayResponse={(text) => {
           inConversationRef.current = false;

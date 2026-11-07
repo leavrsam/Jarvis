@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { voiceBiometrics } from '../services/voiceBiometrics';
 
 // Web Speech API interfaces
 interface SpeechRecognitionEvent extends Event {
@@ -313,10 +312,10 @@ export function useSpeechRecognition({
           const isInterruptIntent = AUDIBLE_INTERRUPT_REGEX.test(fullUtterance);
           const wordCount = fullUtterance.split(/\s+/).length;
 
-          // Biometric Speaker Authentication: verify live voice matches enrolled Owner
-          const speakerAuth = voiceBiometrics.isAuthorizedSpeaker();
-
-          if ((isInterruptIntent || wordCount >= 2) && speakerAuth.isAuthorized) {
+          // Jarvis's own voice was already discarded by the echo filter above. Who is speaking is
+          // decided from the audio when the command is submitted (voice ID), not here: while Jarvis
+          // talks, the mic audio is mostly his voice and can't be verified.
+          if (isInterruptIntent || wordCount >= 2) {
             isJarvisSpeakingRef.current = false;
             setIsListening(true);
             isListeningRef.current = true;

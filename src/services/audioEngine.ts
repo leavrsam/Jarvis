@@ -499,7 +499,6 @@ class JarvisAudioEngine {
       }
 
       this.currentState = 'listening';
-      voiceBiometrics.startUtteranceCapture();
       return true;
     } catch (err) {
       console.warn('[JarvisAudioEngine] Microphone access denied or unavailable:', err);
@@ -882,6 +881,18 @@ class JarvisAudioEngine {
   }
 
   /**
+   * When Jarvis was audible (speech log entries), padded with a short tail for room echo and
+   * output latency. Voice ID leaves these stretches out of the user's captured audio.
+   */
+  public getJarvisIntervals(tailMs = 700): { start: number; end: number }[] {
+    const now = Date.now();
+    return this.speechLog.map((e) => ({
+      start: e.startedAt - 100,
+      end: (e.endedAt ?? now + 60_000) + tailMs,
+    }));
+  }
+
+  /**
    * Text Jarvis is speaking now or finished speaking within `tailMs`. The recognizer discards
    * anything that matches it, so Jarvis doesn't hear himself and treat it as a command.
    */
@@ -1072,6 +1083,7 @@ class JarvisAudioEngine {
             if (oldestKey) this.audioBufferCache.delete(oldestKey);
           }
           this.audioBufferCache.set(cacheKey, full);
+          if (full.duration >= 2) void voiceBiometrics.learnJarvisVoice(full);
         }
         this.recordSpeechDiagnostic({
           text: label,
@@ -1158,6 +1170,7 @@ class JarvisAudioEngine {
 
   private playBuffer(audioBuffer: AudioBuffer, onStart?: () => void): Promise<void> {
     const ctx = this.ensureContext();
+    if (audioBuffer.duration >= 2) void voiceBiometrics.learnJarvisVoice(audioBuffer);
     return new Promise<void>((resolve) => {
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
@@ -1666,10 +1679,6 @@ class JarvisAudioEngine {
     const volume = Math.min(1, Math.max(rmsVolume, vocalBandVolume));
     const avg = totalVocalMag / 80;
 
-    // Feed real-time vocal frame to Voice Biometrics engine if listening to user
-    if (this.currentState === 'listening' && volume > 0.04) {
-      voiceBiometrics.ingestAudioFrame(this.freqData, this.timeData, this.ctx?.sampleRate || 48000);
-    }
 
     return {
       frequencyData: this.freqData,

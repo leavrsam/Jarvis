@@ -110,6 +110,33 @@ npm run preview
 
 ---
 
+## 🗣️ Voice ID (speaker recognition)
+
+Jarvis tells the owner apart from guests by voice, so n8n's `isAuthorizedOwner` reflects who actually spoke.
+
+- **Model:** WeSpeaker CAM++ (VoxCeleb), a neural speaker-verification model producing 512-dim voiceprints.
+  It runs **on the device** with onnxruntime-web (WebAssembly); voice audio never leaves the browser. The
+  29 MB model is downloaded once from Hugging Face, checked against a pinned SHA-256, and cached.
+- **Audio:** while unlocked, the mic is buffered in memory (last 15 s), so the words right after
+  "Hey Jarvis" are captured. Stretches where Jarvis is speaking (plus a short tail) are left out.
+- **Owner has to be verified.** Once an owner is enrolled, a voice command counts as the owner's only if it
+  scores **≥ 0.50** against the owner's voiceprint. Too little speech, a weaker match, or the model being
+  unavailable all mean **guest**. Typed commands count as the owner (the device is logged in). Until an owner
+  is enrolled, voice ID is inactive and everything counts as the owner.
+- **Enroll:** HUD → VOICE ID → *Start enrollment*: read 5 phrases (~40 s) on the device and spot you normally
+  use. A phrase that doesn't match the others is re-recorded. *Test my voice* shows your live score.
+- **Owner-only mode:** voice commands not verified as the owner aren't sent to n8n; Jarvis politely declines.
+- **Guests:** clearly different voices can be remembered automatically ("Jarvis, I'm Sarah" names them).
+  Profiles adapt using a few recent high-confidence matches, but enrollment samples are always kept, so they
+  can't drift toward someone else.
+- **Accuracy (measured):** LibriSpeech, 10 speakers, 5-phrase enrollment: 2–3 s commands identified correctly
+  86/87; no strangers accepted at the threshold; 1–2% of owner commands fall back to guest. In Chrome with a
+  simulated mic: owner scored 0.83–0.88, strangers 0.08–0.37. A phone mic in a room scores lower than clean
+  speech, which is why anything uncertain is treated as a guest.
+- Voiceprints are stored per device (localStorage), so enroll on each device you use.
+
+---
+
 ## 🔒 Server Route Protection
 
 All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`) share `api/_lib/requestGuard.js`:

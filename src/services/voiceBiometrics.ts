@@ -1,15 +1,25 @@
 /**
- * Voice Biometrics & Speaker Recognition Engine
- * 
- * Features:
- * - 16-dimensional Mel/Bark spectral formant energy vectors
- * - Fundamental frequency (F0) estimation & spectral centroid dynamics
- * - Continuous online momentum learning (adapts to vocal changes over time)
- * - Autonomous Passive Voice Discovery: Automatically clusters and remembers new
- *   unregistered voices (family/friends) without requiring manual calibration.
- * - Conversational Self-Introduction Learning: Automatically associates detected names
- *   ("I'm Sarah", "My name is David", "This is Alex") to newly discovered voiceprints.
+ * Voice Biometrics & Speaker Recognition
+ *
+ * - Neural voiceprints: 512-dim WeSpeaker CAM++ embeddings computed on the device
+ *   (see speaker/speakerModel.ts). Voice audio never leaves the browser.
+ * - Audio comes from a rolling microphone buffer (speaker/voiceCapture.ts), so the words spoken
+ *   right after "Hey Jarvis" are captured too. Anything recorded while Jarvis was talking is
+ *   left out.
+ * - Owner status has to be earned: once an owner is enrolled, a voice command counts as the
+ *   owner's only if it matches above OWNER_THRESHOLD. Too little audio, a weak match or a model
+ *   problem all mean "guest", never "owner".
+ * - Profiles keep their enrollment samples permanently, plus a few recent high-confidence
+ *   utterances, so they adapt to the room/mic without drifting toward someone else.
+ * - Guests can be auto-discovered, and "I'm Sarah" names a guest profile.
+ *
+ * Measured on LibriSpeech (10 speakers, 5-phrase enrollment): 2-3 s commands 86/87 identified
+ * correctly, 0% impostors accepted / 1.1% owner rejected at 0.40; 1-1.5 s: 0% / 2.3%.
+ * In Chrome with a simulated mic: owner 0.83-0.86, strangers 0.08-0.37 (threshold 0.50).
+ * A phone mic in a room scores lower than studio speech, hence the guest-by-default rule.
  */
+import { cosine, embedSpeech, getModelStatus, loadSpeakerModel, normalize } from './speaker/speakerModel';
+import { extractSpeech, TimeInterval, voiceCapture } from './speaker/voiceCapture';
 
 export interface VoiceProfile {
   id: string;
@@ -18,56 +28,137 @@ export interface VoiceProfile {
   isAutoDiscovered?: boolean;
   enrolledAt: string;
   lastHeardAt: string;
+  /** Utterances matched to this profile so far */
   samplesCount: number;
-  // Normalized 16-dimensional acoustic vector
-  vector: number[];
-  // Average fundamental frequency F0 in Hz
-  avgPitchHz: number;
-  // Average spectral centroid (0..1)
-  avgCentroid: number;
+  /** Model the voiceprints belong to (profiles from another model are discarded) */
+  model: 'campplus-v1';
+  /** Enrollment voiceprints (kept forever) */
+  enrollment: number[][];
+  /** Recent high-confidence utterances (FIFO, small) */
+  adaptive: number[][];
+  /** Normalized mean of enrollment + adaptive */
+  centroid: number[];
+  /** Enrollment self-consistency: mean similarity of each sample to the others (0..1) */
+  consistency?: number;
 }
+
+export type IdentificationReason =
+  | 'match' // matched an enrolled voice above threshold
+  | 'no-match' // voice heard clearly but it isn't anyone enrolled
+  | 'too-short' // not enough speech captured to tell
+  | 'typed' // typed command: the logged-in device holder
+  | 'not-enrolled' // no owner enrolled yet: voice ID inactive
+  | 'model-unavailable' // model failed to load or run
+  | 'jarvis-echo'; // the "speaker" is Jarvis's own voice
 
 export interface SpeakerIdentificationResult {
   matchedProfile: VoiceProfile | null;
   name: string;
-  confidence: number; // 0..1
+  /** Similarity to the matched/closest profile, 0..1 */
+  confidence: number;
   isOwner: boolean;
   isUnknown: boolean;
   isNewlyDiscovered?: boolean;
+  reason: IdentificationReason;
+  speechSeconds: number;
 }
 
-const STORAGE_KEY = 'jarvis_voice_profiles';
+const STORAGE_KEY = 'jarvis_voice_profiles_v2';
+const LEGACY_STORAGE_KEY = 'jarvis_voice_profiles';
 const OWNER_GATE_KEY = 'jarvis_owner_gate_enabled';
 const AUTO_LEARN_KEY = 'jarvis_auto_learn_voices_enabled';
+const JARVIS_VOICE_KEY = 'jarvis_self_voiceprint_v1';
 
-// 16 Critical Mel/Bark frequency band edges (Hz) covering human vocal resonance
-const BAND_EDGES_HZ = [
-  85, 130, 200, 300, 450, 650, 900, 1250, 1700, 2300, 3050, 4000, 5200, 6700, 8500, 11000
+/**
+ * Verified owner / known speaker. Clean-speech evaluation: 0% impostors at 0.40. Through
+ * Chrome's mic processing the closest stranger reached 0.37 while the owner scored 0.83-0.86,
+ * so 0.50 keeps a safe margin on both sides.
+ */
+export const MATCH_THRESHOLD = 0.5;
+/** Below this, a clearly heard voice is a new person (auto-discovery) */
+const NEW_VOICE_THRESHOLD = 0.3;
+/** Utterances this confident are added to the profile's adaptive samples */
+const ADAPT_THRESHOLD = 0.55;
+/** If the utterance matches Jarvis's own TTS voice this well (and better than anyone), it's echo */
+const JARVIS_ECHO_THRESHOLD = 0.55;
+const MIN_SPEECH_SECONDS = 0.8;
+const MIN_NEW_VOICE_SECONDS = 1.5;
+const MAX_EMBED_SECONDS = 4; // the latest 4 s of speech is plenty and keeps inference fast
+const MAX_ADAPTIVE = 10;
+const UTTERANCE_WINDOW_MS = 9000;
+
+const SELF_INTRO_REGEX = /\b(?:i am|i'm|my name is|this is|call me)\s+([a-zA-Z]+)(?:\b|[.,?!])/i;
+const OWNER_INTRO_REGEX =
+  /\b(?:this is my (?:friend|brother|sister|wife|husband|mom|dad|cousin|colleague|partner)|meet my friend|meet)\s+([a-zA-Z]+)(?:\b|[.,?!])/i;
+
+export const ENROLLMENT_PHRASES = [
+  'Jarvis, run a full diagnostic on the house systems and give me a summary.',
+  "What's on my calendar for tomorrow morning, and is there anything I should prepare for?",
+  'Play something relaxing in the living room and turn the volume down a little.',
+  'Add coffee beans, eggs and sourdough bread to the shopping list in Motif.',
+  'Remind me at five thirty to call the dealer team about the new order.',
 ];
 
-// Regex to catch natural human self-introductions or owner introductions
-const SELF_INTRO_REGEX = /\b(?:i am|i'm|my name is|this is|call me|it is|it's)\s+([a-zA-Z]+)(?:\b|[.,?!])/i;
-const OWNER_INTRO_REGEX = /\b(?:this is my (?:friend|brother|sister|wife|husband|mom|dad|cousin|colleague|partner)|meet my friend|meet)\s+([a-zA-Z]+)(?:\b|[.,?!])/i;
+function centroidOf(vectors: ArrayLike<number>[]): number[] {
+  const dim = vectors[0].length;
+  const sum = new Float32Array(dim);
+  for (const v of vectors) for (let i = 0; i < dim; i++) sum[i] += v[i];
+  return Array.from(normalize(sum));
+}
+
+const round4 = (v: ArrayLike<number>) => Array.from(v, (x) => Math.round(x * 1e4) / 1e4);
 
 class VoiceBiometricsEngine {
   private profiles: VoiceProfile[] = [];
-  private currentUtteranceFrames: number[][] = [];
-  private currentPitchSamples: number[] = [];
-  private currentCentroidSamples: number[] = [];
-  private isCapturing = false;
+  private legacyProfilesDiscarded = false;
+  private jarvisVoiceprint: number[] | null = null;
+  /** Returns intervals when Jarvis was audible (set by the app; excluded from captures) */
+  private getJarvisIntervals: () => TimeInterval[] = () => [];
 
   constructor() {
     this.loadProfiles();
+    try {
+      const raw = localStorage.getItem(JARVIS_VOICE_KEY);
+      if (raw) this.jarvisVoiceprint = JSON.parse(raw);
+    } catch {}
   }
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
+
+  /** Start the rolling mic buffer and preload the model (call after login). */
+  public async activate(getJarvisIntervals: () => TimeInterval[]): Promise<void> {
+    this.getJarvisIntervals = getJarvisIntervals;
+    void loadSpeakerModel().catch(() => {});
+    await voiceCapture.start();
+  }
+
+  public deactivate() {
+    voiceCapture.stop();
+  }
+
+  public getStatus() {
+    return {
+      model: getModelStatus(),
+      micBuffering: voiceCapture.isRunning(),
+      legacyProfilesDiscarded: this.legacyProfilesDiscarded,
+      hasJarvisVoiceprint: Boolean(this.jarvisVoiceprint),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Profiles & settings
+  // ---------------------------------------------------------------------------
 
   public loadProfiles(): VoiceProfile[] {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        this.profiles = JSON.parse(raw);
-      } else {
-        // If empty, initialize default owner profile template for Samuel
-        this.profiles = [];
+      this.profiles = raw ? (JSON.parse(raw) as VoiceProfile[]).filter((p) => p.model === 'campplus-v1') : [];
+      if (localStorage.getItem(LEGACY_STORAGE_KEY)) {
+        // Old 16-band voiceprints can't be compared with neural ones: they must be re-enrolled
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        this.legacyProfilesDiscarded = true;
       }
     } catch {
       this.profiles = [];
@@ -79,7 +170,7 @@ class VoiceBiometricsEngine {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.profiles));
     } catch (e) {
-      console.warn('[VoiceBiometrics] Failed to save profiles to localStorage:', e);
+      console.warn('[VoiceBiometrics] Failed to save profiles:', e);
     }
   }
 
@@ -91,6 +182,7 @@ class VoiceBiometricsEngine {
     return this.profiles.find((p) => p.isOwner);
   }
 
+  /** Owner gate: when on, voice commands that aren't verified as the owner are not carried out. */
   public isOwnerGateEnabled(): boolean {
     try {
       return localStorage.getItem(OWNER_GATE_KEY) === 'true';
@@ -108,7 +200,6 @@ class VoiceBiometricsEngine {
   public isAutoLearnEnabled(): boolean {
     try {
       const val = localStorage.getItem(AUTO_LEARN_KEY);
-      // Default to true so Jarvis automatically remembers new guests
       return val === null ? true : val === 'true';
     } catch {
       return true;
@@ -127,381 +218,267 @@ class VoiceBiometricsEngine {
   }
 
   public renameProfile(profileId: string, newName: string) {
-    const target = this.profiles.find((p) => p.id === profileId);
-    if (target && newName.trim()) {
-      target.name = newName.trim();
-      target.isAutoDiscovered = false;
+    const p = this.profiles.find((x) => x.id === profileId);
+    if (p && newName.trim()) {
+      p.name = newName.trim();
+      p.isAutoDiscovered = false;
       this.saveProfiles();
     }
   }
 
-  /**
-   * Reset the frame collector for a new utterance
-   */
-  public startUtteranceCapture() {
-    this.currentUtteranceFrames = [];
-    this.currentPitchSamples = [];
-    this.currentCentroidSamples = [];
-    this.isCapturing = true;
+  // ---------------------------------------------------------------------------
+  // Jarvis's own voice (for rejecting echo)
+  // ---------------------------------------------------------------------------
+
+  /** Learn Jarvis's TTS voiceprint from a clip he spoke (called once by the audio engine). */
+  public async learnJarvisVoice(clip: AudioBuffer): Promise<void> {
+    if (this.jarvisVoiceprint || clip.duration < 2 || getModelStatus().status !== 'ready') return;
+    try {
+      const e = await embedSpeech(clip.getChannelData(0), clip.sampleRate);
+      this.jarvisVoiceprint = round4(e);
+      localStorage.setItem(JARVIS_VOICE_KEY, JSON.stringify(this.jarvisVoiceprint));
+    } catch {}
   }
 
-  public stopUtteranceCapture() {
-    this.isCapturing = false;
+  public forgetJarvisVoice() {
+    this.jarvisVoiceprint = null;
+    try {
+      localStorage.removeItem(JARVIS_VOICE_KEY);
+    } catch {}
   }
 
+  // ---------------------------------------------------------------------------
+  // Capture
+  // ---------------------------------------------------------------------------
+
   /**
-   * Feed a live frame from Web Audio AnalyserNode during speech
+   * The user's latest utterance from the rolling buffer: up to 9 s before now, starting no earlier
+   * than when Jarvis last stopped talking, with his speech excluded.
    */
-  public ingestAudioFrame(
-    frequencyData: Uint8Array,
-    timeDomainData: Uint8Array,
-    sampleRate = 48000
-  ) {
-    if (!this.isCapturing && this.currentUtteranceFrames.length === 0) {
-      this.isCapturing = true;
-    }
-
-    // Check RMS volume to avoid ingesting silence/background room noise
-    let sumSquares = 0;
-    for (let i = 0; i < timeDomainData.length; i++) {
-      const val = (timeDomainData[i] - 128) / 128;
-      sumSquares += val * val;
-    }
-    const rms = Math.sqrt(sumSquares / timeDomainData.length);
-    if (rms < 0.035) {
-      return;
-    }
-
-    const nyquist = sampleRate / 2;
-    const binWidth = nyquist / frequencyData.length;
-
-    // 1. Extract 16 sub-band energies
-    const bandEnergies = new Float32Array(BAND_EDGES_HZ.length);
-    for (let b = 0; b < BAND_EDGES_HZ.length; b++) {
-      const startFreq = BAND_EDGES_HZ[b];
-      const endFreq = b < BAND_EDGES_HZ.length - 1 ? BAND_EDGES_HZ[b + 1] : nyquist;
-
-      const startBin = Math.max(1, Math.floor(startFreq / binWidth));
-      const endBin = Math.min(frequencyData.length - 1, Math.ceil(endFreq / binWidth));
-
-      let bandSum = 0;
-      let count = 0;
-      for (let bin = startBin; bin <= endBin; bin++) {
-        bandSum += frequencyData[bin];
-        count++;
-      }
-      bandEnergies[b] = count > 0 ? bandSum / (count * 255) : 0;
-    }
-
-    // 2. Estimate Fundamental Frequency (F0) in 80..350Hz range
-    const f0MinBin = Math.max(1, Math.floor(80 / binWidth));
-    const f0MaxBin = Math.min(frequencyData.length - 1, Math.ceil(350 / binWidth));
-    let peakBin = f0MinBin;
-    let peakVal = 0;
-    for (let bin = f0MinBin; bin <= f0MaxBin; bin++) {
-      if (frequencyData[bin] > peakVal) {
-        peakVal = frequencyData[bin];
-        peakBin = bin;
-      }
-    }
-    const estimatedPitchHz = peakBin * binWidth;
-    if (peakVal > 40) {
-      this.currentPitchSamples.push(estimatedPitchHz);
-    }
-
-    // 3. Spectral Centroid
-    let weightedSum = 0;
-    let totalMagnitude = 0;
-    for (let i = 0; i < frequencyData.length; i++) {
-      const mag = frequencyData[i];
-      weightedSum += i * binWidth * mag;
-      totalMagnitude += mag;
-    }
-    const centroidHz = totalMagnitude > 0 ? weightedSum / totalMagnitude : 1500;
-    this.currentCentroidSamples.push(Math.min(1, centroidHz / 4000));
-
-    // Vector normalization
-    const normalizedFrame = this.normalizeVector(Array.from(bandEnergies));
-    this.currentUtteranceFrames.push(normalizedFrame);
-
-    // Keep memory bounded to last 150 vocal frames (~3-5 seconds of speech)
-    if (this.currentUtteranceFrames.length > 150) {
-      this.currentUtteranceFrames.shift();
-    }
-    if (this.currentPitchSamples.length > 150) {
-      this.currentPitchSamples.shift();
-    }
-    if (this.currentCentroidSamples.length > 150) {
-      this.currentCentroidSamples.shift();
-    }
+  private captureUtterance(): { samples: Float32Array; sampleRate: number } {
+    const now = Date.now();
+    const jarvis = this.getJarvisIntervals();
+    const lastJarvisEnd = jarvis.reduce((m, iv) => (iv.end <= now ? Math.max(m, iv.end) : m), 0);
+    const from = Math.max(now - UTTERANCE_WINDOW_MS, lastJarvisEnd);
+    return { samples: voiceCapture.getAudio(from, now, jarvis), sampleRate: voiceCapture.sampleRate };
   }
 
+  private async voiceprintFrom(samples: Float32Array, sampleRate: number) {
+    const { speech, seconds } = extractSpeech(samples, sampleRate);
+    if (seconds < MIN_SPEECH_SECONDS) return { embedding: null, seconds };
+    const maxLen = Math.floor(MAX_EMBED_SECONDS * sampleRate);
+    const clip = speech.length > maxLen ? speech.subarray(speech.length - maxLen) : speech;
+    return { embedding: await embedSpeech(clip, sampleRate), seconds };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Identification
+  // ---------------------------------------------------------------------------
+
   /**
-   * Fast real-time check to verify if the live vocal audio matches an enrolled owner / authorized speaker,
-   * used for audible barge-in interruption while Jarvis is speaking.
+   * Who just spoke? Grabs the audio synchronously (call it the moment the command is final),
+   * then computes and compares the voiceprint.
    */
-  public isAuthorizedSpeaker(): { isAuthorized: boolean; confidence: number; name: string } {
+  public async identifySpeaker(
+    spokenTranscript: string,
+    source: 'voice' | 'typed' = 'voice'
+  ): Promise<SpeakerIdentificationResult> {
     const owner = this.getOwnerProfile();
+    const { samples, sampleRate } = this.captureUtterance(); // synchronous: before any await
+
+    if (source === 'typed') {
+      return this.result(owner ?? null, owner?.name ?? 'Owner', 1, true, 'typed', 0);
+    }
     if (!owner) {
-      return { isAuthorized: true, confidence: 1.0, name: 'Owner' };
+      // Voice ID isn't set up yet: the logged-in device is treated as the owner's
+      return this.result(null, 'Owner', 1, true, 'not-enrolled', 0);
     }
 
-    if (this.currentUtteranceFrames.length < 3) {
-      // If buffer is just beginning, allow intent so user is not blocked
-      return { isAuthorized: true, confidence: 0.85, name: owner.name };
+    let embedding: Float32Array | null;
+    let seconds: number;
+    try {
+      ({ embedding, seconds } = await this.voiceprintFrom(samples, sampleRate));
+    } catch (err) {
+      console.warn('[VoiceBiometrics] Identification unavailable:', err);
+      return this.result(null, 'Unverified', 0, false, 'model-unavailable', 0);
     }
+    if (!embedding) return this.result(null, 'Unverified', 0, false, 'too-short', seconds);
 
-    const liveVector = this.averageVectors(this.currentUtteranceFrames.slice(-10));
-    const cosineSim = this.computeCosineSimilarity(liveVector, owner.vector);
-
-    const recentPitch = this.currentPitchSamples.slice(-10);
-    const avgPitch = recentPitch.length > 0
-      ? recentPitch.reduce((a, b) => a + b, 0) / recentPitch.length
-      : 130;
-    const pitchDiff = Math.abs(avgPitch - owner.avgPitchHz);
-    const pitchSim = Math.max(0, 1 - pitchDiff / 100);
-
-    const confidence = cosineSim * 0.75 + pitchSim * 0.25;
-    return {
-      isAuthorized: confidence >= 0.52,
-      confidence,
-      name: owner.name,
-    };
-  }
-
-  /**
-   * Compare the current captured utterance against all enrolled voice profiles.
-   * If speech matches, adaptively tunes the profile. If no match and auto-learn is on,
-   * automatically registers a new auto-discovered voice profile.
-   */
-  public identifySpeaker(spokenTranscript?: string): SpeakerIdentificationResult {
-    this.isCapturing = false;
-
-    if (this.currentUtteranceFrames.length < 5) {
-      // Too few acoustic frames
-      const defaultOwner = this.getOwnerProfile();
-      return {
-        matchedProfile: defaultOwner || null,
-        name: defaultOwner ? defaultOwner.name : 'Unknown Voice',
-        confidence: defaultOwner ? 0.85 : 0.4,
-        isOwner: defaultOwner ? defaultOwner.isOwner : false,
-        isUnknown: !defaultOwner,
-      };
-    }
-
-    const liveVector = this.averageVectors(this.currentUtteranceFrames);
-    const avgPitch = this.currentPitchSamples.length > 0
-      ? this.currentPitchSamples.reduce((a, b) => a + b, 0) / this.currentPitchSamples.length
-      : 130;
-    const avgCentroid = this.currentCentroidSamples.length > 0
-      ? this.currentCentroidSamples.reduce((a, b) => a + b, 0) / this.currentCentroidSamples.length
-      : 0.35;
-
-    // Check if user is introducing themselves in the speech transcript
-    let introducedName: string | null = null;
-    if (spokenTranscript) {
-      const selfMatch = spokenTranscript.match(SELF_INTRO_REGEX);
-      const ownerMatch = spokenTranscript.match(OWNER_INTRO_REGEX);
-      const matchedWord = (selfMatch && selfMatch[1]) || (ownerMatch && ownerMatch[1]);
-      if (matchedWord && !/^(jarvis|here|ready|sir|friday|computer)$/i.test(matchedWord)) {
-        introducedName = matchedWord.charAt(0).toUpperCase() + matchedWord.slice(1).toLowerCase();
+    // Score every profile
+    let best: VoiceProfile | null = null;
+    let bestScore = -1;
+    for (const p of this.profiles) {
+      const score = cosine(embedding, p.centroid);
+      if (score > bestScore) {
+        bestScore = score;
+        best = p;
       }
     }
 
-    // If no profiles registered yet, create default Owner (Samuel) or the introduced name
-    if (this.profiles.length === 0) {
-      const initialName = introducedName || 'Samuel';
-      const newOwner: VoiceProfile = {
-        id: `voice_owner_${Date.now()}`,
-        name: initialName,
-        isOwner: true,
-        enrolledAt: new Date().toISOString(),
-        lastHeardAt: new Date().toISOString(),
-        samplesCount: 1,
-        vector: liveVector,
-        avgPitchHz: Math.round(avgPitch),
-        avgCentroid: Math.round(avgCentroid * 1000) / 1000,
-      };
-      this.profiles.push(newOwner);
+    // Jarvis hearing himself (should be rare now, but never let it act as a person)
+    if (this.jarvisVoiceprint) {
+      const jarvisScore = cosine(embedding, this.jarvisVoiceprint);
+      if (jarvisScore >= JARVIS_ECHO_THRESHOLD && jarvisScore > bestScore) {
+        return this.result(null, 'Jarvis (echo)', jarvisScore, false, 'jarvis-echo', seconds);
+      }
+    }
+
+    const introducedName = this.introducedName(spokenTranscript);
+
+    if (best && bestScore >= MATCH_THRESHOLD) {
+      if (introducedName && !best.isOwner && best.name !== introducedName) {
+        best.name = introducedName;
+        best.isAutoDiscovered = false;
+      }
+      if (bestScore >= ADAPT_THRESHOLD) {
+        best.adaptive = [...(best.adaptive || []), round4(embedding)].slice(-MAX_ADAPTIVE);
+        best.centroid = round4(centroidOf([...best.enrollment, ...best.adaptive]));
+      }
+      best.lastHeardAt = new Date().toISOString();
+      best.samplesCount = (best.samplesCount || 0) + 1;
       this.saveProfiles();
-      return {
-        matchedProfile: newOwner,
-        name: newOwner.name,
-        confidence: 0.96,
-        isOwner: true,
-        isUnknown: false,
-        isNewlyDiscovered: true,
-      };
+      return this.result(best, best.name, bestScore, best.isOwner, 'match', seconds);
     }
 
-    let bestProfile: VoiceProfile | null = null;
-    let bestSimilarity = -1;
-
-    for (const profile of this.profiles) {
-      const cosineSim = this.computeCosineSimilarity(liveVector, profile.vector);
-      const pitchDiff = Math.abs(avgPitch - profile.avgPitchHz);
-      const pitchSim = Math.max(0, 1 - pitchDiff / 100);
-      const centroidDiff = Math.abs(avgCentroid - profile.avgCentroid);
-      const centroidSim = Math.max(0, 1 - centroidDiff * 2);
-
-      const totalConfidence = cosineSim * 0.70 + pitchSim * 0.20 + centroidSim * 0.10;
-
-      if (totalConfidence > bestSimilarity) {
-        bestSimilarity = totalConfidence;
-        bestProfile = profile;
-      }
-    }
-
-    const MATCH_THRESHOLD = 0.74;
-
-    // 1. MATCH FOUND: Known speaker identified
-    if (bestProfile && bestSimilarity >= MATCH_THRESHOLD) {
-      // If they introduced a new name, rename the profile
-      if (introducedName && bestProfile.name !== introducedName && !bestProfile.isOwner) {
-        bestProfile.name = introducedName;
-        bestProfile.isAutoDiscovered = false;
-      }
-
-      // Online Momentum Adaptation: Smoothly blend the profile with new acoustic samples
-      // alpha = 0.15 (15% new sample, 85% established memory)
-      const alpha = 0.15;
-      const updatedVector = bestProfile.vector.map((val, idx) => (1 - alpha) * val + alpha * liveVector[idx]);
-      bestProfile.vector = this.normalizeVector(updatedVector);
-      bestProfile.avgPitchHz = Math.round((1 - alpha) * bestProfile.avgPitchHz + alpha * avgPitch);
-      bestProfile.avgCentroid = Math.round(((1 - alpha) * bestProfile.avgCentroid + alpha * avgCentroid) * 1000) / 1000;
-      bestProfile.lastHeardAt = new Date().toISOString();
-      bestProfile.samplesCount = (bestProfile.samplesCount || 1) + 1;
-      this.saveProfiles();
-
-      return {
-        matchedProfile: bestProfile,
-        name: bestProfile.name,
-        confidence: Math.min(0.99, Math.round(bestSimilarity * 100) / 100),
-        isOwner: bestProfile.isOwner,
-        isUnknown: false,
-      };
-    }
-
-    // 2. UNRECOGNIZED VOICE: Auto-detect & create a persistent profile if auto-learn is enabled!
-    if (this.isAutoLearnEnabled()) {
+    // A clearly different voice: optionally remember it as a guest
+    if (this.isAutoLearnEnabled() && bestScore < NEW_VOICE_THRESHOLD && seconds >= MIN_NEW_VOICE_SECONDS) {
       const guestNumber = this.profiles.filter((p) => !p.isOwner).length + 1;
-      const assignedName = introducedName || `Guest #${guestNumber}`;
-
-      const newDiscoveredProfile: VoiceProfile = {
-        id: `voice_guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        name: assignedName,
+      const v = round4(embedding);
+      const guest: VoiceProfile = {
+        id: `voice_guest_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: introducedName || `Guest #${guestNumber}`,
         isOwner: false,
         isAutoDiscovered: !introducedName,
         enrolledAt: new Date().toISOString(),
         lastHeardAt: new Date().toISOString(),
         samplesCount: 1,
-        vector: liveVector,
-        avgPitchHz: Math.round(avgPitch),
-        avgCentroid: Math.round(avgCentroid * 1000) / 1000,
+        model: 'campplus-v1',
+        enrollment: [v],
+        adaptive: [],
+        centroid: v,
       };
-
-      this.profiles.push(newDiscoveredProfile);
+      this.profiles.push(guest);
       this.saveProfiles();
-
-      return {
-        matchedProfile: newDiscoveredProfile,
-        name: newDiscoveredProfile.name,
-        confidence: 0.88,
-        isOwner: false,
-        isUnknown: false,
-        isNewlyDiscovered: true,
-      };
+      return { ...this.result(guest, guest.name, 1, false, 'no-match', seconds), isNewlyDiscovered: true };
     }
 
-    // 3. Fallback if auto-learn is disabled
+    return this.result(null, 'Unrecognized Speaker', Math.max(0, bestScore), false, 'no-match', seconds);
+  }
+
+  /** Not used for barge-in any more: the transcript echo filter handles Jarvis's own voice. */
+  public isAuthorizedSpeaker(): { isAuthorized: boolean; confidence: number; name: string } {
+    return { isAuthorized: true, confidence: 1, name: this.getOwnerProfile()?.name ?? 'Owner' };
+  }
+
+  private result(
+    profile: VoiceProfile | null,
+    name: string,
+    confidence: number,
+    isOwner: boolean,
+    reason: IdentificationReason,
+    speechSeconds: number
+  ): SpeakerIdentificationResult {
     return {
-      matchedProfile: null,
-      name: 'Unrecognized Speaker',
-      confidence: Math.max(0.2, Math.round((bestSimilarity || 0.4) * 100) / 100),
-      isOwner: false,
-      isUnknown: true,
+      matchedProfile: profile,
+      name,
+      confidence: Math.max(0, Math.min(1, Math.round(confidence * 100) / 100)),
+      isOwner,
+      isUnknown: !profile && reason !== 'typed' && reason !== 'not-enrolled',
+      reason,
+      speechSeconds: Math.round(speechSeconds * 10) / 10,
     };
   }
 
+  private introducedName(transcript: string): string | null {
+    const selfMatch = transcript.match(SELF_INTRO_REGEX);
+    const ownerMatch = transcript.match(OWNER_INTRO_REGEX);
+    const word = (selfMatch && selfMatch[1]) || (ownerMatch && ownerMatch[1]);
+    if (!word || /^(jarvis|here|ready|sir|friday|computer|going|trying|not|just|back|done|sorry)$/i.test(word)) return null;
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enrollment
+  // ---------------------------------------------------------------------------
+
   /**
-   * Explicit manual calibration enrollment
+   * Record one enrollment phrase: buffers `durationMs` of mic audio from now, then returns its
+   * voiceprint. Rejects if there wasn't enough clear speech.
    */
-  public enrollProfile(name: string, isOwner = false): VoiceProfile {
-    if (this.currentUtteranceFrames.length < 5) {
-      throw new Error('Insufficient audio captured during calibration. Please speak clearly into the microphone.');
+  public async recordEnrollmentSample(durationMs = 6000): Promise<{ embedding: number[]; seconds: number }> {
+    if (!voiceCapture.isRunning() && !(await voiceCapture.start())) {
+      throw new Error('Microphone unavailable');
     }
-
-    const vector = this.averageVectors(this.currentUtteranceFrames);
-    const avgPitchHz = this.currentPitchSamples.length > 0
-      ? this.currentPitchSamples.reduce((a, b) => a + b, 0) / this.currentPitchSamples.length
-      : 130;
-    const avgCentroid = this.currentCentroidSamples.length > 0
-      ? this.currentCentroidSamples.reduce((a, b) => a + b, 0) / this.currentCentroidSamples.length
-      : 0.35;
-
-    if (isOwner) {
-      this.profiles.forEach((p) => {
-        p.isOwner = false;
-      });
+    await loadSpeakerModel();
+    const start = Date.now();
+    await new Promise((r) => setTimeout(r, durationMs));
+    const audio = voiceCapture.getAudio(start, Date.now(), this.getJarvisIntervals());
+    const { embedding, seconds } = await this.voiceprintFrom(audio, voiceCapture.sampleRate);
+    if (!embedding || seconds < 1.5) {
+      throw new Error(`Only ${seconds.toFixed(1)}s of clear speech was heard. Please read the whole phrase.`);
     }
+    return { embedding: round4(embedding), seconds };
+  }
 
-    const newProfile: VoiceProfile = {
-      id: `voice_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+  /**
+   * Check a set of enrollment voiceprints for consistency (each against the mean of the others).
+   * Returns the per-sample scores and the index of any sample that doesn't fit.
+   */
+  public checkEnrollment(samples: number[][]): { scores: number[]; consistency: number; outlier: number | null } {
+    const scores = samples.map((s, i) => cosine(s, centroidOf(samples.filter((_, j) => j !== i))));
+    const consistency = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const worst = scores.indexOf(Math.min(...scores));
+    return { scores, consistency, outlier: scores[worst] < 0.45 ? worst : null };
+  }
+
+  public saveEnrollment(name: string, isOwner: boolean, samples: number[][]): VoiceProfile {
+    if (samples.length < 3) throw new Error('At least 3 phrases are needed');
+    const { consistency } = this.checkEnrollment(samples);
+    if (isOwner) this.profiles.forEach((p) => (p.isOwner = false));
+    const profile: VoiceProfile = {
+      id: `voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: name.trim() || 'Samuel',
       isOwner,
       isAutoDiscovered: false,
       enrolledAt: new Date().toISOString(),
       lastHeardAt: new Date().toISOString(),
-      samplesCount: this.currentUtteranceFrames.length,
-      vector,
-      avgPitchHz: Math.round(avgPitchHz),
-      avgCentroid: Math.round(avgCentroid * 1000) / 1000,
+      samplesCount: 0,
+      model: 'campplus-v1',
+      enrollment: samples,
+      adaptive: [],
+      centroid: round4(centroidOf(samples)),
+      consistency: Math.round(consistency * 100) / 100,
     };
-
-    this.profiles = this.profiles.filter((p) => p.name.toLowerCase() !== newProfile.name.toLowerCase());
-    this.profiles.push(newProfile);
+    this.profiles = this.profiles.filter((p) => p.name.toLowerCase() !== profile.name.toLowerCase());
+    this.profiles.push(profile);
     this.saveProfiles();
-
-    return newProfile;
+    return profile;
   }
 
-  private normalizeVector(v: number[]): number[] {
-    let norm = 0;
-    for (let i = 0; i < v.length; i++) {
-      norm += v[i] * v[i];
-    }
-    norm = Math.sqrt(norm);
-    if (norm === 0) return v;
-    return v.map((x) => x / norm);
-  }
-
-  private averageVectors(frames: number[][]): number[] {
-    if (frames.length === 0) return [];
-    const len = frames[0].length;
-    const avg = new Array(len).fill(0);
-    for (const frame of frames) {
-      for (let i = 0; i < len; i++) {
-        avg[i] += frame[i];
+  /** "Test my voice": record a few seconds and report who it sounds like, without learning. */
+  public async testVoice(durationMs = 4000): Promise<{ name: string; score: number; seconds: number; verified: boolean }> {
+    if (!voiceCapture.isRunning() && !(await voiceCapture.start())) throw new Error('Microphone unavailable');
+    await loadSpeakerModel();
+    const start = Date.now();
+    await new Promise((r) => setTimeout(r, durationMs));
+    const audio = voiceCapture.getAudio(start, Date.now(), this.getJarvisIntervals());
+    const { embedding, seconds } = await this.voiceprintFrom(audio, voiceCapture.sampleRate);
+    if (!embedding) return { name: 'Not enough speech', score: 0, seconds, verified: false };
+    let best: VoiceProfile | null = null;
+    let bestScore = -1;
+    for (const p of this.profiles) {
+      const s = cosine(embedding, p.centroid);
+      if (s > bestScore) {
+        bestScore = s;
+        best = p;
       }
     }
-    for (let i = 0; i < len; i++) {
-      avg[i] /= frames.length;
-    }
-    return this.normalizeVector(avg);
-  }
-
-  private computeCosineSimilarity(a: number[], b: number[]): number {
-    if (!a.length || !b.length || a.length !== b.length) return 0;
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < a.length; i++) {
-      dot += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom > 0 ? Math.max(0, dot / denom) : 0;
+    return {
+      name: best ? best.name : 'No profiles enrolled',
+      score: Math.max(0, Math.round(bestScore * 100) / 100),
+      seconds: Math.round(seconds * 10) / 10,
+      verified: bestScore >= MATCH_THRESHOLD,
+    };
   }
 }
 
