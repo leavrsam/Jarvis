@@ -3,7 +3,7 @@
 
 export interface ListeningEvent {
   at: number;
-  kind: 'echo-ignored' | 'barge-in' | 'partial-ignored' | 'voice-id' | 'command';
+  kind: 'echo-ignored' | 'barge-in' | 'partial-ignored' | 'voice-id' | 'command' | 'heard' | 'recognizer';
   detail: string;
 }
 
@@ -18,3 +18,15 @@ export function logEvent(kind: ListeningEvent['kind'], detail: string) {
 export function getEvents(): ListeningEvent[] {
   return [...events];
 }
+
+/** Health of the browser's speech recognizer (the wake-word listener) */
+export const recognizerStats = {
+  supported: true,
+  running: false,
+  starts: 0,
+  finalPhrases: 0,
+  lastHeardAt: 0,
+  lastError: '',
+  lastErrorAt: 0,
+  errorCounts: {} as Record<string, number>,
+};

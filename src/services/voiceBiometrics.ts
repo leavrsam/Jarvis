@@ -197,11 +197,32 @@ class VoiceBiometricsEngine {
   public async activate(getJarvisIntervals: () => TimeInterval[]): Promise<void> {
     this.getJarvisIntervals = getJarvisIntervals;
     void loadSpeakerModel().catch(() => {});
-    await voiceCapture.start();
+    if (!this.isMicPaused()) await voiceCapture.start();
   }
 
   public deactivate() {
     voiceCapture.stop();
+  }
+
+  /**
+   * Pause the rolling mic buffer (test switch). Some Android devices give the speech recognizer
+   * silence while another stream holds the microphone; pausing shows whether that's happening.
+   * While paused, voice commands can't be verified (they count as guests once an owner is enrolled).
+   */
+  public isMicPaused(): boolean {
+    try {
+      return localStorage.getItem('jarvis_voiceid_mic_paused') === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  public setMicPaused(paused: boolean) {
+    try {
+      localStorage.setItem('jarvis_voiceid_mic_paused', paused ? 'true' : 'false');
+    } catch {}
+    if (paused) voiceCapture.stop();
+    else void voiceCapture.start();
   }
 
   public getStatus() {

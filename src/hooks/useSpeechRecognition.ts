@@ -1,5 +1,5 @@
 import { isLikelyEcho } from '../services/echoMatch';
-import { logEvent } from '../services/eventLog';
+import { logEvent, recognizerStats } from '../services/eventLog';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 // Web Speech API interfaces
@@ -259,6 +259,8 @@ export function useSpeechRecognition({
     if (!SpeechRecognitionClass) {
       setIsSupported(false);
       setError('Web Speech Recognition API is not supported in this browser. Please use Chrome, Edge, or Safari.');
+      if (recognizerStats.supported) logEvent('recognizer', 'Speech recognition is not available in this browser (e.g. Android WebView / Fully Kiosk)');
+      recognizerStats.supported = false;
       return;
     }
 
@@ -270,6 +272,9 @@ export function useSpeechRecognition({
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
+        recognizerStats.running = true;
+        recognizerStats.starts++;
+        if (recognizerStats.starts === 1) logEvent('recognizer', 'Listener started');
         setError(null);
       };
 
@@ -289,6 +294,11 @@ export function useSpeechRecognition({
 
         const fullUtterance = (finalChunk || interim).trim();
         if (!fullUtterance) return;
+        if (finalChunk.trim()) {
+          recognizerStats.finalPhrases++;
+          recognizerStats.lastHeardAt = Date.now();
+          logEvent('heard', `"${finalChunk.trim()}"`);
+        }
 
         // 0. Self-echo filter, in every mode: Jarvis's own words (including "One moment, sir"
         // while n8n works, and the tail of a reply that arrives after he stops talking) must
@@ -407,14 +417,19 @@ export function useSpeechRecognition({
       };
 
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        recognizerStats.errorCounts[event.error] = (recognizerStats.errorCounts[event.error] || 0) + 1;
         if (event.error === 'no-speech' || event.error === 'aborted') {
           return;
         }
+        recognizerStats.lastError = event.error;
+        recognizerStats.lastErrorAt = Date.now();
+        logEvent('recognizer', `Error: ${event.error}${event.message ? ` (${event.message})` : ''}`);
         console.warn('[SpeechRecognition] Error:', event.error, event.message);
         setError(`Mic: ${event.error}`);
       };
 
       recognition.onend = () => {
+        recognizerStats.running = false;
         // Keep listening loop alive in background for wake-word or audible barge-in
         if (isListeningRef.current || isStandbyRef.current || isJarvisSpeakingRef.current) {
           restartRecognition();

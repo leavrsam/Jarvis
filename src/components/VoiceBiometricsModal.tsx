@@ -21,7 +21,7 @@ import { ENROLLMENT_PHRASES, MATCH_THRESHOLD, voiceBiometrics, VoiceProfile } fr
 import { getModelStatus, loadSpeakerModel, onModelStatus, ModelStatus, SPEAKER_MODEL } from '../services/speaker/speakerModel';
 import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
-import { getEvents, ListeningEvent } from '../services/eventLog';
+import { getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
 
 interface VoiceBiometricsModalProps {
   isOpen: boolean;
@@ -53,6 +53,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const cancelledRef = useRef(false);
+  const [micPaused, setMicPaused] = useState(() => voiceBiometrics.isMicPaused());
   const [events, setEvents] = useState<ListeningEvent[]>([]);
   useEffect(() => {
     if (!isOpen) return;
@@ -234,6 +235,25 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
             <div className="text-[10px] text-red-300">{getModelStatus().error}. Until it loads, voice commands count as guests.</div>
           )}
 
+          {/* Wake-word listener health (the browser's speech recognizer) */}
+          <ListenerStatus micPaused={micPaused} />
+          <label className="flex items-start gap-2 text-[10px] text-amber-400">
+            <input
+              type="checkbox"
+              checked={micPaused}
+              onChange={(e) => {
+                voiceBiometrics.setMicPaused(e.target.checked);
+                setMicPaused(e.target.checked);
+              }}
+              className="mt-0.5 accent-amber-400"
+            />
+            <span>
+              <strong className="text-amber-300">Pause voice ID mic (test)</strong>: if "Hey Jarvis" starts working
+              with this on, the phone won't share the microphone between voice ID and the wake-word listener. Voice
+              commands can't be verified while paused.
+            </span>
+          </label>
+
           {status.legacyProfilesDiscarded && (
             <Banner tone="warn">
               Voice ID was upgraded to neural voiceprints. Old voiceprints can't be converted, so please enroll again
@@ -401,6 +421,8 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
                         'barge-in': 'INTERRUPTED BY',
                         'voice-id': 'voice ID',
                         command: 'command',
+                        heard: 'heard',
+                        recognizer: 'listener',
                       }[e.kind]
                     }
                   </span>{' '}
@@ -561,3 +583,54 @@ const Toggle: React.FC<{
     </button>
   </div>
 );
+
+const ListenerStatus: React.FC<{ micPaused: boolean }> = ({ micPaused }) => {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const st = recognizerStats;
+  const ago = (t: number) => (t ? `${Math.round((Date.now() - t) / 1000)}s ago` : 'never');
+  const errors = Object.entries(st.errorCounts)
+    .map(([k, n]) => `${k} ×${n}`)
+    .join(', ');
+  const healthy = st.supported && st.starts > 0 && !['not-allowed', 'audio-capture', 'service-not-allowed'].includes(st.lastError);
+  return (
+    <div className={`p-2.5 rounded border text-[10px] font-mono-tech space-y-0.5 ${healthy ? 'border-emerald-800 bg-emerald-950/10' : 'border-red-800 bg-red-950/20'}`}>
+      <div className="font-orbitron text-[11px] tracking-wider text-amber-200">WAKE-WORD LISTENER</div>
+      {!st.supported ? (
+        <div className="text-red-300">
+          Not available in this browser: Android WebView (used by Fully Kiosk) has no speech recognition, so the wake
+          word can't work here. Use Chrome for now.
+        </div>
+      ) : (
+        <>
+          <div className="text-amber-300">
+            {st.running ? 'Listening' : 'Restarting'} · started {st.starts}× · phrases heard {st.finalPhrases} (last {ago(st.lastHeardAt)})
+            {micPaused ? ' · voice ID mic paused' : ''}
+          </div>
+          {st.lastError && (
+            <div className="text-red-300">
+              Last error: {st.lastError} ({ago(st.lastErrorAt)})
+              {st.lastError === 'not-allowed' || st.lastError === 'service-not-allowed'
+                ? ': microphone/speech permission blocked for this site'
+                : st.lastError === 'audio-capture'
+                  ? ': the recognizer could not get the microphone'
+                  : st.lastError === 'network'
+                    ? ': the recognizer could not reach Google speech servers'
+                    : ''}
+            </div>
+          )}
+          {errors && <div className="text-amber-500">Errors so far: {errors}</div>}
+          {st.starts > 5 && st.finalPhrases === 0 && (
+            <div className="text-red-300">
+              It keeps restarting but has heard nothing. Likely it's getting silence: try "Pause voice ID mic" below and
+              say "Hey Jarvis" again.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
