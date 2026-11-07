@@ -3,6 +3,8 @@ import { ArrowLeft, EyeOff, Loader2, Play, RefreshCw, Star, Square } from 'lucid
 import {
   DEFAULT_TUNING,
   LabMetrics,
+  LabPolish,
+  setPolish as applyPolishSettings,
   LabVoice,
   VoiceTuning,
   cellKey,
@@ -20,6 +22,21 @@ const TEST_LINES = [
 
 const BLIND_STORAGE_KEY = 'jarvis_voice_lab_blind';
 const TUNING_STORAGE_KEY = 'jarvis_voice_lab_tuning';
+const POLISH_STORAGE_KEY = 'jarvis_voice_lab_polish';
+
+function loadPolish(): LabPolish {
+  // Start from the EQ the live app currently uses (Voice Lab settings), pitch unchanged
+  let live = { warmthDb: 2.2, presenceDb: 2.4, intercomWet: 0.08 };
+  try {
+    live = { ...live, ...JSON.parse(localStorage.getItem('jarvis_voice_tuning') || '{}') };
+  } catch {}
+  const base: LabPolish = { enabled: false, warmthDb: live.warmthDb, presenceDb: live.presenceDb, intercomWet: live.intercomWet, pitchSemitones: 0 };
+  try {
+    return { ...base, ...JSON.parse(localStorage.getItem(POLISH_STORAGE_KEY) || '{}') };
+  } catch {
+    return base;
+  }
+}
 
 function loadTunings(): Record<string, VoiceTuning> {
   try {
@@ -100,6 +117,14 @@ export const VoiceComparisonPage: React.FC = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [blind, setBlind] = useState<BlindState | null>(() => loadBlindState());
+  const [polish, setPolishState] = useState<LabPolish>(() => loadPolish());
+  useEffect(() => {
+    applyPolishSettings(polish);
+    try {
+      localStorage.setItem(POLISH_STORAGE_KEY, JSON.stringify(polish));
+    } catch {}
+  }, [polish]);
+
   // Per-voice delivery tuning (Deepgram speed / Flux expressivity); each setting is its own cached clip
   const [tunings, setTunings] = useState<Record<string, VoiceTuning>>(() => loadTunings());
   const tuningFor = useCallback((v: LabVoice) => (v.tunable ? tunings[v.id] || DEFAULT_TUNING : undefined), [tunings]);
@@ -256,6 +281,8 @@ export const VoiceComparisonPage: React.FC = () => {
           className="w-full bg-black/80 border border-amber-800 focus:border-amber-400 rounded-lg px-3 py-2 text-sm text-amber-100 placeholder-amber-800 outline-none"
         />
       </label>
+
+      <PolishPanel polish={polish} onChange={(patch) => setPolishState((p) => ({ ...p, ...patch }))} />
 
       {blind && !blind.revealed && (
         <div className="text-xs text-amber-300 bg-amber-950/30 border border-amber-800 rounded-lg p-3">
@@ -468,6 +495,60 @@ const MetricsView: React.FC<{ metrics: LabMetrics; fromCache: boolean }> = ({ me
     </div>
   </div>
 );
+
+const PolishPanel: React.FC<{ polish: LabPolish; onChange: (patch: Partial<LabPolish>) => void }> = ({
+  polish,
+  onChange,
+}) => {
+  const slider = (
+    label: string,
+    key: 'warmthDb' | 'presenceDb' | 'intercomWet' | 'pitchSemitones',
+    min: number,
+    max: number,
+    step: number,
+    fmt: (v: number) => string
+  ) => (
+    <label className="block min-w-[150px] flex-1">
+      <div className="flex justify-between text-[10px]">
+        <span className="text-amber-300">{label}</span>
+        <span className="text-amber-200 font-mono-tech">{fmt(polish[key])}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={polish[key]}
+        disabled={!polish.enabled}
+        onChange={(e) => onChange({ [key]: Number(e.target.value) })}
+        className="w-full accent-amber-400 disabled:opacity-40"
+      />
+    </label>
+  );
+  const db = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+  return (
+    <div className="rounded-xl border border-amber-800/70 bg-amber-950/20 p-3 space-y-2">
+      <label className="flex items-center gap-2 text-xs text-amber-200">
+        <input
+          type="checkbox"
+          checked={polish.enabled}
+          onChange={(e) => onChange({ enabled: e.target.checked })}
+          className="accent-amber-400"
+        />
+        <span>
+          <strong>Jarvis polish</strong>: hear every voice through the live app's sound processing, plus a pitch
+          shift. Applies to replays instantly at no cost (clips then play after download).
+        </span>
+      </label>
+      <div className="flex flex-wrap gap-4">
+        {slider('Pitch', 'pitchSemitones', -3, 3, 0.25, (v) => `${v > 0 ? '+' : ''}${v} semitones`)}
+        {slider('Chest warmth', 'warmthDb', -3, 6, 0.5, db)}
+        {slider('Diction crispness', 'presenceDb', -2, 6, 0.5, db)}
+        {slider('Suit intercom sheen', 'intercomWet', 0, 0.3, 0.01, (v) => `${Math.round(v * 100)}%`)}
+      </div>
+    </div>
+  );
+};
 
 const TuningControls: React.FC<{
   voice: LabVoice;

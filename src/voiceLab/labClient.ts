@@ -1,3 +1,5 @@
+import { pitchShiftSamples } from './pitchShift';
+
 // Client for the voice comparison lab: fetches audio from /api/voice-lab, plays it as it streams,
 // measures latency, and caches every clip in IndexedDB so replays never call a provider again.
 
@@ -162,10 +164,101 @@ function pcmToBuffer(bytes: Uint8Array, sampleRate: number): AudioBuffer {
   return buffer;
 }
 
+// ---------------------------------------------------------------------------
+// "Jarvis polish": the live app's vocal chain (audioEngine.connectJarvisVocalChain) reproduced
+// here so any provider can be heard as it would sound inside Jarvis, plus an optional pitch shift.
+// Applied at playback, so it works on cached clips and costs no API calls.
+// ---------------------------------------------------------------------------
+export interface LabPolish {
+  enabled: boolean;
+  warmthDb: number;
+  presenceDb: number;
+  intercomWet: number;
+  pitchSemitones: number;
+}
+
+let polish: LabPolish = { enabled: false, warmthDb: 2.2, presenceDb: 2.4, intercomWet: 0.08, pitchSemitones: 0 };
+
+export function setPolish(next: LabPolish) {
+  polish = { ...next };
+}
+
+/** Polish needs the whole clip (pitch shift) and the Web Audio graph, so it plays after download. */
+function polishActive() {
+  return polish.enabled;
+}
+
+function connectPolishChain(source: AudioNode, c: AudioContext) {
+  const t = c.currentTime;
+  const highPass = c.createBiquadFilter();
+  highPass.type = 'highpass';
+  highPass.frequency.setValueAtTime(80, t);
+  highPass.Q.setValueAtTime(0.7, t);
+  const chest = c.createBiquadFilter();
+  chest.type = 'peaking';
+  chest.frequency.setValueAtTime(190, t);
+  chest.gain.setValueAtTime(polish.warmthDb, t);
+  chest.Q.setValueAtTime(1.1, t);
+  const boxCut = c.createBiquadFilter();
+  boxCut.type = 'peaking';
+  boxCut.frequency.setValueAtTime(480, t);
+  boxCut.gain.setValueAtTime(-1.5, t);
+  boxCut.Q.setValueAtTime(1.4, t);
+  const presence = c.createBiquadFilter();
+  presence.type = 'peaking';
+  presence.frequency.setValueAtTime(3650, t);
+  presence.gain.setValueAtTime(polish.presenceDb, t);
+  presence.Q.setValueAtTime(1.2, t);
+  const air = c.createBiquadFilter();
+  air.type = 'highshelf';
+  air.frequency.setValueAtTime(9200, t);
+  air.gain.setValueAtTime(1.6, t);
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.setValueAtTime(-20, t);
+  comp.knee.setValueAtTime(12, t);
+  comp.ratio.setValueAtTime(3, t);
+  comp.attack.setValueAtTime(0.003, t);
+  comp.release.setValueAtTime(0.15, t);
+  const dry = c.createGain();
+  dry.gain.setValueAtTime(0.96, t);
+  const delay = c.createDelay(0.05);
+  delay.delayTime.setValueAtTime(0.011, t);
+  const wetFilter = c.createBiquadFilter();
+  wetFilter.type = 'bandpass';
+  wetFilter.frequency.setValueAtTime(1800, t);
+  wetFilter.Q.setValueAtTime(0.9, t);
+  const wet = c.createGain();
+  wet.gain.setValueAtTime(polish.intercomWet, t);
+  const master = c.createGain();
+  master.gain.setValueAtTime(1.06, t);
+
+  source.connect(highPass);
+  highPass.connect(chest);
+  chest.connect(boxCut);
+  boxCut.connect(presence);
+  presence.connect(air);
+  air.connect(comp);
+  comp.connect(dry);
+  dry.connect(master);
+  comp.connect(delay);
+  delay.connect(wetFilter);
+  wetFilter.connect(wet);
+  wet.connect(master);
+  master.connect(c.destination);
+}
+
+function applyPitch(buffer: AudioBuffer): AudioBuffer {
+  if (!polish.enabled || !polish.pitchSemitones) return buffer;
+  const shifted = ctx().createBuffer(1, buffer.length, buffer.sampleRate);
+  shifted.copyToChannel(pitchShiftSamples(buffer.getChannelData(0), polish.pitchSemitones) as Float32Array<ArrayBuffer>, 0);
+  return shifted;
+}
+
 function playBuffer(buffer: AudioBuffer, when = 0): AudioBufferSourceNode {
   const source = ctx().createBufferSource();
-  source.buffer = buffer;
-  source.connect(ctx().destination);
+  source.buffer = polishActive() ? applyPitch(buffer) : buffer;
+  if (polishActive()) connectPolishChain(source, ctx());
+  else source.connect(ctx().destination);
   source.onended = () => activeSources.delete(source);
   activeSources.add(source);
   source.start(when);
@@ -308,7 +401,8 @@ export async function playCell(opts: {
   // PCM: schedule each chunk on the Web Audio clock as it arrives
   let nextTime = 0;
   let leftover: Uint8Array | null = null;
-  const mp3Player = format === 'mp3' ? createMp3StreamPlayer(mySession, () => markAudible()) : null;
+  const mp3Player =
+    format === 'mp3' && !polishActive() ? createMp3StreamPlayer(mySession, () => markAudible()) : null;
   if (mp3Player) streamedPlayback = true;
 
   for (;;) {
@@ -317,7 +411,7 @@ export async function playCell(opts: {
     if (!value || value.byteLength === 0) continue;
     chunks.push(value);
 
-    if (format === 'pcm16' && session === mySession) {
+    if (format === 'pcm16' && session === mySession && !polishActive()) {
       let data = value;
       if (leftover) {
         data = concat([leftover, value]);
@@ -348,7 +442,7 @@ export async function playCell(opts: {
 
   // Non-streamed formats (and MP3 where MSE is unavailable): play once fully downloaded
   let decoded: AudioBuffer | null = null;
-  if (format === 'wav' || (format === 'mp3' && !mp3Player)) {
+  if (format === 'wav' || (format === 'mp3' && !mp3Player) || (format === 'pcm16' && polishActive())) {
     decoded = await decodeBytes(format, bytes, sampleRate);
     if (session === mySession) {
       playBuffer(decoded);
