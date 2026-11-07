@@ -5,7 +5,7 @@ import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
-import { streamJarvisCommand } from './services/jarvisBackend';
+import { streamJarvisCommand, JarvisBackendError } from './services/jarvisBackend';
 import { ReplyStreamProcessor } from './services/replyStream';
 import { voiceBiometrics } from './services/voiceBiometrics';
 import { handleJarvisResponse, duckVolume, restoreVolume } from './services/youtubeController';
@@ -19,7 +19,7 @@ const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)
 // How long to wait for the n8n agent before playing a spoken "One moment, sir."
 const ACK_DELAY_MS = 700;
 
-// Spoken when the n8n run fails (HTTP error, network error or a {"type":"error"} stream line)
+// Spoken when the n8n run fails. "partial" = the connection dropped after part of the reply.
 function failureMessage(partial: boolean): string {
   return partial
     ? 'My apologies, sir. I lost the link to the n8n matrix mid-reply.'
@@ -248,6 +248,7 @@ export const App: React.FC = () => {
     });
 
     let failed = false;
+    let connectionDropped = false;
     try {
       // POST enriched payload with speaker attribution to n8n webhook; text streams in via onText
       await streamJarvisCommand(
@@ -273,6 +274,8 @@ export const App: React.FC = () => {
         return; // interrupted by the user; the new command takes over
       }
       failed = true;
+      // JarvisBackendError = the run failed (HTTP error / unanswered error event); anything else = link dropped
+      connectionDropped = !(err instanceof JarvisBackendError);
       console.warn('[Jarvis] Reply failed:', err);
     } finally {
       if (requestAbortRef.current === controller) requestAbortRef.current = null;
@@ -286,7 +289,7 @@ export const App: React.FC = () => {
 
     if (failed) {
       audioEngine.playSfx('error');
-      const errText = failureMessage(finalText.length > 0);
+      const errText = failureMessage(connectionDropped && finalText.length > 0);
       const shown = finalText ? `${finalText}\n${errText}` : errText;
       setLastResponse(shown);
       speech.enqueue(errText);

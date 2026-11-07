@@ -21,7 +21,11 @@ export const JARVIS_WEBHOOK_URL =
   (import.meta.env.VITE_JARVIS_WEBHOOK_URL as string | undefined)?.trim() ||
   'https://n8n.wolfcubventures.com/webhook/jarvis-command';
 
-/** The n8n run itself reported an error ({"type":"error"} line or HTTP failure). */
+/**
+ * The n8n run failed: an HTTP error, or the stream ended with an "error" event and no reply
+ * text after it. A dropped connection is not this error (it surfaces as a plain Error).
+ * The message is generic on purpose: n8n's error content is raw backend detail.
+ */
 export class JarvisBackendError extends Error {
   constructor(message: string) {
     super(message);
@@ -82,7 +86,9 @@ function isStreamLine(line: string): boolean {
  *
  * - Non-JSON Content-Type (n8n "streaming" response mode): newline-delimited JSON
  *   {"type":"begin"|"item"|"end"|"error", "content"?: "..."}; the "content" of every item is
- *   concatenated. An "error" line throws JarvisBackendError.
+ *   concatenated. An "error" line (e.g. a failed tool) is logged and reading continues, since
+ *   the agent usually goes on to explain the failure. If the stream ends with no item text after
+ *   the last error, this throws JarvisBackendError.
  * - application/json: the old {"output": "..."} reply. As a safety net the body is still sniffed:
  *   if its first line is a stream event, it is parsed as a stream.
  *
@@ -99,10 +105,13 @@ export async function streamJarvisCommand(
   let firstTextAt: number | null = null;
   let mode: 'stream' | 'legacy' | 'sniff' = 'sniff';
   let reply = '';
+  /** An "error" event arrived and no item text has followed it yet */
+  let errorUnanswered = false;
 
   const emit = (delta: string) => {
     if (!delta) return;
     if (firstTextAt === null) firstTextAt = performance.now();
+    errorUnanswered = false;
     reply += delta;
     onText?.(delta);
   };
@@ -120,10 +129,11 @@ export async function streamJarvisCommand(
     if (event.type === 'item') {
       if (typeof event.content === 'string') emit(event.content);
     } else if (event.type === 'error') {
-      console.error('[Jarvis Backend] n8n run reported an error:', event);
-      throw new JarvisBackendError(
-        typeof event.content === 'string' && event.content ? event.content : 'n8n run failed'
-      );
+      // Not fatal: a failed tool reports here and the agent then continues with a normal reply.
+      // Never shown or spoken: the content is raw backend detail.
+      const nodeName = (event.metadata as { nodeName?: unknown } | undefined)?.nodeName;
+      console.warn(`[Jarvis Backend] n8n error event from ${String(nodeName ?? 'unknown node')}:`, event.content);
+      errorUnanswered = true;
     }
     // begin / end: ignored (there can be several pairs when the agent calls tools)
   };
@@ -160,6 +170,7 @@ export async function streamJarvisCommand(
       if (mode === 'stream' || text.split('\n').some(isStreamLine)) {
         mode = 'stream';
         text.split('\n').forEach(handleStreamLine);
+        if (errorUnanswered) throw new JarvisBackendError('n8n run ended with an error and no reply');
       } else {
         mode = 'legacy';
         emit(extractLegacyText(text));
@@ -209,6 +220,9 @@ export async function streamJarvisCommand(
       throw err;
     }
 
+    if (errorUnanswered) {
+      throw new JarvisBackendError('n8n run ended with an error and no reply');
+    }
     if (!reply.trim()) console.warn('[Jarvis Backend] Reply was empty');
     logTiming('done');
     return reply;
