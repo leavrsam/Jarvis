@@ -1,6 +1,7 @@
 // Singleton Web Audio API & Gemini 3.8 Expressive TTS Engine for J.A.R.V.I.S.
 import { voiceBiometrics } from './voiceBiometrics';
 import { stripPauseTags } from './replyStream';
+import { notifyAuthRequired } from './auth';
 
 export type JarvisAudioState = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -700,6 +701,7 @@ class JarvisAudioEngine {
         body: JSON.stringify(body),
         signal: timeoutController.signal,
       });
+      if (response.status === 401) notifyAuthRequired();
       if (!response.ok) {
         const reason =
           response.headers.get('X-TTS-Error') ||

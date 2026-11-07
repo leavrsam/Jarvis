@@ -393,12 +393,11 @@ export async function playCell(opts: {
   text: string;
   regenerate: boolean;
   gemini: { voice: string; style: string; apiKey: string };
-  secret: string;
   tuning?: VoiceTuning;
   /** Generate and cache without playing (used by auto-match) */
   silent?: boolean;
 }): Promise<PlayResult> {
-  const { voice, text, regenerate, gemini, secret, tuning, silent } = opts;
+  const { voice, text, regenerate, gemini, tuning, silent } = opts;
   const key = cellKey(voice, text, gemini, tuning);
   const isReference = voice.provider === 'gemini';
 
@@ -417,7 +416,6 @@ export async function playCell(opts: {
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-jarvis-secret': secret,
   };
   if (voice.provider === 'gemini' && gemini.apiKey) headers['x-gemini-api-key'] = gemini.apiKey;
 
@@ -434,6 +432,7 @@ export async function playCell(opts: {
       tuning: voice.tunable ? tuning || DEFAULT_TUNING : undefined,
     }),
   });
+  if (response.status === 401) throw new Error('Not logged in: unlock Jarvis first, then reload this page.');
   if (!response.ok || !response.body) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${response.status}`);

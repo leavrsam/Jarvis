@@ -8,6 +8,7 @@ import path from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
+import { requireSession } from './_lib/session.js';
 
 // Same-origin only + 60 requests per IP per minute (generating a full grid is ~40 clips)
 const labLimiter = createRateLimiter(60);
@@ -485,16 +486,6 @@ function writeCache(key, entry) {
   } catch {}
 }
 
-// ---------------------------------------------------------------------------
-// Access guard: same passcode as the HUD. It is a deterrent against drive-by use of your
-// API keys, not strong auth (the HUD passcode ships in the client bundle).
-// ---------------------------------------------------------------------------
-function authorized(req) {
-  const expected = (process.env.VITE_JARVIS_SECRET || process.env.JARVIS_SECRET || 'wolfcub').trim().toLowerCase();
-  const given = (req.headers['x-jarvis-secret'] || '').toString().trim().toLowerCase();
-  return given && given === expected;
-}
-
 function sendJson(res, status, obj) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -509,10 +500,8 @@ function contentTypeFor(format, sampleRate) {
 
 export default async function handler(req, res) {
   if (!guardRequest(req, res, labLimiter)) return;
-  if (!authorized(req)) {
-    sendJson(res, 401, { error: 'Unlock the Jarvis HUD first (passcode required).' });
-    return;
-  }
+  // Logged-in HUD session required (see api/auth.js)
+  if (!requireSession(req, res)) return;
 
   const params = req.method === 'POST' ? req.body || {} : req.query || {};
 

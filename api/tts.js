@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { MsEdgeTTS, OUTPUT_FORMAT, ProsodyOptions } from 'msedge-tts';
 import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
+import { requireSession } from './_lib/session.js';
 
 const ALLOWED_EDGE_VOICES = new Set([
   'en-GB-RyanNeural',
@@ -333,6 +334,8 @@ const ttsLimiter = createRateLimiter(60);
 export default async function handler(req, res) {
   // No CORS headers: other sites' pages can't call this. (Previously Access-Control-Allow-Origin: *)
   if (!guardRequest(req, res, ttsLimiter)) return;
+  // Logged-in HUD session required (see api/auth.js)
+  if (!requireSession(req, res)) return;
 
   try {
     const params = req.method === 'POST' ? req.body || {} : req.query || {};

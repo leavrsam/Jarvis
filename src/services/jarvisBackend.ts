@@ -1,3 +1,5 @@
+import { notifyAuthRequired } from './auth';
+
 export interface JarvisCommandPayload {
   query: string;
   sessionId?: string;
@@ -161,6 +163,10 @@ export async function streamJarvisCommand(
       signal,
     });
 
+    if (res.status === 401) {
+      notifyAuthRequired(); // session expired or revoked: show the login screen
+      throw new JarvisBackendError('Not logged in', 'unreachable');
+    }
     if (!res.ok) {
       // The proxy answers 4xx/5xx with a short JSON code (never n8n's raw error body)
       const code = await res

@@ -18,7 +18,6 @@ interface Props {
   voices: LabVoice[];
   lines: string[];
   gemini: { voice: string; style: string; apiKey: string };
-  secret: string;
   tuningFor: (v: LabVoice) => VoiceTuning | undefined;
   onTuningChange: (id: string, patch: Partial<VoiceTuning>) => void;
   polish: LabPolish;
@@ -51,7 +50,6 @@ export const AutoMatchPanel: React.FC<Props> = ({
   voices,
   lines,
   gemini,
-  secret,
   tuningFor,
   onTuningChange,
   polish,
@@ -87,7 +85,7 @@ export const AutoMatchPanel: React.FC<Props> = ({
     let buffer = await getCachedBuffer(key);
     if (!buffer) {
       setStatus(`Generating "${line.slice(0, 32)}..." for ${voice.voiceName}`);
-      await playCell({ voice, text: line, regenerate: false, gemini, secret, tuning, silent: true });
+      await playCell({ voice, text: line, regenerate: false, gemini, tuning, silent: true });
       generatedCount.n++;
       buffer = await getCachedBuffer(key);
     }

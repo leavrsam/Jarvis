@@ -1,33 +1,51 @@
 import React, { useState } from 'react';
 import { ShieldAlert, Lock, KeyRound, AlertTriangle, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { audioEngine } from '../services/audioEngine';
+import { login } from '../services/auth';
 
 interface SecurityGateProps {
   onUnlock: () => void;
-  expectedSecret: string;
+  /** False when the server has no JARVIS_LOGIN_PASSWORD / JARVIS_SESSION_SECRET set */
+  serverConfigured: boolean;
 }
 
-export const SecurityGate: React.FC<SecurityGateProps> = ({ onUnlock, expectedSecret }) => {
+export const SecurityGate: React.FC<SecurityGateProps> = ({ onUnlock, serverConfigured }) => {
   const [passcode, setPasscode] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(
+    serverConfigured ? null : 'LOGIN NOT CONFIGURED ON SERVER // SET JARVIS_LOGIN_PASSWORD + JARVIS_SESSION_SECRET'
+  );
   const [showPassword, setShowPassword] = useState(false);
-  const [attempts, setAttempts] = useState(0);
+  const [checking, setChecking] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Passcode is verified on the server; a valid one sets an HttpOnly session cookie
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanInput = passcode.trim();
-    const cleanSecret = expectedSecret.trim();
+    if (!cleanInput || checking) return;
+    audioEngine.ensureContext();
+    setChecking(true);
+    const result = await login(cleanInput);
+    setChecking(false);
 
-    if (cleanInput && (cleanInput === cleanSecret || cleanInput.toLowerCase() === cleanSecret.toLowerCase())) {
-      audioEngine.ensureContext();
+    if (result.ok) {
       audioEngine.playSfx('activate');
-      localStorage.setItem('jarvis_auth_token', cleanInput);
+      setPasscode('');
       onUnlock();
+      return;
+    }
+    audioEngine.playSfx('error');
+    if (result.reason === 'invalid') {
+      setError(
+        result.attemptsLeft > 0
+          ? `ACCESS DENIED // ${result.attemptsLeft} ATTEMPT${result.attemptsLeft === 1 ? '' : 'S'} LEFT`
+          : 'ACCESS DENIED'
+      );
+    } else if (result.reason === 'locked') {
+      setError(`LOCKED // TOO MANY ATTEMPTS. TRY AGAIN IN ${Math.ceil(result.retryAfterSeconds / 60)} MIN`);
+    } else if (result.reason === 'not_configured') {
+      setError('LOGIN NOT CONFIGURED ON SERVER // SET JARVIS_LOGIN_PASSWORD + JARVIS_SESSION_SECRET');
     } else {
-      audioEngine.ensureContext();
-      audioEngine.playSfx('error');
-      setError(true);
-      setAttempts(prev => prev + 1);
+      setError('CANNOT REACH SERVER // CHECK CONNECTION');
     }
   };
 
@@ -73,7 +91,7 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ onUnlock, expectedSe
               value={passcode}
               onChange={(e) => {
                 setPasscode(e.target.value);
-                if (error) setError(false);
+                if (error && serverConfigured) setError(null);
               }}
               placeholder="ENTER AUTHORIZATION PASSCODE"
               autoFocus
@@ -98,19 +116,19 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ onUnlock, expectedSe
 
           {/* Error Message */}
           {error && (
-            <div className="flex items-center justify-center space-x-1.5 text-red-400 text-[11px] sm:text-xs font-orbitron tracking-wider animate-bounce text-center">
+            <div role="alert" className="flex items-center justify-center space-x-1.5 text-red-400 text-[11px] sm:text-xs font-orbitron tracking-wider text-center">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              <span>ACCESS DENIED // INVALID CODE ({attempts})</span>
+              <span>{error}</span>
             </div>
           )}
 
           {/* Authenticate Button */}
           <button
             type="submit"
-            disabled={!passcode.trim()}
+            disabled={!passcode.trim() || checking}
             className="group relative flex items-center justify-center space-x-2 w-full py-2.5 sm:py-3 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/70 hover:border-amber-400 text-amber-300 font-orbitron font-semibold text-xs tracking-[0.2em] sm:tracking-[0.25em] rounded-lg transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)] disabled:opacity-40 disabled:cursor-not-allowed uppercase touch-manipulation"
           >
-            <span>AUTHENTICATE</span>
+            <span>{checking ? 'VERIFYING...' : 'AUTHENTICATE'}</span>
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
           </button>
         </form>
@@ -121,7 +139,7 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ onUnlock, expectedSe
             <ShieldAlert className="w-3 h-3 text-amber-500/80" />
             <span>SESSION: jarvis-web</span>
           </span>
-          <span>AUTH PERSIST: CACHED</span>
+          <span>SESSION: 30 DAYS, AUTO-RENEW</span>
         </div>
       </div>
     </div>

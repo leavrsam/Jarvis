@@ -7,6 +7,8 @@ import ttsHandler from './api/tts.js';
 import voiceLabHandler from './api/voice-lab.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import jarvisCommandHandler from './api/jarvis-command.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import authHandler from './api/auth.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -29,8 +31,8 @@ export default defineConfig(({ mode }) => {
     'JARVIS_WEBHOOK_URL',
     'JARVIS_WEBHOOK_SECRET',
     'JARVIS_ALLOWED_ORIGINS',
-    'JARVIS_SECRET',
-    'VITE_JARVIS_SECRET',
+    'JARVIS_LOGIN_PASSWORD',
+    'JARVIS_SESSION_SECRET',
   ]) {
     if (env[name] && !process.env[name]) process.env[name] = env[name];
   }
@@ -46,6 +48,10 @@ export default defineConfig(({ mode }) => {
         configureServer(server) {
           server.middlewares.use('/api/jarvis-command', (req, res) => {
             void jarvisCommandHandler(req, res);
+          });
+          // Login / logout / session status
+          server.middlewares.use('/api/auth', (req, res) => {
+            void authHandler(req, res);
           });
         },
       },

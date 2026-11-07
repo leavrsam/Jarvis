@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, EyeOff, Loader2, Play, RefreshCw, Star, Square } from 'lucide-react';
 import { AutoMatchPanel } from './AutoMatchPanel';
+import { checkSession } from '../services/auth';
 import {
   DEFAULT_TUNING,
   LabMetrics,
@@ -109,7 +110,11 @@ const fmtSec = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
 const fmtCost = (usd: number) => (usd === 0 ? '$0' : usd < 0.0001 ? '<$0.0001' : `$${usd.toFixed(4)}`);
 
 export const VoiceComparisonPage: React.FC = () => {
-  const secret = readLocal('jarvis_auth_token');
+  // Server session (HttpOnly cookie); null while checking
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  useEffect(() => {
+    checkSession().then((st) => setSignedIn(st.authenticated));
+  }, []);
   const gemini = useMemo(() => {
     let style = '';
     try {
@@ -150,10 +155,15 @@ export const VoiceComparisonPage: React.FC = () => {
     });
 
   useEffect(() => {
-    const headers: Record<string, string> = { 'x-jarvis-secret': secret };
+    if (!signedIn) return;
+    const headers: Record<string, string> = {};
     if (gemini.apiKey) headers['x-gemini-api-key'] = gemini.apiKey;
     fetch('/api/voice-lab?action=providers', { headers })
       .then(async (r) => {
+        if (r.status === 401) {
+          setSignedIn(false);
+          return;
+        }
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         setVoices(data.voices);
@@ -161,7 +171,7 @@ export const VoiceComparisonPage: React.FC = () => {
       .catch((e) => setLoadError(String(e.message || e)));
     reloadCachedResults();
     return () => stopAll();
-  }, [secret, gemini.apiKey]);
+  }, [signedIn, gemini.apiKey]);
 
   function reloadCachedResults() {
     loadAllCachedMetrics().then((all) => {
@@ -196,7 +206,7 @@ export const VoiceComparisonPage: React.FC = () => {
         return next;
       });
       try {
-        const res = await playCell({ voice, text, regenerate, gemini, secret, tuning });
+        const res = await playCell({ voice, text, regenerate, gemini, tuning });
         setResults((r) => ({ ...r, [key]: { metrics: res.metrics, fromCache: res.fromBrowserCache } }));
       } catch (err) {
         setErrors((e) => ({ ...e, [key]: String((err as Error).message || err) }));
@@ -204,7 +214,7 @@ export const VoiceComparisonPage: React.FC = () => {
         setBusy((b) => (b === key ? null : b));
       }
     },
-    [gemini, secret, tuningFor]
+    [gemini, tuningFor]
   );
 
   const startBlind = () => {
@@ -235,10 +245,11 @@ export const VoiceComparisonPage: React.FC = () => {
       .sort((a, b) => b.rating - a.rating);
   }, [blind, rows, lines, results, gemini, tuningFor]);
 
-  if (!secret) {
+  if (signedIn === null) return <Shell>{null}</Shell>;
+  if (!signedIn) {
     return (
       <Shell>
-        <p className="text-amber-200">Unlock the Jarvis HUD first, then come back to this page.</p>
+        <p className="text-amber-200">Log in to Jarvis first, then come back to this page.</p>
         <a href="#" className="text-amber-400 underline">
           Back to Jarvis
         </a>
@@ -303,7 +314,6 @@ export const VoiceComparisonPage: React.FC = () => {
           voices={voices}
           lines={TEST_LINES}
           gemini={gemini}
-          secret={secret}
           tuningFor={tuningFor}
           onTuningChange={setTuning}
           polish={polish}

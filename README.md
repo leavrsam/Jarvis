@@ -68,10 +68,27 @@ A full-screen, futuristic sci-fi voice assistant web HUD inspired by Stark Indus
 - Prioritizes British voices: `en-GB-RyanNeural` (Microsoft Edge Natural Voice), `Google UK English Male`, `Daniel`, and `en-GB` variants.
 - Routes synthesized voice cadences into the Web Audio `AnalyserNode` to drive real-time visualizer oscillations during vocal playback.
 
-### 6. Persistent Password Security Gate
-- Cached authorization (`localStorage.getItem('jarvis_auth_token')`) so you only enter the passcode once per device.
-- Configurable via `VITE_JARVIS_SECRET` (defaults to `wolfcub`).
-- Re-lock console button in the top bar.
+### 6. Server-Side Login
+- The passcode is checked **on the server** (`api/auth.js`) against `JARVIS_LOGIN_PASSWORD`, using scrypt
+  (deliberately slow) and a constant-time comparison. Nothing secret is in the browser code.
+- **Lockout:** 5 wrong passcodes from one IP within 15 minutes lock that IP for 15 minutes; 20 failures from
+  all IPs within an hour lock new logins for 15 minutes. Devices already logged in keep working.
+- A successful login sets an **HttpOnly, Secure, SameSite=Strict** cookie (`__Host-jarvis_session`), signed
+  with `JARVIS_SESSION_SECRET`. It lasts **30 days and renews itself** whenever it's used (at most every
+  12 hours), so an always-on device stays logged in indefinitely.
+- `/api/jarvis-command`, `/api/tts` and `/api/voice-lab` answer **401** without a valid session; the app then
+  shows the login screen.
+- The lock button in the top bar logs this device out. To log **every** device out, change
+  `JARVIS_SESSION_SECRET` (or the password) and redeploy.
+- Because the cookie is `Secure`, logging in needs HTTPS (or `localhost` during development).
+
+| Server env var (never `VITE_`) | Value |
+|---|---|
+| `JARVIS_LOGIN_PASSWORD` | The passcode you type on the login screen |
+| `JARVIS_SESSION_SECRET` | A random string of at least 32 characters, e.g. from `openssl rand -base64 32` |
+
+If either is missing (or the secret is shorter than 32 characters), nobody can log in and the login
+screen says what to set.
 
 ---
 
@@ -104,13 +121,13 @@ All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`) share `a
 - **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
-- `/api/voice-lab` additionally requires the HUD passcode header.
+- All three also require a logged-in session (see **Server-Side Login**).
 
 ---
 
 ## 🎧 Voice Comparison Lab (pick Jarvis's TTS provider by ear)
 
-Open it from **VOICE → Compare TTS providers by ear**, or go to `/#/voice-compare` (unlock the HUD first).
+Open it from **VOICE → Compare TTS providers by ear**, or go to `/#/voice-compare` (log in first).
 It plays the same test lines through each provider so you can compare them side by side, including a blind
 test with star ratings. It is separate from the live voice: `api/tts.js` and the audio engine are unchanged.
 
@@ -159,8 +176,7 @@ Notes:
   suggests a new speed (one click, then re-run to regenerate) and, for Flux, a delivery step when Gemini's
   intonation is noticeably more or less animated. The Gemini reference is never adjusted.
 - Prices are list prices checked in November 2026; free tiers aren't subtracted in the page's estimates.
-- The lab endpoint requires the HUD passcode header. That deters casual use of your keys but isn't strong
-  auth, since the passcode ships in the client bundle.
+- The lab endpoint requires a logged-in session, like the rest of the app.
 
 ---
 

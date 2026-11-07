@@ -8,6 +8,7 @@
 // isAuthorizedOwner arrive at n8n exactly as the app set them.
 
 import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
+import { requireSession } from './_lib/session.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const limiter = createRateLimiter(30); // requests per IP per minute
@@ -46,6 +47,8 @@ export default async function handler(req, res) {
     return;
   }
   if (!guardRequest(req, res, limiter)) return;
+  // Logged-in HUD session required (see api/auth.js)
+  if (!requireSession(req, res)) return;
 
   const webhookUrl = (process.env.JARVIS_WEBHOOK_URL || '').trim();
   const secret = (process.env.JARVIS_WEBHOOK_SECRET || '').trim();

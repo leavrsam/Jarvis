@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD, WakeWordMode, WakeWordScope } from './components/TelemetryHUD';
 import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
+import { checkSession, logout, onAuthRequired } from './services/auth';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
@@ -12,8 +13,6 @@ import { handleJarvisResponse, duckVolume, restoreVolume } from './services/yout
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useBatteryStatus } from './hooks/useBatteryStatus';
 
-// Passcode configured via VITE_JARVIS_SECRET (Vercel env var) or default secret
-const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)?.trim() || 'wolfcub';
 
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
 // How long to wait for the n8n agent before playing a spoken "One moment, sir."
@@ -31,16 +30,27 @@ function failureMessage(partial: boolean, kind?: string): string {
 const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|thank you jarvis|thanks jarvis|goodbye|bye jarvis|stop listening|go to sleep|stand by|standby)\b/i;
 
 export const App: React.FC = () => {
-  // Authentication state with localStorage caching
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+  // Server-side session (HttpOnly cookie). Checked on load; any protected call answering 401
+  // brings the login screen back.
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
+  const [authConfigured, setAuthConfigured] = useState<boolean>(true);
+  useEffect(() => {
+    let cancelled = false;
+    checkSession().then((status) => {
+      if (cancelled) return;
+      setIsAuthenticated(status.authenticated);
+      setAuthConfigured(status.configured);
+      setAuthChecked(true);
+    });
+    // Old client-side passcode cache; no longer used
     try {
-      const cached = localStorage.getItem('jarvis_auth_token');
-      if (!cached) return false;
-      return cached.trim().toLowerCase() === ACCESS_SECRET.toLowerCase();
-    } catch {
-      return false;
-    }
-  });
+      localStorage.removeItem('jarvis_auth_token');
+    } catch {}
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Battery status & Wake Word power profile
   const battery = useBatteryStatus();
@@ -540,27 +550,38 @@ export const App: React.FC = () => {
     setAudioState('idle');
   }, [interruptCurrentReply]);
 
-  // Lock Console action
+  // Lock Console action: ends the server session on this device
   const handleLockConsole = useCallback(() => {
     inConversationRef.current = false;
-    try {
-      localStorage.removeItem('jarvis_auth_token');
-    } catch {}
     stopListening();
     audioEngine.stopMicListening();
     interruptCurrentReply();
     setAudioState('idle');
     setIsAuthenticated(false);
+    void logout();
   }, [stopListening, interruptCurrentReply]);
 
-  // Render Password Security Gate if not authenticated
+  // Session expired or revoked while running: back to the login screen
+  useEffect(
+    () =>
+      onAuthRequired(() => {
+        inConversationRef.current = false;
+        stopListening();
+        audioEngine.stopMicListening();
+        interruptCurrentReply();
+        setAudioState('idle');
+        setIsAuthenticated(false);
+      }),
+    [stopListening, interruptCurrentReply]
+  );
+
+  if (!authChecked) {
+    return <main className="w-full h-[100dvh] bg-[#02040a] hud-grid" aria-busy="true" />;
+  }
+
+  // Render the login screen if there's no valid session
   if (!isAuthenticated) {
-    return (
-      <SecurityGate
-        onUnlock={() => setIsAuthenticated(true)}
-        expectedSecret={ACCESS_SECRET}
-      />
-    );
+    return <SecurityGate onUnlock={() => setIsAuthenticated(true)} serverConfigured={authConfigured} />;
   }
 
   return (
