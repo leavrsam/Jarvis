@@ -132,6 +132,9 @@ async function synthesizeWithGemini(apiKey, params) {
 
   let base64Audio = null;
   let contentType = 'audio/wav';
+  // Timing breakdown for diagnostics (returned to the client as X-TTS-Path)
+  const pathStart = Date.now();
+  let path = '';
 
   try {
     const interaction = await ai.interactions.create({
@@ -163,8 +166,12 @@ async function synthesizeWithGemini(apiKey, params) {
 
     base64Audio = interaction?.output_audio?.data;
     contentType = interaction?.output_audio?.mime_type || 'audio/wav';
+    path = `interactions ${Date.now() - pathStart}ms`;
   } catch (interactionErr) {
-    console.warn('[/api/tts] Interactions API synthesis fallback:', interactionErr?.message || interactionErr);
+    const failedAfter = Date.now() - pathStart;
+    const reason = String(interactionErr?.message || interactionErr).replace(/[\r\n]+/g, ' ').slice(0, 80);
+    console.warn('[/api/tts] Interactions API synthesis fallback:', reason);
+    const fallbackStart = Date.now();
 
     const res = await ai.models.generateContent({
       model,
@@ -192,6 +199,7 @@ async function synthesizeWithGemini(apiKey, params) {
     const part = res?.candidates?.[0]?.content?.parts?.[0];
     base64Audio = part?.inlineData?.data;
     contentType = part?.inlineData?.mimeType || 'audio/wav';
+    path = `interactions failed after ${failedAfter}ms (${reason}), generateContent ${Date.now() - fallbackStart}ms`;
   }
 
   if (!base64Audio) {
@@ -204,6 +212,7 @@ async function synthesizeWithGemini(apiKey, params) {
     contentType,
     engine: model,
     voiceId,
+    path,
   };
 }
 
@@ -263,7 +272,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-gemini-api-key');
   res.setHeader(
     'Access-Control-Expose-Headers',
-    'X-TTS-Engine, X-Gemini-Voice-Id, X-TTS-Duration-Ms, X-TTS-Error'
+    'X-TTS-Engine, X-Gemini-Voice-Id, X-TTS-Duration-Ms, X-TTS-Error, X-TTS-Path'
   );
 
   if (req.method === 'OPTIONS') {
@@ -352,6 +361,7 @@ export default async function handler(req, res) {
         res.setHeader('X-TTS-Engine', result.engine);
         res.setHeader('X-Gemini-Voice-Id', result.voiceId);
         res.setHeader('X-TTS-Duration-Ms', String(Date.now() - startedAt));
+        if (result.path) res.setHeader('X-TTS-Path', result.path.replace(/[^\x20-\x7E]/g, ''));
         res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
         res.status(200).send(result.buffer);
         return;

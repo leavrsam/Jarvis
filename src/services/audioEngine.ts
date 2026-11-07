@@ -116,8 +116,8 @@ export interface SpeechDiagnostic {
   fallback: boolean;
 }
 
-// Gemini TTS request policy: per-sentence requests, two at a time, one retry in the same voice.
-const MAX_GEMINI_IN_FLIGHT = 2;
+// Gemini TTS request policy: per-sentence requests, three at a time, one retry in the same voice.
+const MAX_GEMINI_IN_FLIGHT = 3;
 const GEMINI_ATTEMPTS = 2;
 const GEMINI_SERVER_TIMEOUT_MS = 15000;
 
@@ -167,6 +167,7 @@ class JarvisAudioEngine {
   // Gemini request throttling + diagnostics
   private geminiInFlight = 0;
   private geminiWaiters: (() => void)[] = [];
+  private geminiHighWaiting = 0;
   private speechDiagnostics: SpeechDiagnostic[] = [];
 
   // Voice Lab tuning (persisted per device)
@@ -633,16 +634,29 @@ class JarvisAudioEngine {
    * Run Gemini TTS requests at most MAX_GEMINI_IN_FLIGHT at a time. Sentences play in order anyway,
    * so firing every sentence at once only invites rate limiting and slows the first ones down.
    */
-  private async withGeminiSlot<T>(task: () => Promise<T>): Promise<T> {
-    while (this.geminiInFlight >= MAX_GEMINI_IN_FLIGHT) {
-      await new Promise<void>((resolve) => this.geminiWaiters.push(resolve));
+  private async withGeminiSlot<T>(task: () => Promise<T>, priority: 'high' | 'low' = 'high'): Promise<T> {
+    // Low priority (pre-making "One moment, sir" clips) never takes the last free slot and always
+    // yields to waiting speech, so it can't delay what Jarvis is actually saying.
+    const canRun = () =>
+      priority === 'high'
+        ? this.geminiInFlight < MAX_GEMINI_IN_FLIGHT
+        : this.geminiInFlight < MAX_GEMINI_IN_FLIGHT - 1 && this.geminiHighWaiting === 0;
+    if (priority === 'high') this.geminiHighWaiting++;
+    try {
+      while (!canRun()) {
+        await new Promise<void>((resolve) => this.geminiWaiters.push(resolve));
+      }
+    } finally {
+      if (priority === 'high') this.geminiHighWaiting--;
     }
     this.geminiInFlight++;
     try {
       return await task();
     } finally {
       this.geminiInFlight--;
-      this.geminiWaiters.shift()?.();
+      // Wake everyone; each re-checks its own condition
+      const waiters = this.geminiWaiters.splice(0);
+      waiters.forEach((w) => w());
     }
   }
 
@@ -701,7 +715,11 @@ class JarvisAudioEngine {
    * once in the same voice; only then does the sentence fall back to the Edge voice, so a reply
    * doesn't switch voices because of one transient error. Fallback audio is never cached.
    */
-  private async fetchSpeechBuffer(spokenText: string, signal: AbortSignal): Promise<AudioBuffer> {
+  private async fetchSpeechBuffer(
+    spokenText: string,
+    signal: AbortSignal,
+    priority: 'high' | 'low' = 'high'
+  ): Promise<AudioBuffer> {
     const ctx = this.ensureContext();
     const preset = this.selectedPreset;
     const effectiveVoice =
@@ -735,13 +753,18 @@ class JarvisAudioEngine {
 
     if (preset.provider !== 'edge') {
       for (let attempt = 1; attempt <= GEMINI_ATTEMPTS; attempt++) {
-        const result = await this.withGeminiSlot(() =>
-          this.requestTts(
+        const queuedAt = performance.now();
+        let sentAt = queuedAt;
+        const result = await this.withGeminiSlot(() => {
+          sentAt = performance.now();
+          return this.requestTts(
             { ...baseBody, provider: preset.provider, fallback: false, geminiTimeoutMs: GEMINI_SERVER_TIMEOUT_MS },
             signal,
             GEMINI_SERVER_TIMEOUT_MS + 3000
-          )
-        );
+          );
+        }, priority);
+        const waitedMs = Math.round(sentAt - queuedAt);
+        if (waitedMs > 300) notes.push(`queued ${(waitedMs / 1000).toFixed(1)}s`);
         if (result.response) {
           const engine = result.response.headers.get('X-TTS-Engine') || preset.model;
           this.lastActiveEngine = engine;
@@ -756,11 +779,19 @@ class JarvisAudioEngine {
               if (oldestKey) this.audioBufferCache.delete(oldestKey);
             }
             this.audioBufferCache.set(cacheKey, audioBuffer);
+            const serverMs = Number(result.response.headers.get('X-TTS-Duration-Ms')) || 0;
+            const path = result.response.headers.get('X-TTS-Path') || '';
+            const detail = [
+              ...notes,
+              serverMs ? `server ${(serverMs / 1000).toFixed(1)}s` : '',
+              path,
+              attempt > 1 ? 'succeeded on retry' : '',
+            ].filter(Boolean);
             this.recordSpeechDiagnostic({
               text: label,
               engine,
               ms: Math.round(performance.now() - startedAt),
-              note: notes.length ? `succeeded on retry (${notes.join('; ')})` : '',
+              note: detail.join('; '),
               fallback: false,
             });
             return audioBuffer;
@@ -852,7 +883,7 @@ class JarvisAudioEngine {
       phrases.map(async (phrase) => {
         if (this.ackBuffers.has(phrase)) return;
         try {
-          const buffer = await this.fetchSpeechBuffer(phrase, controller.signal);
+          const buffer = await this.fetchSpeechBuffer(phrase, controller.signal, 'low');
           this.ackBuffers.set(phrase, buffer);
         } catch {}
       })
