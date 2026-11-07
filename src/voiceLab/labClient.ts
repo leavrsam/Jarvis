@@ -31,6 +31,8 @@ export const DEFAULT_TUNING: VoiceTuning = { speed: 1, expressivity: 0 };
 export interface LabMetrics {
   /** Request sent -> first audio audible */
   ttfaMs: number;
+  /** Request sent -> first audio data received (shows streaming even when playback is buffered) */
+  firstDataMs?: number;
   /** Request sent -> last byte received */
   totalMs: number;
   chars: number;
@@ -442,6 +444,7 @@ export async function playCell(opts: {
   const serverCacheHit = response.headers.get('X-Lab-Cache') === 'HIT';
 
   let ttfaMs = 0;
+  let firstDataMs = 0;
   const markAudible = (extraDelayMs = 0) => {
     if (!ttfaMs) ttfaMs = performance.now() - t0 + extraDelayMs;
   };
@@ -462,6 +465,7 @@ export async function playCell(opts: {
     if (done) break;
     if (!value || value.byteLength === 0) continue;
     chunks.push(value);
+    if (!firstDataMs) firstDataMs = performance.now() - t0;
     if (silent) markAudible(); // nothing plays; record time to first audio data instead
 
     if (format === 'pcm16' && session === mySession && !polishActive()) {
@@ -517,6 +521,7 @@ export async function playCell(opts: {
 
   const metrics: LabMetrics = {
     ttfaMs: Math.round(ttfaMs),
+    firstDataMs: Math.round(firstDataMs),
     totalMs: Math.round(totalMs),
     chars,
     audioSec: Math.round(audioSec * 100) / 100,

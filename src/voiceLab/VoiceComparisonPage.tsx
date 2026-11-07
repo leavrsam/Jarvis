@@ -514,6 +514,11 @@ const MetricsView: React.FC<{ metrics: LabMetrics; fromCache: boolean }> = ({ me
   <div className="text-[10px] font-mono-tech leading-tight text-amber-300/90">
     <div>
       first {fmtSec(metrics.ttfaMs)} · total {fmtSec(metrics.totalMs)}
+      {!metrics.streamedPlayback && metrics.firstDataMs ? (
+        <span title="When the first audio data arrived. Playback waited for the whole clip (polish on or not streamable).">
+          {' '}· data {fmtSec(metrics.firstDataMs)}
+        </span>
+      ) : null}
     </div>
     <div className="text-amber-500">
       {metrics.chars} chars · {fmtCost(metrics.costUsd)}
