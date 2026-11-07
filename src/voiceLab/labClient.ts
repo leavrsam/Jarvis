@@ -169,18 +169,29 @@ function pcmToBuffer(bytes: Uint8Array, sampleRate: number): AudioBuffer {
 // here so any provider can be heard as it would sound inside Jarvis, plus an optional pitch shift.
 // Applied at playback, so it works on cached clips and costs no API calls.
 // ---------------------------------------------------------------------------
+/** Extra adjustments for the voice being matched (never applied to the Gemini reference). */
+export interface MatchAdjust {
+  pitchSemitones: number;
+  warmthDelta: number;
+  presenceDelta: number;
+}
+
+export const NO_MATCH: MatchAdjust = { pitchSemitones: 0, warmthDelta: 0, presenceDelta: 0 };
+
 export interface LabPolish {
   enabled: boolean;
+  /** The live app's EQ, applied to every voice */
   warmthDb: number;
   presenceDb: number;
   intercomWet: number;
-  pitchSemitones: number;
+  /** Auto-match / manual adjustments, applied to every voice except the Gemini reference */
+  match: MatchAdjust;
 }
 
-let polish: LabPolish = { enabled: false, warmthDb: 2.2, presenceDb: 2.4, intercomWet: 0.08, pitchSemitones: 0 };
+let polish: LabPolish = { enabled: false, warmthDb: 2.2, presenceDb: 2.4, intercomWet: 0.08, match: { ...NO_MATCH } };
 
 export function setPolish(next: LabPolish) {
-  polish = { ...next };
+  polish = { ...next, match: { ...NO_MATCH, ...next.match } };
 }
 
 /** Polish needs the whole clip (pitch shift) and the Web Audio graph, so it plays after download. */
@@ -188,7 +199,7 @@ function polishActive() {
   return polish.enabled;
 }
 
-function connectPolishChain(source: AudioNode, c: AudioContext) {
+function connectPolishChain(source: AudioNode, c: BaseAudioContext, adj: MatchAdjust) {
   const t = c.currentTime;
   const highPass = c.createBiquadFilter();
   highPass.type = 'highpass';
@@ -197,7 +208,7 @@ function connectPolishChain(source: AudioNode, c: AudioContext) {
   const chest = c.createBiquadFilter();
   chest.type = 'peaking';
   chest.frequency.setValueAtTime(190, t);
-  chest.gain.setValueAtTime(polish.warmthDb, t);
+  chest.gain.setValueAtTime(polish.warmthDb + adj.warmthDelta, t);
   chest.Q.setValueAtTime(1.1, t);
   const boxCut = c.createBiquadFilter();
   boxCut.type = 'peaking';
@@ -207,7 +218,7 @@ function connectPolishChain(source: AudioNode, c: AudioContext) {
   const presence = c.createBiquadFilter();
   presence.type = 'peaking';
   presence.frequency.setValueAtTime(3650, t);
-  presence.gain.setValueAtTime(polish.presenceDb, t);
+  presence.gain.setValueAtTime(polish.presenceDb + adj.presenceDelta, t);
   presence.Q.setValueAtTime(1.2, t);
   const air = c.createBiquadFilter();
   air.type = 'highshelf';
@@ -247,22 +258,59 @@ function connectPolishChain(source: AudioNode, c: AudioContext) {
   master.connect(c.destination);
 }
 
-function applyPitch(buffer: AudioBuffer): AudioBuffer {
-  if (!polish.enabled || !polish.pitchSemitones) return buffer;
-  const shifted = ctx().createBuffer(1, buffer.length, buffer.sampleRate);
-  shifted.copyToChannel(pitchShiftSamples(buffer.getChannelData(0), polish.pitchSemitones) as Float32Array<ArrayBuffer>, 0);
+function pitched(buffer: AudioBuffer, semitones: number, c: BaseAudioContext = ctx()): AudioBuffer {
+  if (!semitones) return buffer;
+  const shifted = c.createBuffer(1, buffer.length, buffer.sampleRate);
+  shifted.copyToChannel(pitchShiftSamples(buffer.getChannelData(0), semitones) as Float32Array<ArrayBuffer>, 0);
   return shifted;
 }
 
-function playBuffer(buffer: AudioBuffer, when = 0): AudioBufferSourceNode {
+function playBuffer(buffer: AudioBuffer, when = 0, isReference = false): AudioBufferSourceNode {
   const source = ctx().createBufferSource();
-  source.buffer = polishActive() ? applyPitch(buffer) : buffer;
-  if (polishActive()) connectPolishChain(source, ctx());
-  else source.connect(ctx().destination);
+  const adj = isReference ? NO_MATCH : polish.match;
+  if (polishActive()) {
+    source.buffer = pitched(buffer, adj.pitchSemitones);
+    connectPolishChain(source, ctx(), adj);
+  } else {
+    source.buffer = buffer;
+    source.connect(ctx().destination);
+  }
   source.onended = () => activeSources.delete(source);
   activeSources.add(source);
   source.start(when);
   return source;
+}
+
+/**
+ * Render a clip through polish + match adjustments offline (for measuring what you'd hear).
+ * Always applies the chain, whether or not the polish switch is on.
+ */
+export async function renderProcessed(buffer: AudioBuffer, adj: MatchAdjust): Promise<Float32Array> {
+  const offline = new OfflineAudioContext(1, buffer.length, buffer.sampleRate);
+  const source = offline.createBufferSource();
+  source.buffer = pitched(buffer, adj.pitchSemitones, offline);
+  connectPolishChain(source, offline, adj);
+  source.start(0);
+  const rendered = await offline.startRendering();
+  return rendered.getChannelData(0);
+}
+
+/** Decoded audio for a cached cell, or null if it hasn't been generated yet. */
+export async function getCachedBuffer(key: string): Promise<AudioBuffer | null> {
+  const rec = await idbGet(key);
+  if (!rec) return null;
+  return decodeBytes(rec.format, rec.bytes, rec.sampleRate);
+}
+
+/** Play clips back to back (e.g. Gemini then the matched voice) through the current polish. */
+export async function playSequence(items: { buffer: AudioBuffer; isReference: boolean }[]) {
+  stopAll();
+  const c = ctx();
+  let at = c.currentTime + 0.05;
+  for (const item of items) {
+    playBuffer(item.buffer, at, item.isReference);
+    at += item.buffer.duration + 0.6;
+  }
 }
 
 async function decodeBytes(format: ClipRecord['format'], bytes: ArrayBuffer, sampleRate: number) {
@@ -270,10 +318,10 @@ async function decodeBytes(format: ClipRecord['format'], bytes: ArrayBuffer, sam
   return ctx().decodeAudioData(bytes.slice(0));
 }
 
-async function playRecord(record: ClipRecord) {
+async function playRecord(record: ClipRecord, isReference: boolean) {
   stopAll();
   const buffer = await decodeBytes(record.format, record.bytes, record.sampleRate);
-  playBuffer(buffer);
+  playBuffer(buffer, 0, isReference);
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {
@@ -345,20 +393,24 @@ export async function playCell(opts: {
   gemini: { voice: string; style: string; apiKey: string };
   secret: string;
   tuning?: VoiceTuning;
+  /** Generate and cache without playing (used by auto-match) */
+  silent?: boolean;
 }): Promise<PlayResult> {
-  const { voice, text, regenerate, gemini, secret, tuning } = opts;
+  const { voice, text, regenerate, gemini, secret, tuning, silent } = opts;
   const key = cellKey(voice, text, gemini, tuning);
+  const isReference = voice.provider === 'gemini';
 
   if (!regenerate) {
     const cached = await idbGet(key);
     if (cached) {
-      await playRecord(cached);
+      if (!silent) await playRecord(cached, isReference);
       return { metrics: cached.metrics, fromBrowserCache: true };
     }
   }
 
-  stopAll();
-  const mySession = session;
+  if (!silent) stopAll();
+  // A silent fetch must never play: give it a session id that playback can't match
+  const mySession = silent ? -1 : session;
   ctx(); // create/resume inside the click gesture
 
   const headers: Record<string, string> = {
@@ -402,7 +454,7 @@ export async function playCell(opts: {
   let nextTime = 0;
   let leftover: Uint8Array | null = null;
   const mp3Player =
-    format === 'mp3' && !polishActive() ? createMp3StreamPlayer(mySession, () => markAudible()) : null;
+    format === 'mp3' && !polishActive() && !silent ? createMp3StreamPlayer(mySession, () => markAudible()) : null;
   if (mp3Player) streamedPlayback = true;
 
   for (;;) {
@@ -410,6 +462,7 @@ export async function playCell(opts: {
     if (done) break;
     if (!value || value.byteLength === 0) continue;
     chunks.push(value);
+    if (silent) markAudible(); // nothing plays; record time to first audio data instead
 
     if (format === 'pcm16' && session === mySession && !polishActive()) {
       let data = value;
@@ -425,7 +478,7 @@ export async function playCell(opts: {
         const buffer = pcmToBuffer(data, sampleRate);
         const c = ctx();
         const startAt = Math.max(c.currentTime + 0.03, nextTime);
-        playBuffer(buffer, startAt);
+        playBuffer(buffer, startAt, isReference);
         if (!ttfaMs) markAudible((startAt - c.currentTime) * 1000);
         nextTime = startAt + buffer.duration;
         streamedPlayback = true;
@@ -445,7 +498,7 @@ export async function playCell(opts: {
   if (format === 'wav' || (format === 'mp3' && !mp3Player) || (format === 'pcm16' && polishActive())) {
     decoded = await decodeBytes(format, bytes, sampleRate);
     if (session === mySession) {
-      playBuffer(decoded);
+      playBuffer(decoded, 0, isReference);
       markAudible();
     }
   }

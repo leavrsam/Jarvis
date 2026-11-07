@@ -123,6 +123,12 @@ Notes:
   (chest warmth, diction crispness, suit-intercom sheen, starting from your Voice Lab settings), plus a
   pitch shift of up to ±3 semitones. It runs in the browser on cached clips, so it costs nothing. With it
   on, clips play after they finish downloading.
+- **Auto-match to Gemini** (panel above the grid): pick a voice and press *Analyze and match*. It uses
+  the 4 test lines (generating any missing clips once), measures pitch, pitch movement, pace, pauses and
+  tone balance for both voices through the live app's sound, and sets pitch / extra warmth / extra
+  crispness for the matched voice in two refining passes. Pace and delivery are provider settings, so it
+  suggests a new speed (one click, then re-run to regenerate) and, for Flux, a delivery step when Gemini's
+  intonation is noticeably more or less animated. The Gemini reference is never adjusted.
 - Prices are list prices checked in November 2026; free tiers aren't subtracted in the page's estimates.
 - The lab endpoint requires the HUD passcode header. That deters casual use of your keys but isn't strong
   auth, since the passcode ships in the client bundle.

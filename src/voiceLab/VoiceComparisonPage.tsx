@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, EyeOff, Loader2, Play, RefreshCw, Star, Square } from 'lucide-react';
+import { AutoMatchPanel } from './AutoMatchPanel';
 import {
   DEFAULT_TUNING,
   LabMetrics,
   LabPolish,
+  NO_MATCH,
   setPolish as applyPolishSettings,
   LabVoice,
   VoiceTuning,
@@ -30,9 +32,19 @@ function loadPolish(): LabPolish {
   try {
     live = { ...live, ...JSON.parse(localStorage.getItem('jarvis_voice_tuning') || '{}') };
   } catch {}
-  const base: LabPolish = { enabled: false, warmthDb: live.warmthDb, presenceDb: live.presenceDb, intercomWet: live.intercomWet, pitchSemitones: 0 };
+  const base: LabPolish = {
+    enabled: false,
+    warmthDb: live.warmthDb,
+    presenceDb: live.presenceDb,
+    intercomWet: live.intercomWet,
+    match: { ...NO_MATCH },
+  };
   try {
-    return { ...base, ...JSON.parse(localStorage.getItem(POLISH_STORAGE_KEY) || '{}') };
+    const saved = JSON.parse(localStorage.getItem(POLISH_STORAGE_KEY) || '{}');
+    // Older saves kept a single global pitch; it now belongs to the matched voice
+    const match = { ...NO_MATCH, ...(saved.match || {}) };
+    if (typeof saved.pitchSemitones === 'number' && !saved.match) match.pitchSemitones = saved.pitchSemitones;
+    return { ...base, ...saved, match };
   } catch {
     return base;
   }
@@ -147,13 +159,17 @@ export const VoiceComparisonPage: React.FC = () => {
         setVoices(data.voices);
       })
       .catch((e) => setLoadError(String(e.message || e)));
+    reloadCachedResults();
+    return () => stopAll();
+  }, [secret, gemini.apiKey]);
+
+  function reloadCachedResults() {
     loadAllCachedMetrics().then((all) => {
       const restored: Record<string, { metrics: LabMetrics; fromCache: boolean }> = {};
       for (const [k, m] of Object.entries(all)) restored[k] = { metrics: m, fromCache: true };
       setResults((prev) => ({ ...restored, ...prev }));
     });
-    return () => stopAll();
-  }, [secret, gemini.apiKey]);
+  }
 
   useEffect(() => saveBlindState(blind), [blind]);
 
@@ -281,6 +297,20 @@ export const VoiceComparisonPage: React.FC = () => {
           className="w-full bg-black/80 border border-amber-800 focus:border-amber-400 rounded-lg px-3 py-2 text-sm text-amber-100 placeholder-amber-800 outline-none"
         />
       </label>
+
+      {!blind && voices.length > 0 && (
+        <AutoMatchPanel
+          voices={voices}
+          lines={TEST_LINES}
+          gemini={gemini}
+          secret={secret}
+          tuningFor={tuningFor}
+          onTuningChange={setTuning}
+          polish={polish}
+          onPolishChange={(patch) => setPolishState((p) => ({ ...p, ...patch }))}
+          onClipsGenerated={reloadCachedResults}
+        />
+      )}
 
       <PolishPanel polish={polish} onChange={(patch) => setPolishState((p) => ({ ...p, ...patch }))} />
 
@@ -502,7 +532,8 @@ const PolishPanel: React.FC<{ polish: LabPolish; onChange: (patch: Partial<LabPo
 }) => {
   const slider = (
     label: string,
-    key: 'warmthDb' | 'presenceDb' | 'intercomWet' | 'pitchSemitones',
+    value: number,
+    set: (v: number) => void,
     min: number,
     max: number,
     step: number,
@@ -511,23 +542,24 @@ const PolishPanel: React.FC<{ polish: LabPolish; onChange: (patch: Partial<LabPo
     <label className="block min-w-[150px] flex-1">
       <div className="flex justify-between text-[10px]">
         <span className="text-amber-300">{label}</span>
-        <span className="text-amber-200 font-mono-tech">{fmt(polish[key])}</span>
+        <span className="text-amber-200 font-mono-tech">{fmt(value)}</span>
       </div>
       <input
         type="range"
         min={min}
         max={max}
         step={step}
-        value={polish[key]}
+        value={value}
         disabled={!polish.enabled}
-        onChange={(e) => onChange({ [key]: Number(e.target.value) })}
+        onChange={(e) => set(Number(e.target.value))}
         className="w-full accent-amber-400 disabled:opacity-40"
       />
     </label>
   );
   const db = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+  const setMatch = (patch: Partial<LabPolish['match']>) => onChange({ match: { ...polish.match, ...patch } });
   return (
-    <div className="rounded-xl border border-amber-800/70 bg-amber-950/20 p-3 space-y-2">
+    <div className="rounded-xl border border-amber-800/70 bg-amber-950/20 p-3 space-y-3">
       <label className="flex items-center gap-2 text-xs text-amber-200">
         <input
           type="checkbox"
@@ -536,15 +568,27 @@ const PolishPanel: React.FC<{ polish: LabPolish; onChange: (patch: Partial<LabPo
           className="accent-amber-400"
         />
         <span>
-          <strong>Jarvis polish</strong>: hear every voice through the live app's sound processing, plus a pitch
-          shift. Applies to replays instantly at no cost (clips then play after download).
+          <strong>Jarvis polish</strong>: hear every voice through the live app's sound processing. Applies to
+          replays instantly at no cost (clips then play after download).
         </span>
       </label>
-      <div className="flex flex-wrap gap-4">
-        {slider('Pitch', 'pitchSemitones', -3, 3, 0.25, (v) => `${v > 0 ? '+' : ''}${v} semitones`)}
-        {slider('Chest warmth', 'warmthDb', -3, 6, 0.5, db)}
-        {slider('Diction crispness', 'presenceDb', -2, 6, 0.5, db)}
-        {slider('Suit intercom sheen', 'intercomWet', 0, 0.3, 0.01, (v) => `${Math.round(v * 100)}%`)}
+      <div>
+        <div className="text-[10px] text-amber-500 mb-1">Live app sound (all voices)</div>
+        <div className="flex flex-wrap gap-4">
+          {slider('Chest warmth', polish.warmthDb, (v) => onChange({ warmthDb: v }), -3, 6, 0.5, db)}
+          {slider('Diction crispness', polish.presenceDb, (v) => onChange({ presenceDb: v }), -2, 6, 0.5, db)}
+          {slider('Suit intercom sheen', polish.intercomWet, (v) => onChange({ intercomWet: v }), 0, 0.3, 0.01, (v) => `${Math.round(v * 100)}%`)}
+        </div>
+      </div>
+      <div>
+        <div className="text-[10px] text-amber-500 mb-1">
+          Match adjustments (every voice except Gemini, which stays the reference). Auto-match sets these.
+        </div>
+        <div className="flex flex-wrap gap-4">
+          {slider('Pitch', polish.match.pitchSemitones, (v) => setMatch({ pitchSemitones: v }), -3, 3, 0.25, (v) => `${v > 0 ? '+' : ''}${v} st`)}
+          {slider('Extra warmth', polish.match.warmthDelta, (v) => setMatch({ warmthDelta: v }), -6, 6, 0.5, db)}
+          {slider('Extra crispness', polish.match.presenceDelta, (v) => setMatch({ presenceDelta: v }), -6, 6, 0.5, db)}
+        </div>
       </div>
     </div>
   );
