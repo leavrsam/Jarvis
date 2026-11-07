@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FlaskConical, Loader2, Play, RotateCcw, Sparkles, Wand2 } from 'lucide-react';
-import { audioEngine, DEFAULT_VOICE_TUNING, JarvisVoiceTuning } from '../services/audioEngine';
+import { audioEngine, DEFAULT_VOICE_TUNING, JarvisVoiceTuning, SpeechDiagnostic } from '../services/audioEngine';
 
 const DEFAULT_TEST_LINE =
   'Good evening, sir. I have taken the liberty of running a full diagnostic. Everything appears to be in order, although your coffee has gone cold again.';
@@ -29,6 +29,13 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
   const [statusMsg, setStatusMsg] = useState('');
   const [history, setHistory] = useState<string[]>(() => audioEngine.getVoiceHistory());
   const [activeVoice, setActiveVoice] = useState<string>(() => audioEngine.getCustomDesignedVoiceId());
+
+  // Live per-sentence playback log so problems (slow Gemini, fallbacks, errors) are visible
+  const [diagnostics, setDiagnostics] = useState<SpeechDiagnostic[]>(() => audioEngine.getSpeechDiagnostics());
+  useEffect(() => {
+    const t = setInterval(() => setDiagnostics(audioEngine.getSpeechDiagnostics()), 700);
+    return () => clearInterval(t);
+  }, []);
 
   const updateTuning = (patch: Partial<JarvisVoiceTuning>) => {
     setTuning(audioEngine.setVoiceTuning(patch));
@@ -266,6 +273,31 @@ export const VoiceLab: React.FC<VoiceLabProps> = ({ onPreview, onVoiceChanged })
           {Math.round(DEFAULT_VOICE_TUNING.intercomWet * 100)}%. Requires the HUD DSP preset to be active.
         </div>
       </div>
+
+      {/* Playback diagnostics */}
+      {diagnostics.length > 0 && (
+        <div className="space-y-1 pt-2 border-t border-amber-900/50">
+          <div className="text-[10px] font-mono-tech text-amber-300">
+            Last playback <span className="text-amber-500/80">(newest first)</span>
+          </div>
+          {diagnostics.slice(0, 6).map((d, i) => (
+            <div
+              key={i}
+              className={`text-[9px] font-mono-tech px-2 py-1 rounded border ${
+                d.fallback ? 'border-red-800 bg-red-950/30 text-red-300' : 'border-emerald-900 bg-emerald-950/20 text-emerald-300'
+              }`}
+            >
+              <div className="flex justify-between gap-2">
+                <span className="truncate">"{d.text}"</span>
+                <span className="shrink-0">
+                  {d.engine} · {(d.ms / 1000).toFixed(1)}s
+                </span>
+              </div>
+              {d.note && <div className="text-amber-400/90 break-words">{d.note}</div>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {statusMsg && (
         <div className="text-[10px] font-mono-tech text-amber-300 bg-black/60 px-2.5 py-1 rounded border border-amber-900">

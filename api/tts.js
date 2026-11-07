@@ -261,7 +261,10 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-gemini-api-key');
-  res.setHeader('Access-Control-Expose-Headers', 'X-TTS-Engine, X-Gemini-Voice-Id');
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'X-TTS-Engine, X-Gemini-Voice-Id, X-TTS-Duration-Ms, X-TTS-Error'
+  );
 
   if (req.method === 'OPTIONS') {
     res.status(200).end();
@@ -317,15 +320,26 @@ export default async function handler(req, res) {
       return;
     }
 
+    // fallback: false = the client wants to handle Gemini failures itself (retry, or choose Edge)
+    // rather than receiving a different voice silently mid-reply.
+    const allowEdgeFallback = params.fallback !== false && params.fallback !== 'false';
+    const geminiTimeoutMs = Math.min(25000, Math.max(3000, Number(params.geminiTimeoutMs) || 15000));
+    const startedAt = Date.now();
+    let geminiError = '';
+
     if (apiKey && preferProvider !== 'edge') {
       try {
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Gemini TTS timed out after 15000ms')), 15000)
-        );
+        let timeoutHandle;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error(`Gemini TTS timed out after ${geminiTimeoutMs}ms`)),
+            geminiTimeoutMs
+          );
+        });
         const result = await Promise.race([
           synthesizeWithGemini(apiKey, params),
           timeoutPromise,
-        ]);
+        ]).finally(() => clearTimeout(timeoutHandle));
 
         if (ttsMemoryCache.size > 60) {
           const oldest = ttsMemoryCache.keys().next().value;
@@ -337,12 +351,21 @@ export default async function handler(req, res) {
         res.setHeader('Content-Length', String(result.buffer.length));
         res.setHeader('X-TTS-Engine', result.engine);
         res.setHeader('X-Gemini-Voice-Id', result.voiceId);
+        res.setHeader('X-TTS-Duration-Ms', String(Date.now() - startedAt));
         res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
         res.status(200).send(result.buffer);
         return;
       } catch (geminiErr) {
-        console.warn('[/api/tts] Gemini TTS failed, seamlessly falling back to Edge Neural:', geminiErr?.message || geminiErr);
-        // Seamless fallback to high-fidelity Edge Neural so audio never fails
+        geminiError = String(geminiErr?.message || geminiErr)
+          .replace(/[\r\n]+/g, ' ')
+          .slice(0, 200);
+        console.warn('[/api/tts] Gemini TTS failed:', geminiError);
+        if (!allowEdgeFallback) {
+          res.setHeader('X-TTS-Error', geminiError.replace(/[^\x20-\x7E]/g, ''));
+          res.setHeader('X-TTS-Duration-Ms', String(Date.now() - startedAt));
+          res.status(503).json({ error: 'gemini_failed', details: geminiError });
+          return;
+        }
       }
     }
 
@@ -364,6 +387,8 @@ export default async function handler(req, res) {
     res.setHeader('Content-Length', String(edgeResult.buffer.length));
     res.setHeader('X-TTS-Engine', edgeResult.engine);
     res.setHeader('X-Gemini-Voice-Id', edgeResult.voiceId);
+    res.setHeader('X-TTS-Duration-Ms', String(Date.now() - startedAt));
+    if (geminiError) res.setHeader('X-TTS-Error', geminiError.replace(/[^\x20-\x7E]/g, ''));
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.status(200).send(edgeResult.buffer);
   } catch (err) {

@@ -108,6 +108,19 @@ export const REFINED_JARVIS_RECIPE = {
   },
 } as const;
 
+export interface SpeechDiagnostic {
+  text: string;
+  engine: string;
+  ms: number;
+  note: string;
+  fallback: boolean;
+}
+
+// Gemini TTS request policy: per-sentence requests, two at a time, one retry in the same voice.
+const MAX_GEMINI_IN_FLIGHT = 2;
+const GEMINI_ATTEMPTS = 2;
+const GEMINI_SERVER_TIMEOUT_MS = 15000;
+
 // Short holding phrases, pre-synthesized so they play with zero latency
 const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.', 'Just a moment, sir.', 'On it, sir.'];
 const ACK_PHRASES_GUEST = ['One moment, please.', 'Just a moment.'];
@@ -150,6 +163,11 @@ class JarvisAudioEngine {
   private ackPromise: Promise<void> | null = null;
   private lastAckPhrase = '';
   private lastPrewarmAt = 0;
+
+  // Gemini request throttling + diagnostics
+  private geminiInFlight = 0;
+  private geminiWaiters: (() => void)[] = [];
+  private speechDiagnostics: SpeechDiagnostic[] = [];
 
   // Voice Lab tuning (persisted per device)
   private voiceTuning: JarvisVoiceTuning = { ...DEFAULT_VOICE_TUNING };
@@ -589,8 +607,9 @@ class JarvisAudioEngine {
     const chunks: string[] = [];
     let current = '';
     for (const sentence of sentences) {
-      // First chunk: emit as soon as we have one sentence. Later chunks: group up to ~220 chars.
-      const limit = chunks.length === 0 ? 0 : 220;
+      // First chunk: one sentence, for fast first audio. Later: merge only short sentences (~120 chars),
+      // since smaller Gemini requests come back much faster (Google's TTS guide recommends short turns).
+      const limit = chunks.length === 0 ? 0 : 120;
       if (current && (current.length + sentence.length + 1 > limit)) {
         chunks.push(current);
         current = sentence;
@@ -611,8 +630,76 @@ class JarvisAudioEngine {
   }
 
   /**
-   * Fetch + decode one chunk of speech. Results that came from the intended engine are cached;
-   * fallback audio is not, so a slow Gemini response doesn't lock in the backup voice.
+   * Run Gemini TTS requests at most MAX_GEMINI_IN_FLIGHT at a time. Sentences play in order anyway,
+   * so firing every sentence at once only invites rate limiting and slows the first ones down.
+   */
+  private async withGeminiSlot<T>(task: () => Promise<T>): Promise<T> {
+    while (this.geminiInFlight >= MAX_GEMINI_IN_FLIGHT) {
+      await new Promise<void>((resolve) => this.geminiWaiters.push(resolve));
+    }
+    this.geminiInFlight++;
+    try {
+      return await task();
+    } finally {
+      this.geminiInFlight--;
+      this.geminiWaiters.shift()?.();
+    }
+  }
+
+  private async requestTts(
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+    timeoutMs: number
+  ): Promise<{ response: Response | null; timedOut: boolean; error: string }> {
+    const timeoutController = new AbortController();
+    const onOuterAbort = () => timeoutController.abort();
+    signal.addEventListener('abort', onOuterAbort);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, timeoutMs);
+    try {
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: this.buildTtsHeaders(),
+        body: JSON.stringify(body),
+        signal: timeoutController.signal,
+      });
+      if (!response.ok) {
+        const reason =
+          response.headers.get('X-TTS-Error') ||
+          (await response.json().catch(() => ({})))?.details ||
+          `HTTP ${response.status}`;
+        return { response: null, timedOut: false, error: String(reason) };
+      }
+      return { response, timedOut: false, error: '' };
+    } catch (err) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      return {
+        response: null,
+        timedOut,
+        error: timedOut ? `no audio after ${Math.round(timeoutMs / 1000)}s` : String(err),
+      };
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onOuterAbort);
+    }
+  }
+
+  private recordSpeechDiagnostic(entry: SpeechDiagnostic) {
+    this.speechDiagnostics = [entry, ...this.speechDiagnostics].slice(0, 12);
+  }
+
+  /** Per-sentence log of recent TTS requests: which engine spoke it, how long it took, and why. */
+  public getSpeechDiagnostics(): SpeechDiagnostic[] {
+    return [...this.speechDiagnostics];
+  }
+
+  /**
+   * Fetch + decode one chunk of speech in the designed Gemini voice. Gemini failures are retried
+   * once in the same voice; only then does the sentence fall back to the Edge voice, so a reply
+   * doesn't switch voices because of one transient error. Fallback audio is never cached.
    */
   private async fetchSpeechBuffer(spokenText: string, signal: AbortSignal): Promise<AudioBuffer> {
     const ctx = this.ensureContext();
@@ -627,66 +714,91 @@ class JarvisAudioEngine {
     const cached = this.audioBufferCache.get(cacheKey);
     if (cached) return cached;
 
-    const timeoutController = new AbortController();
-    const onOuterAbort = () => timeoutController.abort();
-    signal.addEventListener('abort', onOuterAbort);
-    const fetchTimeout = setTimeout(() => timeoutController.abort(), 10000);
+    const baseBody = {
+      text: spokenText,
+      model: preset.model,
+      voice: effectiveVoice,
+      edgeVoice: preset.edgeVoice,
+      style,
+      rate: preset.rate,
+      pitch: preset.pitch,
+    };
+    const startedAt = performance.now();
+    const label = spokenText.length > 48 ? `${spokenText.slice(0, 45)}...` : spokenText;
+    const notes: string[] = [];
 
-    let response: Response;
-    try {
-      response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: this.buildTtsHeaders(),
-        body: JSON.stringify({
-          text: spokenText,
-          provider: preset.provider,
-          model: preset.model,
-          voice: effectiveVoice,
-          edgeVoice: preset.edgeVoice,
-          style,
-          rate: preset.rate,
-          pitch: preset.pitch,
-        }),
-        signal: timeoutController.signal,
-      });
-    } finally {
-      clearTimeout(fetchTimeout);
-      signal.removeEventListener('abort', onOuterAbort);
-    }
+    const decode = async (response: Response) => {
+      const arrayBuffer = await response.arrayBuffer();
+      if (arrayBuffer.byteLength < 256) throw new Error('Invalid audio buffer received');
+      return ctx.decodeAudioData(arrayBuffer.slice(0));
+    };
 
-    if (!response.ok) {
-      throw new Error(`TTS API returned HTTP ${response.status}`);
-    }
-
-    const engineHeader = response.headers.get('X-TTS-Engine');
-    if (engineHeader) {
-      this.lastActiveEngine = engineHeader;
-    }
-    const resolvedVoiceHeader = response.headers.get('X-Gemini-Voice-Id');
-    if (
-      resolvedVoiceHeader &&
-      resolvedVoiceHeader.startsWith('voice_') &&
-      !this.customDesignedVoiceId
-    ) {
-      this.setCustomDesignedVoiceId(resolvedVoiceHeader);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    if (arrayBuffer.byteLength < 256) {
-      throw new Error('Invalid audio buffer received');
-    }
-
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-
-    const usedFallback =
-      engineHeader === 'edge-neural-fallback' && preset.provider !== 'edge';
-    if (!usedFallback) {
-      if (this.audioBufferCache.size > 35) {
-        const oldestKey = this.audioBufferCache.keys().next().value;
-        if (oldestKey) this.audioBufferCache.delete(oldestKey);
+    if (preset.provider !== 'edge') {
+      for (let attempt = 1; attempt <= GEMINI_ATTEMPTS; attempt++) {
+        const result = await this.withGeminiSlot(() =>
+          this.requestTts(
+            { ...baseBody, provider: preset.provider, fallback: false, geminiTimeoutMs: GEMINI_SERVER_TIMEOUT_MS },
+            signal,
+            GEMINI_SERVER_TIMEOUT_MS + 3000
+          )
+        );
+        if (result.response) {
+          const engine = result.response.headers.get('X-TTS-Engine') || preset.model;
+          this.lastActiveEngine = engine;
+          const resolvedVoice = result.response.headers.get('X-Gemini-Voice-Id');
+          if (resolvedVoice?.startsWith('voice_') && !this.customDesignedVoiceId) {
+            this.setCustomDesignedVoiceId(resolvedVoice);
+          }
+          try {
+            const audioBuffer = await decode(result.response);
+            if (this.audioBufferCache.size > 35) {
+              const oldestKey = this.audioBufferCache.keys().next().value;
+              if (oldestKey) this.audioBufferCache.delete(oldestKey);
+            }
+            this.audioBufferCache.set(cacheKey, audioBuffer);
+            this.recordSpeechDiagnostic({
+              text: label,
+              engine,
+              ms: Math.round(performance.now() - startedAt),
+              note: notes.length ? `succeeded on retry (${notes.join('; ')})` : '',
+              fallback: false,
+            });
+            return audioBuffer;
+          } catch (err) {
+            notes.push(`attempt ${attempt}: ${String(err)}`);
+          }
+        } else {
+          notes.push(`attempt ${attempt}: ${result.error}`);
+          // A slow Gemini won't get faster on an immediate retry; don't double the wait.
+          if (result.timedOut) break;
+        }
+        if (attempt < GEMINI_ATTEMPTS) await new Promise((r) => setTimeout(r, 400));
       }
-      this.audioBufferCache.set(cacheKey, audioBuffer);
     }
+
+    // Edge voice: intended (Edge preset) or last resort after Gemini failed
+    const edge = await this.requestTts({ ...baseBody, provider: 'edge' }, signal, 8000);
+    if (!edge.response) {
+      this.recordSpeechDiagnostic({
+        text: label,
+        engine: 'no audio (all engines failed)',
+        ms: Math.round(performance.now() - startedAt),
+        note: [...notes, `edge: ${edge.error}`].join('; '),
+        fallback: true,
+      });
+      throw new Error(`All TTS engines failed: ${[...notes, edge.error].join('; ')}`);
+    }
+    const audioBuffer = await decode(edge.response);
+    const isFallback = preset.provider !== 'edge';
+    this.lastActiveEngine = isFallback ? 'edge-neural-fallback' : 'edge';
+    if (!isFallback) this.audioBufferCache.set(cacheKey, audioBuffer);
+    this.recordSpeechDiagnostic({
+      text: label,
+      engine: isFallback ? 'Edge backup voice' : 'Edge',
+      ms: Math.round(performance.now() - startedAt),
+      note: notes.join('; '),
+      fallback: isFallback,
+    });
     return audioBuffer;
   }
 
