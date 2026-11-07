@@ -3,6 +3,7 @@ import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD, WakeWordMode, WakeWordScope } from './components/TelemetryHUD';
 import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
 import { checkSession, logout, onAuthRequired } from './services/auth';
+import { logEvent } from './services/eventLog';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
@@ -227,6 +228,10 @@ export const App: React.FC = () => {
     setLastSpeaker(speakerResult.name);
     setSpeakerConfidence(speakerResult.confidence);
     setIsOwner(speakerResult.isOwner);
+    logEvent(
+      'voice-id',
+      `${speakerResult.name}${speakerResult.isOwner ? ' (owner)' : ''} · score ${speakerResult.confidence.toFixed(2)} · ${speakerResult.reason} · ${speakerResult.speechSeconds}s speech · "${trimmedQuery.slice(0, 40)}"`
+    );
     console.info(
       `[VoiceID] ${speakerResult.name} owner=${speakerResult.isOwner} score=${speakerResult.confidence} reason=${speakerResult.reason} speech=${speakerResult.speechSeconds}s (${Math.round(performance.now() - t0)}ms)`
     );
@@ -437,7 +442,7 @@ export const App: React.FC = () => {
     isJarvisSpeaking: audioState === 'speaking' || audioState === 'processing' || isProcessing || !isAuthenticated,
     currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
     wakeWordEnabled: isWakeWordActive,
-    getEchoReference: () => audioEngine.getEchoReference(),
+    getEchoReference: (tailMs?: number) => audioEngine.getEchoReference(tailMs),
   });
 
   useEffect(() => {

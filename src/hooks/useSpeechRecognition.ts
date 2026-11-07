@@ -1,3 +1,5 @@
+import { isLikelyEcho } from '../services/echoMatch';
+import { logEvent } from '../services/eventLog';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 // Web Speech API interfaces
@@ -43,7 +45,7 @@ export interface UseSpeechRecognitionOptions {
    * What Jarvis is saying now or said in the last few seconds. Any recognized speech that
    * matches it is his own voice coming back through the mic and is ignored in every mode.
    */
-  getEchoReference?: () => string;
+  getEchoReference?: (tailMs?: number) => string;
   silenceTimeoutMs?: number;
   followUpTimeoutMs?: number;
   isJarvisSpeaking?: boolean;
@@ -291,13 +293,19 @@ export function useSpeechRecognition({
         // 0. Self-echo filter, in every mode: Jarvis's own words (including "One moment, sir"
         // while n8n works, and the tail of a reply that arrives after he stops talking) must
         // never become a command or a barge-in.
+        // Fuzzy, because the recognizer often mishears his voice ("1 moment", "whether") or
+        // delivers a partial word. While he talks (or is about to), anything mostly made of his
+        // words is echo. Just after he stops, only near-verbatim repeats are, so a genuine reply
+        // that reuses a few of his words ("yes, add it") still gets through.
+        const speaking = isJarvisSpeakingRef.current;
         const echoReference = [
-          getEchoReferenceRef.current?.() || '',
-          isJarvisSpeakingRef.current ? currentJarvisSpeechRef.current : '',
+          getEchoReferenceRef.current?.(speaking ? 4000 : 1500) || '',
+          speaking ? currentJarvisSpeechRef.current : '',
         ]
           .join(' ')
           .trim();
-        if (echoReference && isSelfEcho(fullUtterance, echoReference)) {
+        if (echoReference && isLikelyEcho(fullUtterance, echoReference, speaking ? 0.5 : 0.75)) {
+          logEvent('echo-ignored', `"${fullUtterance}"`);
           return;
         }
 
@@ -308,14 +316,25 @@ export function useSpeechRecognition({
             return;
           }
 
-          // Not Jarvis's text! Check if user spoke an interruption intent or new command
-          const isInterruptIntent = AUDIBLE_INTERRUPT_REGEX.test(fullUtterance);
-          const wordCount = fullUtterance.split(/\s+/).length;
+          // Not Jarvis's text. Interrupt only on clear evidence:
+          // - a stop word ("stop", "wait", "Jarvis"...) that Jarvis isn't saying himself, or
+          // - a finished phrase of 3+ words.
+          // Partial (interim) guesses without a stop word are ignored: they're where most garbled
+          // echo of his own voice shows up. (Who is speaking is decided by voice ID on submit.)
+          const keyword = fullUtterance.match(AUDIBLE_INTERRUPT_REGEX)?.[0]?.toLowerCase().trim();
+          const keywordIsHis = Boolean(keyword && echoReference.toLowerCase().includes(keyword.replace(/^(hey|ok|hi|yo)\s+/, '')));
+          const isInterruptIntent = Boolean(keyword) && !keywordIsHis;
+          const wordCount = fullUtterance.split(/\s+/).filter(Boolean).length;
+          const isFinal = Boolean(finalChunk);
 
-          // Jarvis's own voice was already discarded by the echo filter above. Who is speaking is
-          // decided from the audio when the command is submitted (voice ID), not here: while Jarvis
-          // talks, the mic audio is mostly his voice and can't be verified.
-          if (isInterruptIntent || wordCount >= 2) {
+          if (!isInterruptIntent && !(isFinal && wordCount >= 3)) {
+            if (!isFinal) return; // keep waiting for the final result
+            logEvent('partial-ignored', `"${fullUtterance}" (${wordCount} word${wordCount === 1 ? '' : 's'}, no stop word)`);
+            return;
+          }
+
+          logEvent('barge-in', `"${fullUtterance}"${isInterruptIntent ? ` (stop word "${keyword}")` : ''}`);
+          {
             isJarvisSpeakingRef.current = false;
             setIsListening(true);
             isListeningRef.current = true;

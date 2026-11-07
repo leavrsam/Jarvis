@@ -147,6 +147,10 @@ Jarvis tells the owner apart from guests by voice, so n8n's `isAuthorizedOwner` 
   simulated mic: owner scored 0.83–0.88, strangers 0.08–0.37. A phone mic in a room scores lower than clean
   speech, which is why anything uncertain is treated as a guest.
 - Voiceprints are stored per device (localStorage), so enroll on each device you use.
+- **Interruptions & echo:** while Jarvis talks, speech that is mostly his own words (fuzzy-matched, so
+  mishearings like "1 mom sure" for "One moment, sir" count) is ignored. Interrupting needs a stop word
+  ("stop", "wait", "Jarvis"...) or a finished phrase of 3+ words; partial guesses alone never interrupt.
+  VOICE ID → *Recent listening events* shows each ignored echo, interruption and voice ID decision.
 
 ---
 

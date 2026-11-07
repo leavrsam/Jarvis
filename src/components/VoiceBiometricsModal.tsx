@@ -21,6 +21,7 @@ import { ENROLLMENT_PHRASES, MATCH_THRESHOLD, voiceBiometrics, VoiceProfile } fr
 import { getModelStatus, loadSpeakerModel, onModelStatus, ModelStatus, SPEAKER_MODEL } from '../services/speaker/speakerModel';
 import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
+import { getEvents, ListeningEvent } from '../services/eventLog';
 
 interface VoiceBiometricsModalProps {
   isOpen: boolean;
@@ -52,6 +53,13 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const cancelledRef = useRef(false);
+  const [events, setEvents] = useState<ListeningEvent[]>([]);
+  useEffect(() => {
+    if (!isOpen) return;
+    setEvents(getEvents());
+    const t = setInterval(() => setEvents(getEvents()), 1000);
+    return () => clearInterval(t);
+  }, [isOpen]);
 
   useEffect(() => onModelStatus(setModel), []);
 
@@ -366,6 +374,41 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
               setOwnerGateEnabled(!ownerGateEnabled);
             }}
           />
+
+          {/* Recent listening decisions, for diagnosing misfires */}
+          <details className="rounded border border-amber-900/60 bg-black/40 p-2.5">
+            <summary className="cursor-pointer text-xs font-orbitron text-amber-300 tracking-wider">
+              RECENT LISTENING EVENTS ({events.length})
+            </summary>
+            <div className="mt-2 space-y-1 max-h-56 overflow-y-auto">
+              {events.length === 0 && <div className="text-[10px] text-amber-600">Nothing yet. Talk to Jarvis, then check back.</div>}
+              {events.map((e, i) => (
+                <div key={i} className="text-[10px] font-mono-tech leading-snug">
+                  <span className="text-amber-600">{new Date(e.at).toLocaleTimeString()} </span>
+                  <span
+                    className={
+                      e.kind === 'barge-in'
+                        ? 'text-red-300'
+                        : e.kind === 'voice-id'
+                          ? 'text-emerald-300'
+                          : 'text-amber-400'
+                    }
+                  >
+                    {
+                      {
+                        'echo-ignored': 'ignored own voice',
+                        'partial-ignored': 'ignored (not an interruption)',
+                        'barge-in': 'INTERRUPTED BY',
+                        'voice-id': 'voice ID',
+                        command: 'command',
+                      }[e.kind]
+                    }
+                  </span>{' '}
+                  <span className="text-amber-200 break-words">{e.detail}</span>
+                </div>
+              ))}
+            </div>
+          </details>
 
           {/* Profiles */}
           <div className="space-y-2">

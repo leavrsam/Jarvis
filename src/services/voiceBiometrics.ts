@@ -102,6 +102,8 @@ const MERGE_THRESHOLD = 0.6;
 /** An owner introduction ("meet my sister Sarah") names the next new voice within this window */
 const PENDING_INTRO_MS = 2 * 60_000;
 const UTTERANCE_WINDOW_MS = 9000;
+/** When the user talked over Jarvis: how far back to take audio, overlap included */
+const OVERLAP_WINDOW_MS = 4000;
 
 // ---------------------------------------------------------------------------
 // Introductions. Deliberately strict: a wrong name is worse than none.
@@ -319,12 +321,19 @@ class VoiceBiometricsEngine {
    * The user's latest utterance from the rolling buffer: up to 9 s before now, starting no earlier
    * than when Jarvis last stopped talking, with his speech excluded.
    */
-  private captureUtterance(): { samples: Float32Array; sampleRate: number } {
+  private captureUtterance(): { samples: Float32Array; overlapped: Float32Array; sampleRate: number } {
     const now = Date.now();
     const jarvis = this.getJarvisIntervals();
     const lastJarvisEnd = jarvis.reduce((m, iv) => (iv.end <= now ? Math.max(m, iv.end) : m), 0);
     const from = Math.max(now - UTTERANCE_WINDOW_MS, lastJarvisEnd);
-    return { samples: voiceCapture.getAudio(from, now, jarvis), sampleRate: voiceCapture.sampleRate };
+    return {
+      samples: voiceCapture.getAudio(from, now, jarvis),
+      // If the user talked over Jarvis, most of their words overlap his speech. This version keeps
+      // those stretches (the mic's echo cancellation removes much of his voice); the Jarvis
+      // voiceprint check then rejects it if it's really him.
+      overlapped: voiceCapture.getAudio(now - OVERLAP_WINDOW_MS, now),
+      sampleRate: voiceCapture.sampleRate,
+    };
   }
 
   private async voiceprintFrom(samples: Float32Array, sampleRate: number) {
@@ -348,7 +357,7 @@ class VoiceBiometricsEngine {
     source: 'voice' | 'typed' = 'voice'
   ): Promise<SpeakerIdentificationResult> {
     const owner = this.getOwnerProfile();
-    const { samples, sampleRate } = this.captureUtterance(); // synchronous: before any await
+    const { samples, overlapped, sampleRate } = this.captureUtterance(); // synchronous: before any await
 
     if (source === 'typed') {
       return this.result(owner ?? null, owner?.name ?? 'Owner', 1, true, 'typed', 0);
@@ -362,6 +371,10 @@ class VoiceBiometricsEngine {
     let seconds: number;
     try {
       ({ embedding, seconds } = await this.voiceprintFrom(samples, sampleRate));
+      if (!embedding && overlapped.length > samples.length) {
+        // Talked over Jarvis: too little clean audio, so use the overlapping stretch
+        ({ embedding, seconds } = await this.voiceprintFrom(overlapped, sampleRate));
+      }
     } catch (err) {
       console.warn('[VoiceBiometrics] Identification unavailable:', err);
       return this.result(null, 'Unverified', 0, false, 'model-unavailable', 0);
