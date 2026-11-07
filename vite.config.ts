@@ -5,6 +5,8 @@ import tailwindcss from '@tailwindcss/vite';
 import ttsHandler from './api/tts.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import voiceLabHandler from './api/voice-lab.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import jarvisCommandHandler from './api/jarvis-command.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -24,6 +26,9 @@ export default defineConfig(({ mode }) => {
     'OPENAI_API_KEY',
     'DEEPGRAM_API_KEY',
     'VOICE_LAB_GOOGLE_VOICES',
+    'JARVIS_WEBHOOK_URL',
+    'JARVIS_WEBHOOK_SECRET',
+    'JARVIS_ALLOWED_ORIGINS',
     'JARVIS_SECRET',
     'VITE_JARVIS_SECRET',
   ]) {
@@ -34,6 +39,16 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        // Dev route for the n8n proxy: the real request/response are passed through untouched so
+        // the body is forwarded byte for byte and the reply streams like on Vercel.
+        name: 'jarvis-api-command-middleware',
+        configureServer(server) {
+          server.middlewares.use('/api/jarvis-command', (req, res) => {
+            void jarvisCommandHandler(req, res);
+          });
+        },
+      },
       {
         // Dev server route for the voice comparison lab. Passes the real Node response through
         // so provider audio can stream to the browser exactly as it does on Vercel.

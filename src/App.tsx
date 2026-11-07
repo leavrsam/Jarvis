@@ -20,10 +20,12 @@ const ACCESS_SECRET = (import.meta.env.VITE_JARVIS_SECRET as string | undefined)
 const ACK_DELAY_MS = 700;
 
 // Spoken when the n8n run fails. "partial" = the connection dropped after part of the reply.
-function failureMessage(partial: boolean): string {
-  return partial
-    ? 'My apologies, sir. I lost the link to the n8n matrix mid-reply.'
-    : 'My apologies, sir. That request failed. Unable to reach the n8n matrix.';
+function failureMessage(partial: boolean, kind?: string): string {
+  if (partial) return 'My apologies, sir. I lost the link to the n8n matrix mid-reply.';
+  if (kind === 'rate_limited') return "One moment, sir. You're asking faster than I can keep up.";
+  if (kind === 'run_failed') return 'My apologies, sir. That request failed partway through.';
+  // Proxy couldn't reach n8n (wrong key, n8n down, timeout) or the connection failed
+  return "I can't reach my systems, sir. Please try again in a moment.";
 }
 
 const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|thank you jarvis|thanks jarvis|goodbye|bye jarvis|stop listening|go to sleep|stand by|standby)\b/i;
@@ -249,6 +251,7 @@ export const App: React.FC = () => {
 
     let failed = false;
     let connectionDropped = false;
+    let failureKind: string = 'unreachable';
     try {
       // POST enriched payload with speaker attribution to n8n webhook; text streams in via onText
       await streamJarvisCommand(
@@ -276,6 +279,7 @@ export const App: React.FC = () => {
       failed = true;
       // JarvisBackendError = the run failed (HTTP error / unanswered error event); anything else = link dropped
       connectionDropped = !(err instanceof JarvisBackendError);
+      failureKind = err instanceof JarvisBackendError ? err.kind : 'unreachable';
       console.warn('[Jarvis] Reply failed:', err);
     } finally {
       if (requestAbortRef.current === controller) requestAbortRef.current = null;
@@ -289,7 +293,7 @@ export const App: React.FC = () => {
 
     if (failed) {
       audioEngine.playSfx('error');
-      const errText = failureMessage(connectionDropped && finalText.length > 0);
+      const errText = failureMessage(connectionDropped && finalText.length > 0, failureKind);
       const shown = finalText ? `${finalText}\n${errText}` : errText;
       setLastResponse(shown);
       speech.enqueue(errText);

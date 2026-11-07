@@ -43,7 +43,21 @@ A full-screen, futuristic sci-fi voice assistant web HUD inspired by Stark Indus
     "sessionId": "jarvis-web"
   }
   ```
-- Endpoint: `VITE_JARVIS_WEBHOOK_URL` (default `https://n8n.wolfcubventures.com/webhook/jarvis-command`; streaming test endpoint: `/webhook/jarvis-command-stream`)
+- Endpoint: the browser posts to **`/api/jarvis-command`** (`api/jarvis-command.js`), a same-origin
+  proxy on the app server. It forwards the body unchanged to n8n, adds the `X-Jarvis-Key` header,
+  and streams n8n's reply back as-is. The webhook URL and secret never reach the browser.
+  - Server environment variables (Vercel → Settings → Environment Variables, or `.env` locally):
+    - `JARVIS_WEBHOOK_URL`: the n8n webhook, e.g. `https://<your-n8n>/webhook/jarvis-command`
+      (or the `jarvis-command-stream` test endpoint).
+    - `JARVIS_WEBHOOK_SECRET`: the value n8n expects in `X-Jarvis-Key`.
+    - Optional `JARVIS_ALLOWED_ORIGINS`: extra origins allowed to call the proxy.
+    - Never prefix these with `VITE_`: `VITE_` variables are bundled into the public client.
+  - The proxy only accepts same-origin POSTs, rate-limits each IP to 30 requests/minute (per server
+    instance), cancels the n8n call when the browser disconnects (e.g. you interrupt Jarvis), and
+    never relays n8n error bodies. If n8n rejects the key or can't be reached, Jarvis says
+    "I can't reach my systems, sir."
+  - `isAuthorizedOwner`, `speaker` and `speakerConfidence` are set by the app from voice
+    identification and pass through untouched.
 - **Streaming replies** (n8n "streaming" response mode): newline-delimited JSON events (`begin` / `item` / `end` / `error`). The `content` of each `item` is joined in order, shown on screen as it arrives, and spoken sentence by sentence, so speech starts before the full reply exists. An `error` line speaks a short failure message.
 - **Legacy replies**: an `application/json` body like `{"output": "..."}` still works (as do `response`, `message`, `text` or a raw string). The body is checked too, so a stream sent as `application/json` is still read as a stream.
 - Leading directives (`PLAY_YOUTUBE: <id>`, `PLAY_YOUTUBE_PLAYLIST: <id>`, `PAUSE_YOUTUBE`, `RESUME_YOUTUBE`, `STOP_YOUTUBE`, `NEXT_YOUTUBE`, `PREV_YOUTUBE`, `SET_VOLUME: <0-100>`) run as soon as they're complete and are never spoken. `<short pause>` tags become pauses, not words.

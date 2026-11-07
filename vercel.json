@@ -5,6 +5,9 @@
     },
     "api/voice-lab.js": {
       "maxDuration": 60
+    },
+    "api/jarvis-command.js": {
+      "maxDuration": 60
     }
   }
 }

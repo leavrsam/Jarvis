@@ -14,12 +14,10 @@ export interface JarvisStreamOptions {
 }
 
 /**
- * n8n webhook. Override with VITE_JARVIS_WEBHOOK_URL, e.g. the streaming test endpoint
- * https://n8n.wolfcubventures.com/webhook/jarvis-command-stream
+ * Same-origin proxy (api/jarvis-command.js). It adds the n8n webhook secret server-side and
+ * streams the reply back; the n8n URL and secret are server environment variables only.
  */
-export const JARVIS_WEBHOOK_URL =
-  (import.meta.env.VITE_JARVIS_WEBHOOK_URL as string | undefined)?.trim() ||
-  'https://n8n.wolfcubventures.com/webhook/jarvis-command';
+export const JARVIS_COMMAND_ENDPOINT = '/api/jarvis-command';
 
 /**
  * The n8n run failed: an HTTP error, or the stream ended with an "error" event and no reply
@@ -27,7 +25,14 @@ export const JARVIS_WEBHOOK_URL =
  * The message is generic on purpose: n8n's error content is raw backend detail.
  */
 export class JarvisBackendError extends Error {
-  constructor(message: string) {
+  /**
+   * 'unreachable': the proxy couldn't get a reply from n8n (rejected key, n8n down, timeout,
+   * not configured). 'rate_limited': too many requests. 'run_failed': n8n ran but failed.
+   */
+  constructor(
+    message: string,
+    public readonly kind: 'unreachable' | 'rate_limited' | 'run_failed' = 'run_failed'
+  ) {
     super(message);
     this.name = 'JarvisBackendError';
   }
@@ -146,7 +151,7 @@ export async function streamJarvisCommand(
   };
 
   try {
-    const res = await fetch(JARVIS_WEBHOOK_URL, {
+    const res = await fetch(JARVIS_COMMAND_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -157,7 +162,15 @@ export async function streamJarvisCommand(
     });
 
     if (!res.ok) {
-      throw new JarvisBackendError(`HTTP ${res.status}: ${res.statusText}`);
+      // The proxy answers 4xx/5xx with a short JSON code (never n8n's raw error body)
+      const code = await res
+        .json()
+        .then((j: { error?: string }) => j?.error || '')
+        .catch(() => '');
+      throw new JarvisBackendError(
+        `HTTP ${res.status}${code ? ` (${code})` : ''}`,
+        res.status === 429 ? 'rate_limited' : 'unreachable'
+      );
     }
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
