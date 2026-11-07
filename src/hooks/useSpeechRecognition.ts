@@ -46,6 +46,8 @@ export interface UseSpeechRecognitionOptions {
    * matches it is his own voice coming back through the mic and is ignored in every mode.
    */
   getEchoReference?: (tailMs?: number) => string;
+  /** Fully stand down (the built-in listener is in use instead) */
+  disabled?: boolean;
   silenceTimeoutMs?: number;
   followUpTimeoutMs?: number;
   isJarvisSpeaking?: boolean;
@@ -101,7 +103,10 @@ export function useSpeechRecognition({
   currentJarvisSpeech = '',
   wakeWordEnabled = true,
   getEchoReference,
+  disabled = false,
 }: UseSpeechRecognitionOptions = {}) {
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const getEchoReferenceRef = useRef(getEchoReference);
   getEchoReferenceRef.current = getEchoReference;
   // Mode: 'standby' (waiting for "Hey Jarvis"), 'active' (recording command), 'idle'
@@ -156,7 +161,7 @@ export function useSpeechRecognition({
 
   // Safely start or restart recognition
   const restartRecognition = useCallback((immediate = false) => {
-    if (!recognitionRef.current) return;
+    if (!recognitionRef.current || disabledRef.current) return;
     if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
 
     const runStart = () => {
@@ -176,6 +181,15 @@ export function useSpeechRecognition({
 
   // Sync speaking state & current spoken speech, keeping recognition running for audible barge-in
   useEffect(() => {
+    if (disabled) {
+      isStandbyRef.current = false;
+      isJarvisSpeakingRef.current = false;
+      isListeningRef.current = false;
+      try {
+        recognitionRef.current?.abort();
+      } catch {}
+      return;
+    }
     isJarvisSpeakingRef.current = isJarvisSpeaking;
     currentJarvisSpeechRef.current = currentJarvisSpeech;
     isStandbyRef.current = wakeWordEnabled;
@@ -185,7 +199,7 @@ export function useSpeechRecognition({
     if (wakeWordEnabled || isListeningRef.current || isJarvisSpeaking) {
       restartRecognition();
     }
-  }, [isJarvisSpeaking, currentJarvisSpeech, wakeWordEnabled, restartRecognition]);
+  }, [isJarvisSpeaking, currentJarvisSpeech, wakeWordEnabled, restartRecognition, disabled]);
 
   const triggerSubmission = useCallback(() => {
     clearSilenceTimer();

@@ -42,6 +42,13 @@ class VoiceCapture {
   private node: AudioWorkletNode | ScriptProcessorNode | null = null;
   private chunks: Chunk[] = [];
   private starting: Promise<boolean> | null = null;
+  private listeners = new Set<(data: Float32Array, sampleRate: number, endAt: number) => void>();
+
+  /** Receive every mic chunk as it arrives (the wake word listener uses this). */
+  onAudio(listener: (data: Float32Array, sampleRate: number, endAt: number) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
 
   get sampleRate(): number {
     return this.ctx?.sampleRate ?? 48000;
@@ -74,6 +81,13 @@ class VoiceCapture {
         const onData = (data: Float32Array) => {
           const now = Date.now();
           this.chunks.push({ endAt: now, data });
+          this.listeners.forEach((l) => {
+            try {
+              l(data, this.sampleRate, now);
+            } catch (err) {
+              console.warn('[VoiceCapture] listener failed:', err);
+            }
+          });
           while (this.chunks.length && now - this.chunks[0].endAt > KEEP_MS) this.chunks.shift();
         };
 

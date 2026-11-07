@@ -21,7 +21,8 @@ import { ENROLLMENT_PHRASES, MATCH_THRESHOLD, voiceBiometrics, VoiceProfile } fr
 import { getModelStatus, loadSpeakerModel, onModelStatus, ModelStatus, SPEAKER_MODEL } from '../services/speaker/speakerModel';
 import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
-import { getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
+import { builtInStats, getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
+import { getListeningEngine, ListeningEngine, setListeningEngine } from '../services/listeningEngine';
 
 interface VoiceBiometricsModalProps {
   isOpen: boolean;
@@ -54,6 +55,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
   const [editNameValue, setEditNameValue] = useState('');
   const cancelledRef = useRef(false);
   const [micPaused, setMicPaused] = useState(() => voiceBiometrics.isMicPaused());
+  const [engine, setEngine] = useState<ListeningEngine>(() => getListeningEngine());
   const [events, setEvents] = useState<ListeningEvent[]>([]);
   useEffect(() => {
     if (!isOpen) return;
@@ -235,24 +237,60 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
             <div className="text-[10px] text-red-300">{getModelStatus().error}. Until it loads, voice commands count as guests.</div>
           )}
 
-          {/* Wake-word listener health (the browser's speech recognizer) */}
-          <ListenerStatus micPaused={micPaused} />
-          <label className="flex items-start gap-2 text-[10px] text-amber-400">
-            <input
-              type="checkbox"
-              checked={micPaused}
-              onChange={(e) => {
-                voiceBiometrics.setMicPaused(e.target.checked);
-                setMicPaused(e.target.checked);
-              }}
-              className="mt-0.5 accent-amber-400"
-            />
-            <span>
-              <strong className="text-amber-300">Pause voice ID mic (test)</strong>: if "Hey Jarvis" starts working
-              with this on, the phone won't share the microphone between voice ID and the wake-word listener. Voice
-              commands can't be verified while paused.
-            </span>
-          </label>
+          {/* Listening engine */}
+          <div className="p-2.5 rounded border border-amber-800/70 bg-black/40 space-y-2">
+            <div className="font-orbitron text-[11px] tracking-wider text-amber-200">LISTENING ENGINE</div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              {(
+                [
+                  ['builtin', 'Built-in "hey Jarvis"', 'On-device wake word + Deepgram transcription. One shared mic. Works in Fully Kiosk.'],
+                  ['browser', 'Browser speech', "The browser's own recognizer (Chrome desktop). Doesn't work in Fully Kiosk."],
+                ] as [ListeningEngine, string, string][]
+              ).map(([value, label, hint]) => (
+                <label
+                  key={value}
+                  className={`flex-1 flex items-start gap-2 p-2 rounded border text-[10px] cursor-pointer ${
+                    engine === value ? 'border-amber-400 bg-amber-950/40' : 'border-amber-900'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="listening-engine"
+                    checked={engine === value}
+                    onChange={() => {
+                      setListeningEngine(value);
+                      setEngine(value);
+                    }}
+                    className="mt-0.5 accent-amber-400"
+                  />
+                  <span>
+                    <span className="block text-amber-200 font-bold">{label}</span>
+                    <span className="text-amber-500">{hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {engine === 'builtin' ? <BuiltInStatus /> : (
+              <>
+                <ListenerStatus micPaused={micPaused} />
+                <label className="flex items-start gap-2 text-[10px] text-amber-400">
+                  <input
+                    type="checkbox"
+                    checked={micPaused}
+                    onChange={(e) => {
+                      voiceBiometrics.setMicPaused(e.target.checked);
+                      setMicPaused(e.target.checked);
+                    }}
+                    className="mt-0.5 accent-amber-400"
+                  />
+                  <span>
+                    <strong className="text-amber-300">Pause voice ID mic (test)</strong>: if the browser listener only hears
+                    you with this on, your phone won't share the microphone; use the built-in engine instead.
+                  </span>
+                </label>
+              </>
+            )}
+          </div>
 
           {status.legacyProfilesDiscarded && (
             <Banner tone="warn">
@@ -423,6 +461,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
                         command: 'command',
                         heard: 'heard',
                         recognizer: 'listener',
+                        wake: 'wake word',
                       }[e.kind]
                     }
                   </span>{' '}
@@ -631,6 +670,44 @@ const ListenerStatus: React.FC<{ micPaused: boolean }> = ({ micPaused }) => {
           )}
         </>
       )}
+    </div>
+  );
+};
+
+const BuiltInStatus: React.FC = () => {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 250);
+    return () => clearInterval(t);
+  }, []);
+  const st = builtInStats;
+  const ok = st.active && st.modelStatus === 'ready';
+  return (
+    <div className={`p-2 rounded border text-[10px] font-mono-tech space-y-1 ${ok ? 'border-emerald-800 bg-emerald-950/10' : 'border-amber-800'}`}>
+      <div className="text-amber-300">
+        {!st.active
+          ? 'Not running (log in, or the built-in engine was unavailable and the browser recognizer took over)'
+          : st.modelStatus === 'ready'
+            ? `Listening for "hey Jarvis" · ${st.state}`
+            : st.modelStatus === 'loading'
+              ? 'Loading wake word models (3.7 MB)...'
+              : `Wake word models failed: ${st.modelError}`}
+      </div>
+      {ok && (
+        <div className="flex items-center gap-2">
+          <span className="text-amber-500 w-28">"hey Jarvis" score</span>
+          <span className="flex-1 h-2 bg-amber-950 rounded overflow-hidden relative">
+            <span className="absolute inset-y-0 left-0 bg-amber-400" style={{ width: `${Math.round(st.recentScore * 100)}%` }} />
+            <span className="absolute inset-y-0 bg-red-400 w-0.5" style={{ left: '80%' }} title="trigger level" />
+          </span>
+          <span className="text-amber-300 w-8 text-right">{st.recentScore.toFixed(2)}</span>
+        </div>
+      )}
+      <div className="text-amber-500">
+        detections {st.detections} · transcriptions {st.transcriptions}
+        {st.lastTranscriptMs ? ` (last ${st.lastTranscriptMs} ms)` : ''}
+      </div>
+      {st.lastError && <div className="text-red-300">Last error: {st.lastError}</div>}
     </div>
   );
 };

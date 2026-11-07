@@ -3,7 +3,7 @@
 
 export interface ListeningEvent {
   at: number;
-  kind: 'echo-ignored' | 'barge-in' | 'partial-ignored' | 'voice-id' | 'command' | 'heard' | 'recognizer';
+  kind: 'echo-ignored' | 'barge-in' | 'partial-ignored' | 'voice-id' | 'command' | 'heard' | 'recognizer' | 'wake';
   detail: string;
 }
 
@@ -29,4 +29,18 @@ export const recognizerStats = {
   lastError: '',
   lastErrorAt: 0,
   errorCounts: {} as Record<string, number>,
+};
+
+/** Health of the built-in listener ("hey Jarvis" detector + cloud transcription) */
+export const builtInStats = {
+  active: false,
+  modelStatus: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
+  modelError: '',
+  /** Highest wake word score in the last ~2 s (for the meter) */
+  recentScore: 0,
+  detections: 0,
+  transcriptions: 0,
+  lastTranscriptMs: 0,
+  lastError: '',
+  state: 'standby' as 'standby' | 'capturing' | 'transcribing',
 };

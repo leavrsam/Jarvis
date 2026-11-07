@@ -154,18 +154,42 @@ Jarvis tells the owner apart from guests by voice, so n8n's `isAuthorizedOwner` 
 
 ---
 
+## 👂 Built-in Listening (wake word for Android / Fully Kiosk)
+
+The browser's speech recognizer doesn't exist in Android WebView (Fully Kiosk), and in Chrome on
+some phones it hears only silence while voice ID holds the microphone. The **built-in engine**
+(the default) avoids both: one shared mic stream does everything.
+
+1. **"Hey Jarvis" is detected on the device** with the openWakeWord models in
+   `public/models/wakeword/` (melspectrogram → embedding → `hey_jarvis_v0.1`), run with
+   onnxruntime-web. No audio leaves the device while waiting. Say **"hey Jarvis"**, not
+   just "Jarvis". The models are from openWakeWord v0.5.1 and licensed **CC BY-NC-SA 4.0**
+   (non-commercial use only).
+2. **The command is recorded from the same stream.** That includes the last ~2 s, so "Hey Jarvis,
+   what's the weather?" said in one breath is kept whole. Recording stops after ~0.9 s of silence.
+3. **The command is transcribed by Deepgram Nova-3** through `POST /api/transcribe` (same-origin,
+   40/min, login required). The key stays server-side: set `DEEPGRAM_API_KEY` in Vercel →
+   Settings → Environment Variables. This is the same key the Voice Lab uses. A command costs
+   about $0.0004.
+
+Switch engines under **VOICE ID → LISTENING ENGINE**. The panel shows a live wake-word score
+meter (trigger at 0.8), detections, transcriptions and errors. If the models can't load or
+`DEEPGRAM_API_KEY` is missing, the app falls back to the browser recognizer.
+
+---
+
 ## 🔒 Server Route Protection
 
-All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`) share `api/_lib/requestGuard.js`:
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`) share `api/_lib/requestGuard.js`:
 
 - **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
   `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
   No CORS headers are sent, so other sites' pages can't call these routes. Add extra origins with
   `JARVIS_ALLOWED_ORIGINS` (comma-separated) if you ever need to.
-- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min
+- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
-- All three also require a logged-in session (see **Server-Side Login**).
+- All of them also require a logged-in session (see **Server-Side Login**).
 
 ---
 

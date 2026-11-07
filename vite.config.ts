@@ -9,6 +9,8 @@ import voiceLabHandler from './api/voice-lab.js';
 import jarvisCommandHandler from './api/jarvis-command.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import authHandler from './api/auth.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import transcribeHandler from './api/transcribe.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -52,6 +54,10 @@ export default defineConfig(({ mode }) => {
           // Login / logout / session status
           server.middlewares.use('/api/auth', (req, res) => {
             void authHandler(req, res);
+          });
+          // Speech-to-text for the built-in listener
+          server.middlewares.use('/api/transcribe', (req, res) => {
+            void transcribeHandler(req, res);
           });
         },
       },

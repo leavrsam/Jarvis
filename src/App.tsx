@@ -12,6 +12,8 @@ import { ReplyStreamProcessor } from './services/replyStream';
 import { voiceBiometrics } from './services/voiceBiometrics';
 import { handleJarvisResponse, duckVolume, restoreVolume } from './services/youtubeController';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
+import { useBuiltInListening } from './hooks/useBuiltInListening';
+import { getListeningEngine, ListeningEngine, onListeningEngineChange } from './services/listeningEngine';
 import { useBatteryStatus } from './hooks/useBatteryStatus';
 
 
@@ -424,14 +426,16 @@ export const App: React.FC = () => {
     setAudioState('idle');
   }, []);
 
-  // Web Speech Recognition Hook with wake-word detection, hands-free barge-in & global hotkeys
-  const {
-    isListening,
-    transcript,
-    interimTranscript,
-    startListening,
-    stopListening,
-  } = useSpeechRecognition({
+  // Listening: the built-in engine ("hey Jarvis" on device + Deepgram, one shared mic) or the
+  // browser's speech recognizer. Same interface; only the selected one runs.
+  const [listeningEngine, setListeningEngineState] = useState<ListeningEngine>(() => getListeningEngine());
+  const [builtInUnavailable, setBuiltInUnavailable] = useState(false);
+  useEffect(() => onListeningEngineChange(() => {
+    setBuiltInUnavailable(false);
+    setListeningEngineState(getListeningEngine());
+  }), []);
+  const builtInEnabled = isAuthenticated && listeningEngine === 'builtin' && !builtInUnavailable;
+  const listeningOptions = {
     onFinalSubmit: (query: string) => handleCommandSubmit(query, 'voice'),
     onWakeWordDetected: handleWakeWordDetected,
     onFollowUpTimeout: handleFollowUpTimeout,
@@ -443,7 +447,20 @@ export const App: React.FC = () => {
     currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
     wakeWordEnabled: isWakeWordActive,
     getEchoReference: (tailMs?: number) => audioEngine.getEchoReference(tailMs),
+  };
+  const browserListening = useSpeechRecognition({ ...listeningOptions, disabled: builtInEnabled });
+  const builtInListening = useBuiltInListening({
+    ...listeningOptions,
+    enabled: builtInEnabled,
+    onUnavailable: (reason) => {
+      // Fall back to the browser recognizer for this session (if the browser has one)
+      logEvent('wake', `Built-in listener unavailable (${reason}); using the browser recognizer`);
+      setBuiltInUnavailable(true);
+    },
   });
+  const { isListening, transcript, interimTranscript, startListening, stopListening } = builtInEnabled
+    ? builtInListening
+    : browserListening;
 
   useEffect(() => {
     startListeningRef.current = startListening;
