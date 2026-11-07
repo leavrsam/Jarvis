@@ -15,8 +15,9 @@ import { useBatteryStatus } from './hooks/useBatteryStatus';
 
 
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
-// How long to wait for the n8n agent before playing a spoken "One moment, sir."
-const ACK_DELAY_MS = 700;
+// How long to wait for the n8n agent before playing a spoken "One moment, sir." n8n usually
+// answers in under a second now, so this only covers genuinely slow requests (tool calls).
+const ACK_DELAY_MS = 1500;
 
 // Spoken when the n8n run fails. "partial" = the connection dropped after part of the reply.
 function failureMessage(partial: boolean, kind?: string): string {
@@ -396,6 +397,7 @@ export const App: React.FC = () => {
     isJarvisSpeaking: audioState === 'speaking' || audioState === 'processing' || isProcessing || !isAuthenticated,
     currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
     wakeWordEnabled: isWakeWordActive,
+    getEchoReference: () => audioEngine.getEchoReference(),
   });
 
   useEffect(() => {

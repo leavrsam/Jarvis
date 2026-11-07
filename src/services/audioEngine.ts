@@ -864,6 +864,37 @@ class JarvisAudioEngine {
   // first audio chunk while the rest is still being generated, and replies are sent as fewer,
   // larger requests (first sentence alone, the rest grouped), which matters at 10 requests/min.
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Speech log for the microphone echo filter: everything Jarvis is saying or said in the last
+  // few seconds (holding phrases, reply sentences, fallback voices). Speech recognition can
+  // deliver words up to a second or two after they were heard, so the tail matters.
+  // -------------------------------------------------------------------------
+  private speechLog: { text: string; startedAt: number; endedAt: number | null }[] = [];
+
+  /** Record that `text` is being spoken; call the returned function when it stops. */
+  private noteSpeech(text: string): () => void {
+    const entry = { text, startedAt: Date.now(), endedAt: null as number | null };
+    this.speechLog.push(entry);
+    if (this.speechLog.length > 30) this.speechLog.splice(0, this.speechLog.length - 30);
+    return () => {
+      if (entry.endedAt === null) entry.endedAt = Date.now();
+    };
+  }
+
+  /**
+   * Text Jarvis is speaking now or finished speaking within `tailMs`. The recognizer discards
+   * anything that matches it, so Jarvis doesn't hear himself and treat it as a command.
+   */
+  public getEchoReference(tailMs = 4000): string {
+    const now = Date.now();
+    return this.speechLog
+      .filter((e) =>
+        e.endedAt === null ? now - e.startedAt < 60_000 : now - e.endedAt < tailMs
+      )
+      .map((e) => e.text)
+      .join(' ');
+  }
+
   public isStreamingEnabled(): boolean {
     return this.streamingEnabled;
   }
@@ -886,7 +917,23 @@ class JarvisAudioEngine {
     return `${preset.id}::${effectiveVoice}::${this.getEffectiveStyle()}::${spokenText}`;
   }
 
+  /** A clip whose playback is recorded in the speech log (used by the echo filter). */
   private startClip(text: string, signal: AbortSignal): SpeechClip {
+    const clip = this.createClip(text, signal);
+    return {
+      ...clip,
+      play: async (onStart) => {
+        const end = this.noteSpeech(clip.text);
+        try {
+          await clip.play(onStart);
+        } finally {
+          end();
+        }
+      },
+    };
+  }
+
+  private createClip(text: string, signal: AbortSignal): SpeechClip {
     const cached = this.audioBufferCache.get(this.speechCacheKey(text));
     if (cached) {
       return {
@@ -1239,7 +1286,9 @@ class JarvisAudioEngine {
     }
     this.lastAckPhrase = phrase;
     const buffer = this.ackBuffers.get(phrase)!;
+    const end = this.noteSpeech(phrase);
     this.ackPromise = this.playBuffer(buffer).finally(() => {
+      end();
       this.ackPromise = null;
     });
   }

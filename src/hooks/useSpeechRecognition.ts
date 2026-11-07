@@ -40,6 +40,11 @@ export interface UseSpeechRecognitionOptions {
   onWakeWordDetected?: (trailingQuery?: string) => void;
   onFollowUpTimeout?: () => void;
   onBargeIn?: (trailingQuery?: string) => void;
+  /**
+   * What Jarvis is saying now or said in the last few seconds. Any recognized speech that
+   * matches it is his own voice coming back through the mic and is ignored in every mode.
+   */
+  getEchoReference?: () => string;
   silenceTimeoutMs?: number;
   followUpTimeoutMs?: number;
   isJarvisSpeaking?: boolean;
@@ -94,7 +99,10 @@ export function useSpeechRecognition({
   isJarvisSpeaking = false,
   currentJarvisSpeech = '',
   wakeWordEnabled = true,
+  getEchoReference,
 }: UseSpeechRecognitionOptions = {}) {
+  const getEchoReferenceRef = useRef(getEchoReference);
+  getEchoReferenceRef.current = getEchoReference;
   // Mode: 'standby' (waiting for "Hey Jarvis"), 'active' (recording command), 'idle'
   const [isListening, setIsListening] = useState(false);
   const [isStandby, setIsStandby] = useState(wakeWordEnabled);
@@ -280,6 +288,19 @@ export function useSpeechRecognition({
 
         const fullUtterance = (finalChunk || interim).trim();
         if (!fullUtterance) return;
+
+        // 0. Self-echo filter, in every mode: Jarvis's own words (including "One moment, sir"
+        // while n8n works, and the tail of a reply that arrives after he stops talking) must
+        // never become a command or a barge-in.
+        const echoReference = [
+          getEchoReferenceRef.current?.() || '',
+          isJarvisSpeakingRef.current ? currentJarvisSpeechRef.current : '',
+        ]
+          .join(' ')
+          .trim();
+        if (echoReference && isSelfEcho(fullUtterance, echoReference)) {
+          return;
+        }
 
         // 1. Hands-Free Voice Interruption / Barge-In while Jarvis is speaking!
         if (isJarvisSpeakingRef.current) {
