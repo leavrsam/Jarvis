@@ -126,9 +126,22 @@ Jarvis tells the owner apart from guests by voice, so n8n's `isAuthorizedOwner` 
 - **Enroll:** HUD → VOICE ID → *Start enrollment*: read 5 phrases (~40 s) on the device and spot you normally
   use. A phrase that doesn't match the others is re-recorded. *Test my voice* shows your live score.
 - **Owner-only mode:** voice commands not verified as the owner aren't sent to n8n; Jarvis politely declines.
-- **Guests:** clearly different voices can be remembered automatically ("Jarvis, I'm Sarah" names them).
-  Profiles adapt using a few recent high-confidence matches, but enrollment samples are always kept, so they
-  can't drift toward someone else.
+- **Guests are remembered without registering.** A clearly new voice (≥ 1.5 s of speech) becomes a guest
+  profile. **During their visit** (3 minutes between commands), their follow-ups keep teaching their voiceprint
+  (up to 12 samples), even ones that match only moderately (≥ 0.35, as long as it isn't the owner), so one
+  short first sentence becomes a solid voiceprint before they leave. With room-level background noise this
+  took next-visit recognition from 3/8 (single sample) to 7/8.
+- **Names:** "My name is Sarah", "Call me Sarah", or "(Hi Jarvis,) I'm Sarah" at the start of a sentence name
+  the guest, and Jarvis confirms: "Lovely to meet you, Sarah. I'll remember your voice." Phrases like "I'm
+  hungry" or "I'm not sure" are ignored. The owner can say "Jarvis, meet my sister Sarah": the next new voice
+  within 2 minutes gets that name. Deliberately chosen names are never overwritten.
+- **Duplicates merge:** two guest profiles that sound like the same person (similarity ≥ 0.60; different people
+  measured ≤ 0.20) are merged automatically, keeping the given name. VOICE ID also has "Same person as…" to merge
+  by hand.
+- **Facts about guests** are stored by the n8n agent (long-term memory tagged `[User: <name>]`), keyed by the
+  `speaker` name voice ID sends, so they come back whenever the voice is recognized.
+- Profiles keep their enrollment samples, plus a few recent high-confidence matches, so they adapt without
+  drifting toward someone else.
 - **Accuracy (measured):** LibriSpeech, 10 speakers, 5-phrase enrollment: 2–3 s commands identified correctly
   86/87; no strangers accepted at the threshold; 1–2% of owner commands fall back to guest. In Chrome with a
   simulated mic: owner scored 0.83–0.88, strangers 0.08–0.37. A phone mic in a room scores lower than clean

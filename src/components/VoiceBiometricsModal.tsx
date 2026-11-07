@@ -345,7 +345,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
           <Toggle
             icon={<Sparkles className="w-5 h-5 text-amber-400" />}
             title="REMEMBER NEW VOICES"
-            detail='Clearly different voices become guest profiles automatically; "Jarvis, I&apos;m Sarah" names them.'
+            detail='New voices become guest profiles automatically and keep learning during the visit. "Jarvis, I&apos;m Sarah" or your "meet my sister Sarah" names them; duplicates merge.'
             on={autoLearnEnabled}
             onLabel="ON"
             offLabel="OFF"
@@ -436,8 +436,29 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
                           </button>
                         </div>
                       )}
+                      {!p.isOwner && profiles.length > 1 && (
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const target = profiles.find((x) => x.id === e.target.value);
+                            if (target && window.confirm(`Merge "${p.name}" into "${target.name}"? Their voice samples are combined and "${p.name}" is removed.`)) {
+                              voiceBiometrics.mergeProfiles(target.id, p.id);
+                              refresh();
+                            }
+                          }}
+                          className="mt-1 max-w-full bg-black border border-amber-900 rounded px-1 py-0.5 text-[10px] text-amber-400"
+                          aria-label={`Merge ${p.name} into another profile`}
+                        >
+                          <option value="">Same person as…</option>
+                          {voiceBiometrics.similarProfiles(p.id).map(({ profile: o, score }) => (
+                            <option key={o.id} value={o.id}>
+                              {o.name} ({Math.round(Math.max(0, score) * 100)}% similar)
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <div className="text-[10px] font-mono-tech text-amber-400/60 truncate">
-                        {p.enrollment.length} enrollment sample{p.enrollment.length === 1 ? '' : 's'}
+                        {p.enrollment.length} voice sample{p.enrollment.length === 1 ? '' : 's'}
                         {p.consistency != null ? ` · consistency ${Math.round(p.consistency * 100)}%` : ''} · recognized{' '}
                         {p.samplesCount}×{p.adaptive?.length ? ` · ${p.adaptive.length} adaptive` : ''}
                       </div>

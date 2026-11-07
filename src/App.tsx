@@ -356,6 +356,13 @@ export const App: React.FC = () => {
       ...prev,
     ]);
 
+    // Voice ID learned a name from this command: confirm it out loud, after the reply
+    if (!failed && speakerResult.introducedAs) {
+      speech.enqueue(`Lovely to meet you, ${speakerResult.introducedAs}. I'll remember your voice.`);
+    } else if (!failed && speakerResult.expectingGuest) {
+      speech.enqueue(`I'll remember ${speakerResult.expectingGuest}'s voice once I hear it.`);
+    }
+
     speech.finish();
     await speech.done;
   }, [resumeFollowUpListening, interruptCurrentReply]);
