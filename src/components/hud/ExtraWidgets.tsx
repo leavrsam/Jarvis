@@ -6,6 +6,7 @@ import { notifyAuthRequired } from '../../services/auth';
 import { getLocation } from '../../services/weather';
 import { applyScreenDirective } from '../../services/screenController';
 import { normalizeCameraName } from '../../services/directives';
+import { cameraErrorText, readCameraError } from '../../services/cameraErrors';
 import { AudioSpectrumMeter } from '../AudioSpectrumMeter';
 import { DEFAULT_EVENT_COLOR, everyWhileVisible, readCalendarChoice } from './GlanceColumn';
 import type { JarvisAudioState } from '../../services/audioEngine';
@@ -82,6 +83,7 @@ export const CameraWidget: React.FC = () => {
   const [src, setSrc] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'ok' | 'error' | 'not_configured'>('idle');
+  const [errorText, setErrorText] = useState('');
   const srcRef = useRef<string | null>(null);
   const [reload, setReload] = useState(0);
 
@@ -97,7 +99,11 @@ export const CameraWidget: React.FC = () => {
           if (!cancelled) setStatus('not_configured');
           return;
         }
-        if (!res.ok || !(res.headers.get('content-type') || '').startsWith('image/')) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok || !(res.headers.get('content-type') || '').startsWith('image/')) {
+          const { code, detail } = await readCameraError(res);
+          if (!cancelled) setErrorText(cameraErrorText(camera, code, detail));
+          throw new Error(`HTTP ${res.status} ${code}`);
+        }
         const url = URL.createObjectURL(await res.blob());
         if (cancelled) return URL.revokeObjectURL(url);
         if (srcRef.current) URL.revokeObjectURL(srcRef.current);
@@ -172,7 +178,7 @@ export const CameraWidget: React.FC = () => {
       ) : src ? (
         <img src={src} alt={`${camera} camera`} className={`w-full h-full object-cover rounded-lg ${status === 'error' ? 'opacity-40' : ''}`} />
       ) : (
-        <div className="text-[13px] text-amber-500/80">{status === 'error' ? "Couldn't load the camera." : 'Connecting…'}</div>
+        <div className="text-[13px] text-amber-500/80">{status === 'error' ? errorText || "Couldn't load the camera." : 'Connecting…'}</div>
       )}
     </Card>
   );

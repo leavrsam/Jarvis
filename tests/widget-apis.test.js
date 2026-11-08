@@ -151,3 +151,18 @@ describe('widgets dispatcher', () => {
     expect(routeOf('/api/widgets')).toBeNull();
   });
 });
+
+import { sniffImage } from '../api/camera.js';
+import { cameraErrorText } from '../src/services/cameraErrors';
+
+describe('camera', () => {
+  it('recognises image bytes sent with a generic content type', () => {
+    expect(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]))).toBe('image/jpeg');
+    expect(sniffImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBe('image/png');
+    expect(sniffImage(Buffer.from('{"url":"https://x"}'))).toBe('');
+  });
+  it('explains failures in plain words', () => {
+    expect(cameraErrorText('blinds cam', 'camera_not_found', 'Unknown camera')).toBe('n8n doesn’t know a camera called “blinds cam” (Unknown camera).'.replace('’', "'"));
+    expect(cameraErrorText('x', 'not_configured')).toMatch(/JARVIS_MEDIA_URL/);
+  });
+});

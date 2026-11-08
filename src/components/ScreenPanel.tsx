@@ -6,6 +6,7 @@ import { RefreshCw, X } from 'lucide-react';
 import { clearScreen, SCREEN_IDLE_MS, ScreenContent, subscribeScreen } from '../services/screenController';
 import { subscribeDuck } from '../services/youtubeController';
 import { notifyAuthRequired } from '../services/auth';
+import { cameraErrorText, readCameraError } from '../services/cameraErrors';
 
 const CAMERA_REFRESH_MS = 60_000;
 
@@ -94,10 +95,10 @@ const TopBar: React.FC<{ label: string; caption?: string; onRefresh?: () => void
   </div>
 );
 
-const LoadError: React.FC<{ what: string }> = ({ what }) => (
+const LoadError: React.FC<{ what: string; text?: string }> = ({ what, text }) => (
   <div className="absolute inset-0 flex items-center justify-center">
     <span className="px-3 py-2 rounded border border-amber-700/60 bg-black/70 text-xs text-amber-300 font-mono-tech">
-      Couldn't load that {what}.
+      {text || `Couldn't load that ${what}.`}
     </span>
   </div>
 );
@@ -230,6 +231,7 @@ const CameraView: React.FC<{ camera: string }> = ({ camera }) => {
   const [src, setSrc] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
   const [failed, setFailed] = useState(false);
+  const [errorText, setErrorText] = useState('');
   const [loading, setLoading] = useState(false);
   const restartIdle = useIdleClose();
   const srcRef = useRef<string | null>(null);
@@ -250,7 +252,11 @@ const CameraView: React.FC<{ camera: string }> = ({ camera }) => {
         return;
       }
       const type = res.headers.get('content-type') || '';
-      if (!res.ok || !type.startsWith('image/')) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok || !type.startsWith('image/')) {
+        const { code, detail } = await readCameraError(res);
+        setErrorText(cameraErrorText(camera, code, detail));
+        throw new Error(`HTTP ${res.status} ${code}`);
+      }
       const blob = await res.blob();
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
@@ -259,6 +265,7 @@ const CameraView: React.FC<{ camera: string }> = ({ camera }) => {
       setSrc(url);
       setCaption(res.headers.get('x-image-source') || '');
       setFailed(false);
+      setErrorText('');
     } catch (err) {
       if (controller.signal.aborted) return;
       console.warn('[Screen] camera load failed:', err);
@@ -297,7 +304,7 @@ const CameraView: React.FC<{ camera: string }> = ({ camera }) => {
           className={`w-full h-full object-contain transition-opacity duration-700 ${failed ? 'opacity-30' : 'opacity-100'}`}
         />
       )}
-      {failed && <LoadError what="camera image" />}
+      {failed && <LoadError what="camera image" text={errorText} />}
       {!src && !failed && (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-amber-500 font-mono-tech">
           Connecting to {camera}…
