@@ -209,7 +209,11 @@ On wide screens (TV, desktop) the middle stays clear for the reactor:
   heard (live / upload) and how fast, n8n thinking time, the voice and its start time, the last
   voice ID, and a mic level meter. The weather uses an approximate location from the network
   unless the browser already allows location; tap the crosshair to use the device's precise
-  location.
+  location. Weather refreshes every 15 minutes while the HUD is visible (paused in a background
+  tab), about 100 calls a day per open HUD; after a failure it retries at 1, 2, 4 and 8 minutes,
+  then waits for the normal refresh. The location lookup (BigDataCloud) is cached for a day.
+  Both services are free with no key; Open-Meteo's free tier allows 10,000 calls a day and is
+  for non-commercial use.
 - **Centre:** the reactor, with a one-line status under it (Standing by / Listening / Thinking /
   Speaking). When Jarvis's screen is up, it takes the centre and the reactor shrinks below it.
 - **Right, conversation:** the live transcript while you talk, the follow-up countdown, the

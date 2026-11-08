@@ -150,18 +150,28 @@ const WeatherCard: React.FC = () => {
           setWeather(w);
           setError('');
         }
+        failures = 0;
       } catch (err) {
         if (cancelled) return;
         setError((err as Error).message || 'unavailable');
-        retry = setTimeout(load, 60_000); // try again soon rather than in 15 minutes
+        // Try again sooner than the next refresh, backing off 1, 2, 4, 8 min. Only one retry
+        // is ever pending, so a long outage can't pile up retry loops.
+        failures++;
+        clearTimeout(retry);
+        const delay = Math.min(60_000 * 2 ** (failures - 1), WEATHER_REFRESH_MS);
+        if (delay < WEATHER_REFRESH_MS) {
+          retry = setTimeout(() => {
+            if (!document.hidden) void load();
+          }, delay);
+        }
       }
     };
     let retry: ReturnType<typeof setTimeout> | undefined;
-    void load();
-    const t = setInterval(load, WEATHER_REFRESH_MS);
+    let failures = 0;
+    const stop = everyWhileVisible(() => void load(), WEATHER_REFRESH_MS);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stop();
       clearTimeout(retry);
     };
   }, [reload]);
