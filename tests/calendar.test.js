@@ -24,6 +24,24 @@ describe('calendar normalizeEvents', () => {
     expect(out[0].allDay).toBe(true);
   });
 
+  it("reads the n8n jarvis-calendar webhook's response", () => {
+    const out = normalizeEvents({
+      timeMin: '2026-11-08T07:00:00.000Z',
+      timeMax: '2026-11-10T07:00:00.000Z',
+      count: 3,
+      events: [
+        { id: 'a1', title: 'Call with Alex', start: '2026-11-08T10:30:00-07:00', end: '2026-11-08T11:00:00-07:00', allDay: false, location: 'Zoom', description: 'Notes', link: 'https://www.google.com/calendar/event?eid=x' },
+        { id: 'a2', title: 'Veterans Day', start: '2026-11-09', end: '2026-11-10', allDay: true, location: '', description: '', link: '' },
+        { id: 'a3', title: 'Dinner', start: '2026-11-08T18:00:00-07:00', end: '2026-11-08T20:00:00-07:00', allDay: false, location: 'Tsunami', description: '', link: '' },
+      ],
+    });
+    expect(out).toEqual([
+      { title: 'Veterans Day', start: '2026-11-09', end: '2026-11-10', allDay: true, location: '', calendar: '' },
+      { title: 'Call with Alex', start: '2026-11-08T17:30:00.000Z', end: '2026-11-08T18:00:00.000Z', allDay: false, location: 'Zoom', calendar: '' },
+      { title: 'Dinner', start: '2026-11-09T01:00:00.000Z', end: '2026-11-09T03:00:00.000Z', allDay: false, location: 'Tsunami', calendar: '' },
+    ]);
+  });
+
   it('skips junk and untitled events get a placeholder', () => {
     expect(normalizeEvents([null, 5, { summary: 'x' }, { start: { dateTime: 'not a date' } }])).toEqual([]);
     expect(normalizeEvents([{ start: '2026-11-09T16:00:00Z' }])[0].title).toBe('(No title)');
