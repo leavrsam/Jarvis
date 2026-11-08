@@ -3,7 +3,7 @@
 // and the subtitles stay along the bottom.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
-import { clearScreen, SCREEN_IDLE_MS, ScreenContent, subscribeScreen } from '../services/screenController';
+import { applyScreenDirective, clearScreen, SCREEN_IDLE_MS, ScreenContent, subscribeScreen } from '../services/screenController';
 import { subscribeDuck } from '../services/youtubeController';
 import { notifyAuthRequired } from '../services/auth';
 import { cameraErrorText, readCameraError } from '../services/cameraErrors';
@@ -37,7 +37,12 @@ export const ScreenPanel: React.FC = () => {
         {content.kind === 'image' && <ImageView url={content.url} />}
         {content.kind === 'image-search' && <ImageSearchView query={content.query} />}
         {content.kind === 'video' && <VideoView url={content.url} />}
-        {content.kind === 'camera' && <CameraView camera={content.camera} />}
+        {content.kind === 'camera' &&
+          (content.cameras && (content.cameras.length > 1 || content.cameras[0] === 'all') ? (
+            <CameraGrid cameras={content.cameras} />
+          ) : (
+            <CameraView camera={content.camera} />
+          ))}
       </div>
     </section>
   );
@@ -223,6 +228,134 @@ const VideoView: React.FC<{ url: string }> = ({ url }) => {
         />
       )}
       {failed && <LoadError what="video" />}
+    </>
+  );
+};
+
+const CAMERA_REFRESH_GRID_MS = 60_000;
+
+interface GridImage {
+  key: string;
+  camera: string;
+  caption: string;
+  src: string | null;
+  error: string;
+}
+
+/** Grid columns for n tiles: 1, 2, 2x2, 3x2, 3x3 */
+const gridCols = (n: number) => (n <= 1 ? 'grid-cols-1' : n <= 4 ? 'grid-cols-2' : 'grid-cols-3');
+
+/**
+ * Several cameras at once: "all" (every snapshot n8n returns for camera=all) or a list of names
+ * (each fetched separately). Refreshes every minute; tap a tile to show just that camera.
+ */
+const CameraGrid: React.FC<{ cameras: string[] }> = ({ cameras }) => {
+  const all = cameras.length === 1 && cameras[0] === 'all';
+  const [tiles, setTiles] = useState<GridImage[]>(() => (all ? [] : cameras.map((c) => ({ key: c, camera: c, caption: '', src: null, error: '' }))));
+  const [allError, setAllError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const restartIdle = useIdleClose();
+  const listKey = cameras.join('|');
+
+  const fetchMulti = useCallback(async (name: string, signal: AbortSignal) => {
+    const res = await fetch(`/api/camera?camera=${encodeURIComponent(name)}&multi=1`, { cache: 'no-store', signal });
+    if (res.status === 401) {
+      notifyAuthRequired();
+      throw new Error('auth');
+    }
+    if (!res.ok) {
+      const { code, detail } = await readCameraError(res);
+      throw Object.assign(new Error(code), { text: cameraErrorText(name, code, detail) });
+    }
+    const data = await res.json();
+    return (Array.isArray(data.images) ? data.images : []) as { camera: string; caption: string; src: string }[];
+  }, []);
+
+  const load = useCallback(
+    async (signal: AbortSignal) => {
+      setLoading(true);
+      try {
+        if (all) {
+          try {
+            const images = await fetchMulti('all', signal);
+            if (signal.aborted) return;
+            setTiles(images.map((img, i) => ({ key: `${img.camera || 'camera'}-${i}`, camera: img.camera || `Camera ${i + 1}`, caption: img.caption, src: img.src, error: '' })));
+            setAllError(images.length ? '' : 'n8n answered with no camera images.');
+          } catch (err) {
+            if (!signal.aborted) setAllError((err as { text?: string }).text || "Couldn't load the cameras.");
+          }
+          return;
+        }
+        const results = await Promise.all(
+          cameras.map(async (name) => {
+            try {
+              const [first] = await fetchMulti(name, signal);
+              return { key: name, camera: name, caption: first?.caption || '', src: first?.src || null, error: first ? '' : 'No image.' };
+            } catch (err) {
+              return { key: name, camera: name, caption: '', src: null, error: (err as { text?: string }).text || "Couldn't load." };
+            }
+          })
+        );
+        if (!signal.aborted) setTiles(results);
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [all, listKey, fetchMulti]
+  );
+
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    const t = setInterval(() => void load(controller.signal), CAMERA_REFRESH_GRID_MS);
+    return () => {
+      clearInterval(t);
+      controller.abort();
+    };
+  }, [load, reload]);
+
+  return (
+    <>
+      <TopBar
+        label={all ? 'CAMERAS · ALL' : `CAMERAS · ${cameras.length}`}
+        refreshing={loading}
+        onRefresh={() => {
+          restartIdle();
+          setReload((n) => n + 1);
+        }}
+      />
+      {all && allError && !tiles.length ? (
+        <LoadError what="cameras" text={allError} />
+      ) : !tiles.length ? (
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-amber-500 font-mono-tech">Connecting to cameras…</div>
+      ) : (
+        <div className={`absolute inset-x-2 bottom-2 top-12 grid ${gridCols(tiles.length)} auto-rows-fr gap-2`}>
+          {tiles.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => t.camera && t.src && applyScreenDirective({ type: 'show-camera', camera: t.camera })}
+              className="relative rounded-lg overflow-hidden border border-amber-900/60 bg-black min-h-0 text-left group"
+              title={t.src ? `Show ${t.camera} on its own` : undefined}
+            >
+              {t.src ? (
+                <img src={t.src} alt={`${t.camera} camera`} className="absolute inset-0 w-full h-full object-contain" />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center p-3 text-center text-[12px] text-amber-400/90 font-mono-tech">
+                  {t.error || 'Connecting…'}
+                </div>
+              )}
+              <div className="absolute top-0 inset-x-0 flex items-center gap-2 px-2 py-1 bg-gradient-to-b from-black/80 to-transparent">
+                <span className="font-orbitron text-[10px] tracking-[0.18em] text-amber-200 uppercase truncate">{t.camera}</span>
+                {t.caption && (
+                  <span className="px-1.5 rounded border border-amber-600/60 bg-black/60 text-[10px] font-mono-tech text-amber-200 whitespace-nowrap">{t.caption}</span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </>
   );
 };

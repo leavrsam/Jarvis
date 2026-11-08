@@ -6,7 +6,7 @@ export type ScreenContent =
   | { kind: 'image'; url: string }
   | { kind: 'image-search'; query: string }
   | { kind: 'video'; url: string }
-  | { kind: 'camera'; camera: string };
+  | { kind: 'camera'; camera: string; cameras?: string[] };
 
 export interface ScreenState {
   content: ScreenContent | null;
@@ -64,7 +64,7 @@ export function applyScreenDirective(d: Directive): boolean {
       showOnScreen({ kind: 'video', url: d.url });
       return true;
     case 'show-camera':
-      showOnScreen({ kind: 'camera', camera: d.camera });
+      showOnScreen({ kind: 'camera', camera: d.camera, cameras: d.cameras });
       return true;
     case 'clear-screen':
       clearScreen();

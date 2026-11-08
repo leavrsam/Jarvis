@@ -64,6 +64,14 @@ describe('parseDirective: screen', () => {
     expect(parseDirective('SHOW_CAMERA:  Front   Door ')).toEqual({ type: 'show-camera', camera: 'Front Door' });
   });
 
+  it('parses several cameras, or all of them', () => {
+    expect(parseDirective('SHOW_CAMERA: front door, blinds cam')).toEqual({ type: 'show-camera', camera: 'front door', cameras: ['front door', 'blinds cam'] });
+    expect(parseDirective('SHOW_CAMERA: garage and driveway & porch')).toEqual({ type: 'show-camera', camera: 'garage', cameras: ['garage', 'driveway', 'porch'] });
+    expect(parseDirective('SHOW_CAMERA: all')).toEqual({ type: 'show-camera', camera: 'all', cameras: ['all'] });
+    expect(parseDirective('SHOW_CAMERA: All cameras')).toEqual({ type: 'show-camera', camera: 'all', cameras: ['all'] });
+    expect(parseDirective('SHOW_CAMERA: blinds cam')).toEqual({ type: 'show-camera', camera: 'blinds cam' });
+  });
+
   it('rejects camera names with unsafe characters', () => {
     expect(parseDirective('SHOW_CAMERA: ../etc/passwd')).toBeNull();
     expect(parseDirective('SHOW_CAMERA: a&b=c')).toBeNull();

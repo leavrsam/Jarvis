@@ -437,6 +437,7 @@ of a reply, one per line. They are carried out and never spoken or shown in the 
 | `SHOW_IMAGE: <https url>` | Shows the image, fading in. Stays until `CLEAR_SCREEN`, another `SHOW_*`, the ✕ button, or 3 minutes. |
 | `SHOW_VIDEO: <https url>` | Plays a direct video file (mp4/webm) with controls. It is muted while Jarvis talks or listens, like YouTube's volume ducking. Close it with ✕. |
 | `SHOW_CAMERA: <camera name>` | Shows a snapshot from `/api/camera`, with its caption ("Live" or "Last motion 2:39 PM"), a refresh button, and an automatic refresh every 60 s. Closes after 3 minutes. |
+| `SHOW_CAMERA: front door, garage` / `SHOW_CAMERA: all` | Several cameras as a grid (up to 8), each tile labelled with its name and caption. Tap a tile to show that camera on its own. `all` shows every image the media webhook returns for `camera=all`. Refreshes every minute. |
 | `CLEAR_SCREEN` | Hides the screen. |
 
 Example reply: `SHOW_CAMERA: front door` on the first line, then `Here's the front door, sir.`
@@ -450,6 +451,14 @@ Example reply: `SHOW_CAMERA: front door` on the first line, then `Here's the fro
 **Image search:** `GET /api/image-search?q=<what>` (same-origin, login, 20/min) searches Openverse
 (photographs first), falls back to Wikimedia Commons, and returns the first of the top results
 that actually loads, with title, creator, licence and source. Results are cached for 30 minutes.
+
+**Camera replies the proxy accepts:** raw image bytes, or JSON with an `https` snapshot link
+(`url`, `imageUrl`, `snapshotUrl`) or base64 (`data` plus `mimeType`, or a `data:image/…` value).
+For several cameras (`camera=all`), send a JSON array or n8n items, or
+`{ cameras: [...] }`, with one object per camera: `{ camera: "Front door", source: "Live", url
+| data }`. With `?multi=1` the proxy returns them all as data URLs, up to 8 and 4 MB in total
+(Vercel's response limit). Failures come back with a code and a detail, and the screen shows
+them in plain words.
 
 **Camera proxy:** `GET /api/camera?camera=<name>` calls `JARVIS_MEDIA_URL?camera=<name>` with the
 `X-Jarvis-Key: JARVIS_WEBHOOK_SECRET` header (the same secret as the command proxy). It returns

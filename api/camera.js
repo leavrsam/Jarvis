@@ -9,6 +9,10 @@ import { requireSession } from './_lib/session.js';
 
 const limiter = createRateLimiter(30); // the screen refreshes once a minute; leaves room for taps
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** Several cameras in one reply (?multi=1): at most this many, and this much in total, since
+ *  Vercel caps a function's response at 4.5 MB */
+const MAX_CAMERAS = 8;
+const MAX_MULTI_BYTES = 4_000_000;
 const UPSTREAM_TIMEOUT_MS = 20_000;
 const CAMERA_RE = /^[\w .-]{1,64}$/;
 
@@ -38,25 +42,10 @@ function cameraParam(req) {
 const isImageType = (t) => t.startsWith('image/') && t !== 'image/svg+xml';
 
 /** Image bytes from a response: raw image, or JSON with a link / base64 (common n8n replies) */
-async function readImage(upstream, signal) {
-  const type = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-  const declared = Number(upstream.headers.get('content-length') || 0);
-  if (declared > MAX_IMAGE_BYTES) return { error: 'too_large', detail: `${declared} bytes` };
-  const bytes = Buffer.from(await upstream.arrayBuffer());
-  if (bytes.length > MAX_IMAGE_BYTES) return { error: 'too_large', detail: `${bytes.length} bytes` };
-  if (isImageType(type)) return { image: bytes, type };
-  // Some setups send image bytes with a generic type: recognise JPEG / PNG / WebP / GIF
-  const sniffed = sniffImage(bytes);
-  if (sniffed) return { image: bytes, type: sniffed };
-
-  let data;
-  try {
-    data = JSON.parse(bytes.toString('utf8'));
-  } catch {
-    return { error: 'not_an_image', detail: `the media webhook answered with ${type || 'no content type'}, not an image` };
-  }
-  const item = Array.isArray(data) ? data[0]?.json ?? data[0] : data?.json ?? data;
+/** One item of a JSON reply → image (base64 or via its https link), or an error */
+async function itemImage(item, signal) {
   const source = typeof item?.source === 'string' ? item.source : typeof item?.caption === 'string' ? item.caption : '';
+  const camera = typeof item?.camera === 'string' ? item.camera : typeof item?.name === 'string' ? item.name : typeof item?.title === 'string' ? item.title : '';
   // base64 (optionally a data: URI), e.g. { data, mimeType } or { image: "data:image/jpeg;base64,..." }
   for (const key of ['data', 'base64', 'image', 'imageBase64', 'snapshot']) {
     const v = item?.[key];
@@ -64,7 +53,7 @@ async function readImage(upstream, signal) {
     const m = /^data:(image\/[a-z+.-]+);base64,(.*)$/is.exec(v);
     const raw = Buffer.from(m ? m[2] : v, 'base64');
     const t = m ? m[1].toLowerCase() : sniffImage(raw) || String(item.mimeType || '').toLowerCase();
-    if (raw.length && raw.length <= MAX_IMAGE_BYTES && isImageType(t)) return { image: raw, type: t, source };
+    if (raw.length && raw.length <= MAX_IMAGE_BYTES && isImageType(t)) return { image: raw, type: t, source, camera };
   }
   // a link to the snapshot, e.g. { url } / { imageUrl } / { snapshotUrl }
   for (const key of ['url', 'imageUrl', 'snapshotUrl', 'image', 'snapshot', 'href']) {
@@ -78,13 +67,48 @@ async function readImage(upstream, signal) {
       if (img.length > MAX_IMAGE_BYTES) return { error: 'too_large', detail: `${img.length} bytes` };
       const finalType = isImageType(t) ? t : sniffImage(img);
       if (!finalType) return { error: 'not_an_image', detail: `the snapshot link returned ${t || 'no content type'}` };
-      return { image: img, type: finalType, source };
+      return { image: img, type: finalType, source, camera };
     } catch (err) {
       return { error: 'camera_unreachable', detail: `couldn't fetch the snapshot link (${err?.message || err})` };
     }
   }
   const keys = item && typeof item === 'object' ? Object.keys(item).slice(0, 8).join(', ') : typeof item;
   return { error: 'not_an_image', detail: `the media webhook answered with JSON (${keys}) but no image, image link or base64 data` };
+}
+
+/**
+ * Every image in a reply: raw image bytes (one), or JSON with one or several cameras, as an
+ * object, an array, n8n items, or { cameras | images | snapshots: [...] }. Returns the images
+ * found, or the first error if there are none.
+ */
+async function readImages(upstream, signal) {
+  const type = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const declared = Number(upstream.headers.get('content-length') || 0);
+  if (declared > MAX_IMAGE_BYTES * 4) return { error: 'too_large', detail: `${declared} bytes` };
+  const bytes = Buffer.from(await upstream.arrayBuffer());
+  if (isImageType(type) || sniffImage(bytes)) {
+    if (bytes.length > MAX_IMAGE_BYTES) return { error: 'too_large', detail: `${bytes.length} bytes` };
+    return { images: [{ image: bytes, type: isImageType(type) ? type : sniffImage(bytes), source: '', camera: '' }] };
+  }
+  let data;
+  try {
+    data = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return { error: 'not_an_image', detail: `the media webhook answered with ${type || 'no content type'}, not an image` };
+  }
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.cameras)
+      ? data.cameras
+      : Array.isArray(data?.images)
+        ? data.images
+        : Array.isArray(data?.snapshots)
+          ? data.snapshots
+          : [data];
+  const items = list.slice(0, MAX_CAMERAS).map((r) => (r && typeof r === 'object' && r.json && typeof r.json === 'object' ? r.json : r));
+  const results = await Promise.all(items.map((item) => itemImage(item, signal)));
+  const images = results.filter((r) => !r.error);
+  return images.length ? { images } : results[0] || { error: 'not_an_image', detail: 'the media webhook answered with an empty list' };
 }
 
 /** Image type from the first bytes, or '' */
@@ -114,6 +138,10 @@ export default async function handler(req, res) {
   }
 
   const camera = cameraParam(req).trim().replace(/\s+/g, ' ');
+  let multi = false;
+  try {
+    multi = new URL(req.url, 'http://localhost').searchParams.get('multi') === '1';
+  } catch {}
   if (!CAMERA_RE.test(camera)) {
     sendJson(res, 400, { error: 'bad_camera' });
     return;
@@ -161,8 +189,29 @@ export default async function handler(req, res) {
       if (upstream.status === 401 || upstream.status === 403) return fail(502, 'camera_rejected', 'the media webhook refused the X-Jarvis-Key secret');
       return fail(502, 'camera_error', `media webhook HTTP ${upstream.status}${msg ? `: ${msg}` : ''}`);
     }
-    const result = await readImage(upstream, controller.signal);
-    if (result.error) return fail(502, result.error, result.detail);
+    const found = await readImages(upstream, controller.signal);
+    if (found.error) return fail(502, found.error, found.detail);
+    if (multi) {
+      // All of them, as data URLs, within the response size limit
+      const images = [];
+      let total = 0;
+      let skipped = 0;
+      for (const img of found.images) {
+        const b64 = img.image.toString('base64');
+        if (total + b64.length > MAX_MULTI_BYTES) {
+          skipped++;
+          continue;
+        }
+        total += b64.length;
+        images.push({
+          camera: cleanSource(img.camera) || '',
+          caption: cleanSource(img.source || (found.images.length === 1 ? upstream.headers.get('x-image-source') : '')) || '',
+          src: `data:${img.type};base64,${b64}`,
+        });
+      }
+      return sendJson(res, 200, { images, skipped });
+    }
+    const result = found.images[0];
     res.statusCode = 200;
     res.setHeader('Content-Type', result.type);
     res.setHeader('Content-Length', String(result.image.length));

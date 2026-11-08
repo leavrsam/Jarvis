@@ -18,7 +18,8 @@ export type Directive =
   | { type: 'show-image'; url: string }
   | { type: 'show-image-search'; query: string }
   | { type: 'show-video'; url: string }
-  | { type: 'show-camera'; camera: string }
+  /** camera: the first (or only) one; cameras: all of them when several were named ("all" = every camera) */
+  | { type: 'show-camera'; camera: string; cameras?: string[] }
   | { type: 'clear-screen' }
   | { type: 'set-timer'; seconds: number; label: string }
   | { type: 'cancel-timer'; label: string | 'all' };
@@ -145,8 +146,18 @@ export function parseDirective(text: string): Directive | null {
     case 'SHOW_VIDEO':
       return isHttpsUrl(arg) ? { type: 'show-video', url: arg } : null;
     case 'SHOW_CAMERA': {
-      const camera = normalizeCameraName(arg);
-      return camera ? { type: 'show-camera', camera } : null;
+      // One camera, a list ("front door, garage", "front door and garage"), or "all"
+      if (/^(?:all|all (?:the )?cameras|every camera|everything|both|all of them)$/i.test(arg.trim())) {
+        return { type: 'show-camera', camera: 'all', cameras: ['all'] };
+      }
+      const single = normalizeCameraName(arg);
+      if (single && !/\band\b/i.test(single)) return { type: 'show-camera', camera: single };
+      // Every part must be a valid name; one bad part rejects the whole directive
+      const raw = arg.split(/\s*(?:,|&|\+|\band\b)\s*/i).filter((p) => p.trim());
+      const parts = raw.map((p) => normalizeCameraName(p));
+      if (!parts.length || parts.some((p) => !p)) return single ? { type: 'show-camera', camera: single } : null;
+      const cameras = [...new Set(parts as string[])].slice(0, 8);
+      return cameras.length > 1 ? { type: 'show-camera', camera: cameras[0], cameras } : { type: 'show-camera', camera: cameras[0] };
     }
     case 'CLEAR_SCREEN':
       return { type: 'clear-screen' };
