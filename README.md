@@ -200,6 +200,26 @@ meter (trigger at 0.8), detections, transcriptions and errors. If the models can
 
 ---
 
+## 🧭 HUD Layout (wide screens / kiosk)
+
+On wide screens (TV, desktop) the middle stays clear for the reactor:
+- **Left, at a glance:** a large clock and date with a greeting; local weather (Open-Meteo, now
+  plus the next 6 hours, no key); now playing, when music is on; and **System**, which shows real
+  status: whether Jarvis is listening, the wake-word mode (tap to change), how your words are
+  heard (live / upload) and how fast, n8n thinking time, the voice and its start time, the last
+  voice ID, and a mic level meter. The weather uses an approximate location from the network
+  unless the browser already allows location; tap the crosshair to use the device's precise
+  location.
+- **Centre:** the reactor, with a one-line status under it (Standing by / Listening / Thinking /
+  Speaking). When Jarvis's screen is up, it takes the centre and the reactor shrinks below it.
+- **Right, conversation:** the live transcript while you talk, the follow-up countdown, the
+  current question and reply in large text with Repeat / Stop, earlier exchanges below, and
+  talk / type controls.
+
+Phones and narrow windows keep the compact layout (subtitles along the bottom).
+
+---
+
 ## 🖥️ Jarvis's Screen (images, video, cameras)
 
 Jarvis can put things on a screen in the HUD. Like the YouTube directives, these go at the start

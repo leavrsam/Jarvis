@@ -3,11 +3,14 @@ import { ArcReactorVisualizer } from './components/ArcReactorVisualizer';
 import { TelemetryHUD, WakeWordMode, WakeWordScope } from './components/TelemetryHUD';
 import { SubtitlesOverlay, DialogueEntry } from './components/SubtitlesOverlay';
 import { checkSession, logout, onAuthRequired } from './services/auth';
-import { logEvent } from './services/eventLog';
+import { hudMetrics, logEvent } from './services/eventLog';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { ScreenPanel } from './components/ScreenPanel';
 import { FollowUpCountdown } from './components/FollowUpCountdown';
+import { GlanceColumn } from './components/hud/GlanceColumn';
+import { ConversationPanel } from './components/hud/ConversationPanel';
+import { StateCaption } from './components/hud/StateCaption';
 import { parseDirective } from './services/directives';
 import { applyScreenDirective, subscribeScreen } from './services/screenController';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
@@ -282,6 +285,8 @@ export const App: React.FC = () => {
     }
     if (!isCurrent()) return;
     setLastSpeaker(speakerResult.name);
+    hudMetrics.speaker = speakerResult.name;
+    hudMetrics.speakerScore = speakerResult.confidence;
     setSpeakerConfidence(speakerResult.confidence);
     setIsOwner(speakerResult.isOwner);
     logEvent(
@@ -359,6 +364,9 @@ export const App: React.FC = () => {
         if (!isCurrent()) return;
         clearTimeout(ackTimer);
         firstAudioMs = Math.round(performance.now() - t0);
+        hudMetrics.firstAudioMs = firstAudioMs;
+        hudMetrics.brainMs = firstTextMs ?? 0;
+        hudMetrics.at = Date.now();
         console.info(`[Jarvis] first audio after ${firstAudioMs}ms`);
         logEvent('command', `Timing: voice ID ${voiceIdMs} ms · first text ${firstTextMs ?? '?'} ms · first audio ${firstAudioMs} ms (from your command)`);
         audioEngine.setState('speaking');
@@ -722,6 +730,15 @@ export const App: React.FC = () => {
     );
   }, []);
 
+  const handleReplay = useCallback((text: string) => {
+    inConversationRef.current = false;
+    audioEngine.speak(
+      text,
+      () => setAudioState('speaking'),
+      () => setAudioState('idle')
+    );
+  }, []);
+
   const handleStopSpeaking = useCallback(() => {
     inConversationRef.current = false;
     interruptCurrentReply();
@@ -794,7 +811,7 @@ export const App: React.FC = () => {
       <div className="absolute inset-0 hud-scanline z-10 pointer-events-none" />
       <div className="absolute inset-0 hud-vignette z-10 pointer-events-none" />
 
-      {/* Top and Side Telemetry HUD */}
+      {/* Top bar: name, voice / voice ID / settings / lock */}
       <TelemetryHUD
         state={audioState}
         isListening={isListening}
@@ -805,44 +822,60 @@ export const App: React.FC = () => {
         voiceName={voicePreset.shortLabel}
         activeVoicePresetId={voicePreset.id}
         activeSpeakerName={lastSpeaker}
-        historyLength={history.length}
-        onClearHistory={() => setHistory([])}
         onTestVoice={handleVoiceTest}
         onPreviewVoice={handleVoicePreview}
         onLockConsole={handleLockConsole}
         onToggleWakeWordMode={handleToggleWakeWordMode}
         onToggleWakeWordScope={handleToggleWakeWordScope}
         onSelectVoicePreset={handleSelectVoicePreset}
-        screenActive={screenActive}
       />
 
-      {/* Futuristic Sci-Fi YouTube Audio Controller Widget */}
-      <YouTubeMediaHUD />
+      {/* Wide screens: "at a glance" column on the left */}
+      <GlanceColumn
+        ownerName={voiceBiometrics.getOwnerProfile()?.name}
+        audioState={audioState}
+        isListening={isListening}
+        isProcessing={isProcessing}
+        engine={builtInEnabled ? 'builtin' : 'browser'}
+        wakeWordMode={wakeWordMode}
+        isWakeWordActive={isWakeWordActive}
+        onToggleWakeWordMode={handleToggleWakeWordMode}
+        battery={battery}
+        voiceName={voicePreset.shortLabel}
+        onOpenVoice={() => window.dispatchEvent(new Event('jarvis:open-voice'))}
+        onOpenVoiceId={() => window.dispatchEvent(new Event('jarvis:open-voice-id'))}
+      />
+
+      {/* Small screens: floating music widget (wide screens show it in the left column) */}
+      <div className="lg:hidden">
+        <YouTubeMediaHUD />
+      </div>
 
       {/* Jarvis's screen (SHOW_IMAGE / SHOW_IMAGE_SEARCH / SHOW_VIDEO / SHOW_CAMERA) */}
       <ScreenPanel />
 
-      {/* Center Holographic Arc-Reactor Three.js Visualizer (moves right while the screen is up) */}
+      {/* Arc reactor. Wide screens: centred between the two columns; with the screen up it
+          shrinks into the space below it. */}
       <section
-        className={`relative h-full flex items-center justify-center z-10 transition-all duration-700 ${
-          screenActive ? 'w-full lg:w-[34%] lg:ml-auto' : 'w-full'
+        className={`absolute z-10 flex items-center justify-center transition-all duration-700 inset-0 ${
+          screenActive
+            ? 'lg:inset-auto lg:left-[372px] lg:right-[482px] lg:bottom-0 lg:h-[230px]'
+            : 'lg:left-[360px] lg:right-[470px] lg:top-[56px]'
         }`}
       >
-        <ArcReactorVisualizer
-          state={audioState}
-          onReactorClick={handleToggleListening}
-        />
+        <ArcReactorVisualizer state={audioState} onReactorClick={handleToggleListening} />
+        {!screenActive && (
+          <div className="hidden lg:block">
+            <StateCaption state={audioState} isListening={isListening} isProcessing={isProcessing} wakeActive={isWakeWordActive} />
+          </div>
+        )}
       </section>
 
-      {/* Follow-up window: how long Jarvis keeps listening without "hey Jarvis" */}
-      {followUpWindow && isListening && !transcript && !interimTranscript && (
-        <FollowUpCountdown endsAt={followUpWindow.endsAt} totalMs={followUpWindow.totalMs} />
-      )}
-
-      {/* Bottom Subtitles & Voice Controls Overlay */}
-      <SubtitlesOverlay
+      {/* Wide screens: the conversation on the right */}
+      <ConversationPanel
         state={audioState}
         isListening={isListening}
+        isProcessing={isProcessing}
         transcript={transcript}
         interimTranscript={interimTranscript}
         lastQuery={lastQuery}
@@ -850,21 +883,39 @@ export const App: React.FC = () => {
         lastSpeaker={lastSpeaker}
         speakerConfidence={speakerConfidence}
         isOwner={isOwner}
-        isProcessing={isProcessing}
         history={history}
+        followUpWindow={followUpWindow}
         onToggleListening={handleToggleListening}
         onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
         onStopSpeaking={handleStopSpeaking}
-        onReplayResponse={(text) => {
-          inConversationRef.current = false;
-          audioEngine.speak(
-            text,
-            () => setAudioState('speaking'),
-            () => setAudioState('idle')
-          );
-        }}
+        onReplayResponse={handleReplay}
         onClearHistory={() => setHistory([])}
       />
+
+      {/* Small screens: follow-up countdown + subtitles along the bottom */}
+      <div className="lg:hidden">
+        {followUpWindow && isListening && !transcript && !interimTranscript && (
+          <FollowUpCountdown endsAt={followUpWindow.endsAt} totalMs={followUpWindow.totalMs} />
+        )}
+        <SubtitlesOverlay
+          state={audioState}
+          isListening={isListening}
+          transcript={transcript}
+          interimTranscript={interimTranscript}
+          lastQuery={lastQuery}
+          lastResponse={lastResponse}
+          lastSpeaker={lastSpeaker}
+          speakerConfidence={speakerConfidence}
+          isOwner={isOwner}
+          isProcessing={isProcessing}
+          history={history}
+          onToggleListening={handleToggleListening}
+          onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
+          onStopSpeaking={handleStopSpeaking}
+          onReplayResponse={handleReplay}
+          onClearHistory={() => setHistory([])}
+        />
+      </div>
     </main>
   );
 };

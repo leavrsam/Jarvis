@@ -1,17 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ShieldAlert,
   Cpu,
-  Radio,
-  Wifi,
   Terminal,
   Volume2,
   Activity,
-  Layers,
   Sparkles,
   Lock,
-  BatteryCharging,
-  Battery,
   Ear,
   KeyRound,
   CheckCircle2,
@@ -19,6 +13,7 @@ import {
   Loader2,
   X,
   Fingerprint,
+  Settings2,
 } from 'lucide-react';
 import {
   JarvisAudioState,
@@ -44,16 +39,12 @@ interface TelemetryHUDProps {
   voiceName: string;
   activeVoicePresetId: string;
   activeSpeakerName?: string;
-  historyLength: number;
-  onClearHistory?: () => void;
   onTestVoice?: () => void;
   onPreviewVoice?: (text: string) => void;
   onLockConsole?: () => void;
   onToggleWakeWordMode?: () => void;
   onToggleWakeWordScope?: () => void;
   onSelectVoicePreset?: (preset: JarvisNeuralVoicePreset) => void;
-  /** Jarvis's screen is up: the right-hand cards make way for the reactor */
-  screenActive?: boolean;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
@@ -66,17 +57,13 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   voiceName,
   activeVoicePresetId,
   activeSpeakerName,
-  historyLength,
-  onClearHistory,
   onTestVoice,
   onPreviewVoice,
   onLockConsole,
   onToggleWakeWordMode,
   onToggleWakeWordScope,
   onSelectVoicePreset,
-  screenActive = false,
 }) => {
-  const [currentTime, setCurrentTime] = useState<string>(() => new Date().toTimeString().split(' ')[0]);
   const coreFreq = 4.80;
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showMobileHudDrawer, setShowMobileHudDrawer] = useState(false);
@@ -91,15 +78,16 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   const [isDesigningVoice, setIsDesigningVoice] = useState<boolean>(false);
   const [designStatusMsg, setDesignStatusMsg] = useState<string>('');
 
+  // Other parts of the HUD (the system card) can open the voice / voice ID panels
   useEffect(() => {
-    const updateClock = () => {
-      const now = new Date();
-      setCurrentTime(now.toTimeString().split(' ')[0]);
+    const openVoice = () => setShowVoiceModal(true);
+    const openVoiceId = () => setShowBiometricsModal(true);
+    window.addEventListener('jarvis:open-voice', openVoice);
+    window.addEventListener('jarvis:open-voice-id', openVoiceId);
+    return () => {
+      window.removeEventListener('jarvis:open-voice', openVoice);
+      window.removeEventListener('jarvis:open-voice-id', openVoiceId);
     };
-
-    updateClock();
-    const timer = setInterval(updateClock, 1000);
-    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -141,53 +129,11 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
     }
   };
 
-  const getStateBadge = () => {
-    switch (state) {
-      case 'listening':
-        return {
-          text: 'ACOUSTIC SENSOR ARMED',
-          mobileText: 'ARMED',
-          bg: 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(0,240,255,0.35)]',
-          dot: 'bg-cyan-300 animate-ping',
-        };
-      case 'processing':
-        return {
-          text: 'NEURAL LINK QUERYING n8n',
-          mobileText: 'QUERYING',
-          bg: 'bg-amber-500/20 text-amber-300 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]',
-          dot: 'bg-amber-400 animate-pulse',
-        };
-      case 'speaking':
-        return {
-          text: 'TRANSMITTING VOCAL SYNTH',
-          mobileText: 'SPEAKING',
-          bg: 'bg-amber-500/25 text-amber-200 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.35)]',
-          dot: 'bg-amber-300 animate-pulse',
-        };
-      default:
-        if (isWakeWordActive) {
-          return {
-            text: 'WAKE-WORD ACTIVE: "HEY JARVIS"',
-            mobileText: 'WAKE: ON',
-            bg: 'bg-emerald-950/40 text-emerald-300 border-emerald-700/60 shadow-[0_0_10px_rgba(16,185,129,0.2)]',
-            dot: 'bg-emerald-400 animate-pulse',
-          };
-        }
-        return {
-          text: 'JARVIS MK-VII STANDBY',
-          mobileText: 'STANDBY',
-          bg: 'bg-black/60 text-amber-300 border-amber-700/60 shadow-[0_0_10px_rgba(245,158,11,0.2)]',
-          dot: 'bg-cyan-400',
-        };
-    }
-  };
-
-  const badge = getStateBadge();
 
   return (
     <>
       {/* TOP SCI-FI STATUS BAR */}
-      <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-3 sm:px-6 py-2.5 sm:py-4 border-b border-amber-900/40 bg-black/70 backdrop-blur-md pt-safe">
+      <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-3 sm:px-6 py-2.5 sm:py-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent pt-safe">
         {/* Left: Branding & Core ID */}
         <div className="flex items-center space-x-2 sm:space-x-4 shrink-0">
           <div className="flex items-center space-x-1.5 sm:space-x-2">
@@ -199,106 +145,21 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                 <span className="font-orbitron font-bold text-xs sm:text-sm tracking-[0.2em] sm:tracking-[0.25em] text-amber-300 text-glow-amber">
                   J.A.R.V.I.S.
                 </span>
-                <span className="text-[9px] sm:text-[10px] font-mono-tech px-1 sm:px-1.5 py-0.5 rounded bg-amber-950/60 border border-amber-800 text-amber-400">
-                  v4.8
-                </span>
               </div>
-              <p className="text-[8px] sm:text-[9px] font-mono-tech text-amber-500/70 tracking-wider hidden md:block">
-                MARK-VII AUTONOMOUS PROTOCOL // SESS: jarvis-web
-              </p>
             </div>
-          </div>
-        </div>
-
-        {/* Center: Live System Status Badge (Mobile & Desktop) */}
-        <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
-          <div
-            className={`flex items-center space-x-1.5 px-2.5 py-1 sm:px-3.5 sm:py-1 rounded-full border text-[10px] sm:text-xs font-orbitron tracking-wider sm:tracking-widest ${badge.bg} transition-colors duration-200 shrink-0`}
-          >
-            <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${badge.dot}`} />
-            <span className="hidden sm:inline">{badge.text}</span>
-            <span className="inline sm:hidden">{badge.mobileText}</span>
-          </div>
-
-          {/* Wake Word Power Mode Button (Desktop) */}
-          {onToggleWakeWordMode && (
-            <button
-              onClick={onToggleWakeWordMode}
-              className={`hidden md:flex items-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-colors duration-200 shrink-0 ${
-                isWakeWordActive
-                  ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50'
-                  : 'border-amber-900/50 bg-black/60 text-amber-500 hover:text-amber-300'
-              }`}
-              title="Click to toggle Wake-Word listening mode"
-            >
-              <Ear className="w-3 h-3 text-amber-300" />
-              <span>
-                {wakeWordMode === 'charging_only'
-                  ? battery.charging
-                    ? 'WAKE: ON POWER (ACTIVE)'
-                    : 'WAKE: ON POWER (PAUSED ON BATTERY)'
-                  : wakeWordMode === 'always'
-                  ? 'WAKE: ALWAYS ON'
-                  : 'WAKE: DISABLED'}
-              </span>
-            </button>
-          )}
-
-          {/* Wake Word Scope Button (Desktop) */}
-          {onToggleWakeWordScope && (
-            <button
-              onClick={onToggleWakeWordScope}
-              className={`hidden lg:flex items-center justify-center space-x-1.5 text-[10px] font-mono-tech px-2.5 py-1 rounded border transition-colors duration-200 shrink-0 min-w-[155px] ${
-                wakeWordScope === 'background'
-                  ? 'border-amber-500/60 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50'
-                  : 'border-amber-900/60 bg-black/60 text-amber-400 hover:text-amber-200'
-              }`}
-              title="Click to toggle between Active-Tab-Only and Background listening"
-            >
-              <span>
-                {wakeWordScope === 'background' ? 'SCOPE: BACKGROUND ON' : 'SCOPE: ACTIVE TAB ONLY'}
-              </span>
-            </button>
-          )}
-
-          {/* Battery Status (Desktop) */}
-          <div className="hidden md:flex items-center space-x-1.5 text-[10px] font-mono-tech text-amber-400/80 bg-black/60 px-2.5 py-1 rounded border border-amber-950 shrink-0">
-            {battery.charging ? (
-              <BatteryCharging className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            ) : (
-              <Battery className="w-3.5 h-3.5 text-amber-400" />
-            )}
-            <span>
-              {battery.charging ? '⚡' : ''} {Math.round(battery.level * 100)}%{' '}
-              {battery.charging ? 'CHARGING' : 'BATTERY'}
-            </span>
-          </div>
-
-          <div className="hidden lg:flex items-center space-x-1.5 text-[10px] font-mono-tech text-amber-400/80 bg-black/60 px-2 py-1 rounded border border-amber-950 shrink-0">
-            <Wifi className="w-3 h-3 text-emerald-400" />
-            <span>n8n LINK</span>
           </div>
         </div>
 
         {/* Right: Telemetry Clock, Mobile HUD Toggle, Voice & Lock Actions */}
         <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
-          <div className="text-right hidden sm:block w-24 sm:w-28 shrink-0 tabular-nums">
-            <div className="font-orbitron text-[11px] sm:text-xs tracking-wider sm:tracking-widest text-amber-300 text-glow-amber tabular-nums">
-              {currentTime || '00:00:00'}
-            </div>
-            <div className="text-[8px] sm:text-[9px] font-mono-tech text-amber-500/70 hidden md:block whitespace-nowrap">
-              CORE FREQ: {coreFreq.toFixed(2)} GHz // T: 312K
-            </div>
-          </div>
-
           {/* Mobile HUD System Diagnostics Drawer Trigger */}
           <button
             onClick={() => setShowMobileHudDrawer(true)}
-            className="flex lg:hidden items-center space-x-1 px-2 py-1 rounded border border-amber-500/50 bg-amber-950/40 hover:bg-amber-900/60 text-[10px] font-orbitron text-amber-300 transition-all shadow-[0_0_10px_rgba(245,158,11,0.2)]"
-            title="Open system telemetry & diagnostics"
+            className="flex items-center space-x-1 px-2 sm:px-2.5 py-1 rounded border border-amber-800/60 bg-black/60 hover:bg-amber-950/60 text-[10px] font-orbitron text-amber-400 transition-all hover:border-amber-500"
+            title="Settings: wake word, listening and system details"
           >
-            <Activity className="w-3 h-3 text-amber-400 animate-pulse" />
-            <span>HUD</span>
+            <Settings2 className="w-3 h-3 text-amber-300" />
+            <span className="hidden sm:inline">SETTINGS</span>
           </button>
 
           {/* Voice Configuration Trigger */}
@@ -314,7 +175,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
             />
             <Volume2 className="w-3 h-3 sm:hidden text-amber-300" />
             <span className="hidden sm:inline">VOICE:</span>
-            <span className="text-amber-200 truncate max-w-[80px] sm:max-w-[115px] hidden xs:inline">{voiceName}</span>
+            <span className="text-amber-200 truncate max-w-[80px] sm:max-w-[150px] hidden sm:inline">{voiceName}</span>
           </button>
 
           {/* Biometric Voice ID Trigger */}
@@ -351,167 +212,6 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           )}
         </div>
       </header>
-
-      {/* LEFT SCI-FI TELEMETRY PANEL (DESKTOP) */}
-      <aside className="absolute top-20 left-6 bottom-28 w-64 z-20 hidden lg:flex flex-col justify-between pointer-events-none">
-        {/* Card 1: Acoustic Spectrum */}
-        <div className="p-3.5 rounded-lg border border-amber-900/50 bg-black/60 backdrop-blur-md pointer-events-auto shadow-[0_0_20px_rgba(0,0,0,0.8)]">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-1.5 text-xs font-orbitron text-amber-400">
-              <Activity className="w-3.5 h-3.5 text-amber-300" />
-              <span className="tracking-wider">SPECTRAL SENSOR</span>
-            </div>
-            <span className="text-[9px] font-mono-tech text-amber-500/80">512-FFT</span>
-          </div>
-          <AudioSpectrumMeter bars={20} className="w-full" />
-          <div className="mt-2.5 flex justify-between text-[10px] font-mono-tech text-amber-400/80">
-            <span>MIC: {isListening ? 'LIVE' : 'MUTED'}</span>
-            <span>GAIN: +3.2 dB</span>
-            <span>NOISE: -64 dB</span>
-          </div>
-        </div>
-
-        {/* Card 2: Neural Core Specifications */}
-        <div className="p-3.5 rounded-lg border border-amber-900/50 bg-black/60 backdrop-blur-md pointer-events-auto space-y-2.5 shadow-[0_0_20px_rgba(0,0,0,0.8)]">
-          <div className="flex items-center space-x-1.5 text-xs font-orbitron text-amber-400">
-            <Cpu className="w-3.5 h-3.5 text-amber-300" />
-            <span className="tracking-wider">HEURISTIC TELEMETRY</span>
-          </div>
-          <div className="space-y-1.5 text-[10px] font-mono-tech text-amber-400/80">
-            <div className="flex justify-between border-b border-amber-950 pb-1 items-center">
-              <span className="text-amber-600">VOICE ENGINE</span>
-              <button
-                onClick={() => setShowVoiceModal(true)}
-                className="text-amber-300 hover:text-amber-100 hover:underline truncate max-w-[135px] text-right font-mono-tech"
-                title="Click to configure Gemini 3.8 TTS"
-              >
-                {voiceName}
-              </button>
-            </div>
-            <div className="flex justify-between border-b border-amber-950 pb-1">
-              <span className="text-amber-600">GEMINI 3.8 TTS</span>
-              <span className={geminiConfigured ? 'text-emerald-400' : 'text-amber-400'}>
-                {geminiConfigured ? 'ACTIVE' : 'KEY NEEDED'}
-              </span>
-            </div>
-            <div className="flex justify-between border-b border-amber-950 pb-1">
-              <span className="text-amber-600">n8n BRAIN</span>
-              <span className="text-emerald-400">ONLINE</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-amber-600">TURN LATENCY</span>
-              <span className="text-amber-300">750ms VAD</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Card 3: Quick Command Shortcuts */}
-        <div className="p-3 rounded-lg border border-amber-900/40 bg-black/40 backdrop-blur-sm pointer-events-auto">
-          <div className="text-[10px] font-orbitron text-amber-400/90 mb-1.5 flex items-center space-x-1">
-            <Terminal className="w-3 h-3 text-amber-400" />
-            <span>OPERATIONAL HOTKEYS</span>
-          </div>
-          <div className="text-[9px] font-mono-tech text-amber-500/70 space-y-1">
-            <p>
-              <strong className="text-amber-300">["HEY JARVIS"]</strong> Voice Wake Trigger
-            </p>
-            <p>
-              <strong className="text-amber-300">[OPTION + SPACE]</strong> Quick Talk Hotkey
-            </p>
-            <p>
-              <strong className="text-amber-300">[CMD+SHIFT+J]</strong> Global Voice Toggle
-            </p>
-            <p>
-              <strong className="text-amber-300">[SPACEBAR]</strong> Push-To-Talk Toggle
-            </p>
-            <p>
-              <strong className="text-amber-300">[CLICK CORE]</strong> Engage / Disengage
-            </p>
-          </div>
-        </div>
-      </aside>
-
-      {/* RIGHT SCI-FI TELEMETRY PANEL (DESKTOP) */}
-      <aside className={`absolute top-20 right-6 bottom-28 w-64 z-20 hidden ${screenActive ? '' : 'lg:flex'} flex-col justify-between pointer-events-none`}>
-        {/* Subsystems Matrix */}
-        <div className="p-3.5 rounded-lg border border-amber-900/50 bg-black/60 backdrop-blur-md pointer-events-auto space-y-2 shadow-[0_0_20px_rgba(0,0,0,0.8)]">
-          <div className="flex items-center justify-between text-xs font-orbitron text-amber-400">
-            <div className="flex items-center space-x-1.5">
-              <Layers className="w-3.5 h-3.5 text-amber-300" />
-              <span className="tracking-wider">SUBSYSTEMS</span>
-            </div>
-            <span className="text-[9px] font-mono-tech text-emerald-400">OPTIMAL</span>
-          </div>
-          <div className="space-y-1.5">
-            {[
-              { label: 'ARC-REACTOR OUTPUT', value: '100%', color: 'bg-amber-500' },
-              {
-                label: 'GEMINI 3.8 VOICE',
-                value: geminiConfigured ? 'ONLINE' : 'STANDBY',
-                color: geminiConfigured ? 'bg-emerald-500' : 'bg-amber-500',
-              },
-              {
-                label: 'STT STREAM CAPTURE',
-                value: isListening ? 'ACTIVE' : 'IDLE',
-                color: isListening ? 'bg-amber-400' : 'bg-blue-600',
-              },
-              {
-                label: 'SPEECH SYNTHESIS',
-                value: state === 'speaking' ? 'VOCALIZING' : 'ARMED',
-                color: state === 'speaking' ? 'bg-emerald-400' : 'bg-amber-600',
-              },
-            ].map((item, idx) => (
-              <div key={idx} className="text-[10px] font-mono-tech">
-                <div className="flex justify-between text-amber-400/90 mb-0.5">
-                  <span className="text-[9px] text-amber-500">{item.label}</span>
-                  <span className="text-amber-200">{item.value}</span>
-                </div>
-                <div className="w-full bg-amber-950/80 rounded-full h-1 overflow-hidden">
-                  <div
-                    className={`h-full ${item.color} rounded-full transition-all duration-300`}
-                    style={{ width: '90%' }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Transmission Statistics */}
-        <div className="p-3.5 rounded-lg border border-amber-900/50 bg-black/60 backdrop-blur-md pointer-events-auto space-y-2 shadow-[0_0_20px_rgba(0,0,0,0.8)]">
-          <div className="flex items-center justify-between text-xs font-orbitron text-amber-400">
-            <div className="flex items-center space-x-1.5">
-              <Radio className="w-3.5 h-3.5 text-amber-300" />
-              <span className="tracking-wider">TRANSMISSIONS</span>
-            </div>
-            <span className="text-[9px] font-mono-tech text-amber-400">{historyLength} LOGS</span>
-          </div>
-          <div className="text-[10px] font-mono-tech text-amber-400/80 space-y-1">
-            <div className="flex justify-between">
-              <span className="text-amber-600">SESSION TARGET</span>
-              <span className="text-amber-300">jarvis-web</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-amber-600">AUDIO FORMAT</span>
-              <span className="text-emerald-400">24kHz PCM WAV</span>
-            </div>
-            {historyLength > 0 && onClearHistory && (
-              <button
-                onClick={onClearHistory}
-                className="w-full mt-2 py-1 text-[9px] font-orbitron text-amber-400 border border-amber-900/70 hover:border-amber-500 bg-amber-950/30 rounded transition-colors"
-              >
-                PURGE LOG BUFFER
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Security / Protocol Indicator */}
-        <div className="p-2.5 rounded-lg border border-amber-900/40 bg-black/40 text-[9px] font-mono-tech text-amber-500/70 flex items-center space-x-2">
-          <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-          <span>ENCRYPTED NEURAL PIPELINE // AUTHORIZATION LEVEL 5</span>
-        </div>
-      </aside>
 
       {/* MOBILE TELEMETRY & SYSTEM DRAWER */}
       {showMobileHudDrawer && (

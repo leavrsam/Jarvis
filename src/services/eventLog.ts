@@ -44,3 +44,20 @@ export const builtInStats = {
   lastError: '',
   state: 'standby' as 'standby' | 'capturing' | 'transcribing',
 };
+
+/** Timings of the last exchange, for the HUD's system card */
+export const hudMetrics = {
+  /** Your words → text (live transcription or upload), ms */
+  heardMs: 0,
+  heardVia: '' as '' | 'live' | 'uploaded',
+  /** Command → first text from n8n, ms */
+  brainMs: 0,
+  /** Command → Jarvis starts talking, ms */
+  firstAudioMs: 0,
+  /** Gemini: request → first sound of the latest sentence, ms */
+  voiceMs: 0,
+  /** Last voice ID decision */
+  speaker: '',
+  speakerScore: 0,
+  at: 0,
+};

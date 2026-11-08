@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { voiceCapture } from '../services/speaker/voiceCapture';
 import { resampleTo16k } from '../services/speaker/fbank';
 import { loadWakeWordModels, WakeWordDetector, WAKE_SAMPLE_RATE } from '../services/wakeword/wakeWordModel';
-import { builtInStats, logEvent } from '../services/eventLog';
+import { builtInStats, hudMetrics, logEvent } from '../services/eventLog';
 import { isLikelyEcho } from '../services/echoMatch';
 import { notifyAuthRequired } from '../services/auth';
 import { LiveTurn, liveTranscriptionUnavailable, prefetchLiveToken } from '../services/liveTranscriber';
@@ -151,6 +151,8 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     const afterSpeechMs = cap.lastSpeechAt ? Date.now() - cap.lastSpeechAt : 0;
     builtInStats.transcriptions++;
     builtInStats.lastTranscriptMs = afterSpeechMs;
+    hudMetrics.heardMs = afterSpeechMs;
+    hudMetrics.heardVia = via.startsWith('live') ? 'live' : 'uploaded';
     logEvent('heard', `"${raw}" (${via}; text ready ${afterSpeechMs} ms after you stopped)`);
     if (!text) return false;
     const echoRef = live.current.getEchoReference?.(1500) || '';

@@ -2,7 +2,7 @@
 import { voiceBiometrics } from './voiceBiometrics';
 import { voiceCapture } from './speaker/voiceCapture';
 import { micConstraints } from './micSettings';
-import { logEvent } from './eventLog';
+import { hudMetrics, logEvent } from './eventLog';
 import { stripPauseTags } from './replyStream';
 import { notifyAuthRequired } from './auth';
 
@@ -1149,6 +1149,7 @@ class JarvisAudioEngine {
       return { engine, firstMs, totalMs: performance.now() - t0, waitedMs };
     }).then(
       ({ engine, firstMs, totalMs, waitedMs }) => {
+        hudMetrics.voiceMs = Math.round(firstMs);
         // Where the voice time goes: waiting for a free request slot, then Gemini's first sound
         logEvent(
           'command',
