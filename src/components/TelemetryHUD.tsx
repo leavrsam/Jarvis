@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { NotificationSettings } from './NotificationSettings';
 import {
   LayoutGrid,
   Cpu,
@@ -320,6 +321,9 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                 )}
               </div>
             </div>
+
+            {/* Install as an app + push notifications */}
+            <NotificationSettings />
 
             {/* Biometric Voice ID Configuration (Mobile) */}
             <div className="p-3.5 rounded-xl border border-amber-900/60 bg-black/70 space-y-2">

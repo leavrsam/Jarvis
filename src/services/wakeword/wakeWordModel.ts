@@ -53,13 +53,48 @@ export function loadWakeWordModels(baseUrl = '/models/wakeword/'): Promise<WakeW
   return loading;
 }
 
+/**
+ * A short recorded "hey" (16 kHz). Fed to a second detector just before you start speaking, so
+ * a plain "Jarvis…" reaches the "hey Jarvis" model as "hey Jarvis…". Measured on 10 synthetic
+ * voices: "Jarvis, <command>" went from 0-6 of 10 detected to 9-10 of 10 at the same threshold.
+ */
+let promptLoading: Promise<Float32Array> | null = null;
+export function loadHeyPrompt(baseUrl = '/models/wakeword/'): Promise<Float32Array> {
+  if (promptLoading) return promptLoading;
+  promptLoading = (async () => {
+    const res = await fetch(baseUrl + 'hey_prompt.wav');
+    if (!res.ok) throw new Error(`hey_prompt.wav: HTTP ${res.status}`);
+    const view = new DataView(await res.arrayBuffer());
+    // Find the "data" chunk of a 16-bit mono WAV
+    let o = 12;
+    while (o + 8 <= view.byteLength) {
+      const id = String.fromCharCode(view.getUint8(o), view.getUint8(o + 1), view.getUint8(o + 2), view.getUint8(o + 3));
+      const size = view.getUint32(o + 4, true);
+      if (id === 'data') {
+        const n = Math.floor(Math.min(size, view.byteLength - o - 8) / 2);
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) out[i] = view.getInt16(o + 8 + i * 2, true) / 32768;
+        return out;
+      }
+      o += 8 + size + (size % 2);
+    }
+    throw new Error('hey_prompt.wav: no audio');
+  })().catch((err) => {
+    promptLoading = null;
+    throw err;
+  });
+  return promptLoading;
+}
+
+/** All detectors share the model sessions, so their inference runs one at a time */
+let inferenceQueue: Promise<unknown> = Promise.resolve();
+
 /** Streaming detector: feed 16 kHz audio, get a score per 80 ms chunk. */
 export class WakeWordDetector {
   private raw = new Float32Array(0); // recent audio, int16 scale (for mel context)
   private pending = new Float32Array(0);
   private melFrames: Float32Array[] = [];
   private features: Float32Array[] = [];
-  private busy: Promise<void> = Promise.resolve();
 
   constructor(private models: WakeWordModels) {
     // openWakeWord starts the mel buffer with ones so the first embeddings are well-formed
@@ -79,11 +114,8 @@ export class WakeWordDetector {
    * completed (0 if none). Calls are serialized internally.
    */
   process(samples: Float32Array): Promise<number> {
-    const run = this.busy.then(() => this.processNow(samples));
-    this.busy = run.then(
-      () => undefined,
-      () => undefined
-    );
+    const run = inferenceQueue.then(() => this.processNow(samples));
+    inferenceQueue = run.catch(() => undefined);
     return run;
   }
 

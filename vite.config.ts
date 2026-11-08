@@ -19,6 +19,8 @@ import sttTokenHandler from './api/stt-token.js';
 import imageSearchHandler from './api/image-search.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import calendarHandler from './api/calendar.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import pushHandler from './api/push.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -45,6 +47,14 @@ export default defineConfig(({ mode }) => {
     'JARVIS_ALLOWED_ORIGINS',
     'JARVIS_LOGIN_PASSWORD',
     'JARVIS_SESSION_SECRET',
+    'JARVIS_NOTIFY_SECRET',
+    'VAPID_PUBLIC_KEY',
+    'VAPID_PRIVATE_KEY',
+    'VAPID_SUBJECT',
+    'UPSTASH_REDIS_REST_URL',
+    'UPSTASH_REDIS_REST_TOKEN',
+    'KV_REST_API_URL',
+    'KV_REST_API_TOKEN',
   ]) {
     if (env[name] && !process.env[name]) process.env[name] = env[name];
   }
@@ -90,6 +100,13 @@ export default defineConfig(({ mode }) => {
           // Calendar events for the HUD
           server.middlewares.use('/api/calendar', (req, res) => {
             void calendarHandler(req, res);
+          });
+          // Push notifications (HUD) and /api/notify (n8n), as on Vercel's rewrite
+          server.middlewares.use('/api/push', (req, res) => {
+            void pushHandler(req, res);
+          });
+          server.middlewares.use('/api/notify', (req, res) => {
+            void pushHandler(req, res);
           });
         },
       },

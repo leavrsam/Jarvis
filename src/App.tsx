@@ -10,6 +10,8 @@ import { ScreenPanel } from './components/ScreenPanel';
 import { FollowUpCountdown } from './components/FollowUpCountdown';
 import { CalendarCard, ClockCard, NowPlayingCard, SystemCard, WeatherCard } from './components/hud/GlanceColumn';
 import { WidgetBoard, useIsWide } from './components/hud/WidgetBoard';
+import { NotificationToast } from './components/NotificationToast';
+import { onPushNotification, PushNote } from './services/push';
 import type { WidgetId } from './services/hudLayout';
 import { ConversationPanel } from './components/hud/ConversationPanel';
 import { StateCaption } from './components/hud/StateCaption';
@@ -184,6 +186,9 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('jarvis:edit-layout', toggle);
   }, []);
   const stopEditingLayout = useCallback(() => setEditingLayout(false), []);
+  // Push notifications that arrive while Jarvis is open
+  const [toast, setToast] = useState<PushNote | null>(null);
+  const closeToast = useCallback(() => setToast(null), []);
   useEffect(() => subscribeScreen((st) => setScreenActive(Boolean(st.content))), []);
 
   // Sync speaking state & handle intelligent YouTube audio ducking
@@ -807,6 +812,22 @@ export const App: React.FC = () => {
     [stopListening, interruptCurrentReply]
   );
 
+  // Show notifications that arrive while Jarvis is open; read them out if asked ("speak": true)
+  // and Jarvis isn't busy talking, listening or thinking
+  const busyRef = useRef(false);
+  busyRef.current = audioState !== 'idle' || isProcessing || isListening;
+  useEffect(
+    () =>
+      onPushNotification((note) => {
+        setToast(note);
+        if (note.speak && !busyRef.current) {
+          const text = note.body ? `${note.title}. ${note.body}` : note.title;
+          audioEngine.speak(text, () => setAudioState('speaking'), () => setAudioState('idle'));
+        }
+      }),
+    []
+  );
+
   if (!authChecked) {
     return <main className="w-full h-[100dvh] bg-[#02040a] hud-grid" aria-busy="true" />;
   }
@@ -914,6 +935,7 @@ export const App: React.FC = () => {
         </section>
 
         <WidgetBoard wide editing={editingLayout} onDoneEditing={stopEditingLayout} render={renderWidget} />
+        {toast && <NotificationToast note={toast} onClose={closeToast} />}
       </main>
     );
   }
@@ -964,6 +986,7 @@ export const App: React.FC = () => {
       </div>
 
       <WidgetBoard wide={false} editing={editingLayout} onDoneEditing={stopEditingLayout} render={renderWidget} />
+      {toast && <NotificationToast note={toast} onClose={closeToast} />}
     </main>
   );
 };

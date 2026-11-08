@@ -9,13 +9,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { voiceCapture } from '../services/speaker/voiceCapture';
 import { resampleTo16k } from '../services/speaker/fbank';
-import { loadWakeWordModels, WakeWordDetector, WAKE_SAMPLE_RATE } from '../services/wakeword/wakeWordModel';
+import { loadHeyPrompt, loadWakeWordModels, WakeWordDetector, WAKE_SAMPLE_RATE } from '../services/wakeword/wakeWordModel';
 import { builtInStats, hudMetrics, logEvent } from '../services/eventLog';
 import { isLikelyEcho } from '../services/echoMatch';
 import { notifyAuthRequired } from '../services/auth';
 import { LiveTurn, liveTranscriptionUnavailable, prefetchLiveToken } from '../services/liveTranscriber';
 import { getLiveTranscription } from '../services/micSettings';
-import { startsWithWakePhrase, stripWakePhrase } from '../services/wakePhrase';
+import { jarvisCheck, startsWithWakePhrase, stripWakePhrase } from '../services/wakePhrase';
 import type { UseSpeechRecognitionOptions } from './useSpeechRecognition';
 
 /** Trigger level. "Hey Jarvis" scored 0.99-1.00; near-misses like "hey Travis" reached 0.72. */
@@ -41,6 +41,15 @@ const END_SILENCE_MS = 900;
 const LIVE_FORCE_END_AFTER_MS = 2000;
 /** ...and if it still hasn't answered this long after being asked, upload the recording instead */
 const LIVE_GIVE_UP_AFTER_MS = 1500;
+/**
+ * Plain "Jarvis" (no "hey"): when you start talking after this much quiet, a second detector
+ * hears a recorded "hey" first, then you. It only listens for this long after you start.
+ */
+const ONSET_QUIET_MS = 500;
+const PROMPT_WINDOW_MS = 2500;
+/** Room sound fed before the "hey" (from just before you spoke), and the gap after it */
+const PROMPT_LEAD_MS = 480;
+const PROMPT_GAP_MS = 80;
 
 
 export interface BuiltInListeningOptions extends UseSpeechRecognitionOptions {
@@ -90,6 +99,11 @@ type CaptureState = {
   forcedAt: number;
   /** Flux has heard words in this capture (if not, a noise blip isn't worth uploading) */
   liveHeardWords: boolean;
+  /**
+   * Started by the plain-"Jarvis" detector: stays silent (no chime, not shown as listening)
+   * until the transcript confirms it starts with "Jarvis"; dropped quietly otherwise.
+   */
+  needsConfirm: boolean;
 };
 
 export function useBuiltInListening(opts: BuiltInListeningOptions) {
@@ -115,10 +129,17 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
   live.current = { onFinalSubmit, onWakeWordDetected, onFollowUpTimeout, onBargeIn, onUnavailable, isJarvisSpeaking, wakeWordEnabled, getEchoReference, followUpTimeoutMs };
 
   const detectorRef = useRef<WakeWordDetector | null>(null);
+  // Plain "Jarvis": second detector fed a recorded "hey" at the start of each utterance
+  const promptDetectorRef = useRef<WakeWordDetector | null>(null);
+  const heyPromptRef = useRef<Float32Array | null>(null);
+  const lastSpeechChunkAtRef = useRef(0);
+  const promptWindowRef = useRef<{ onsetAt: number; until: number } | null>(null);
   const captureRef = useRef<CaptureState | null>(null);
   const preRollRef = useRef<{ audio: Float32Array; speechMs: number }[]>([]);
   const lastWakeRef = useRef(0);
   const noiseFloorRef = useRef(-60);
+  // Quietest 10 ms frames of the last few seconds: lets the noise floor rise in a noisy room
+  const recentDbRef = useRef<number[]>([]);
   const transcribingRef = useRef(false);
   const scoreDecayRef = useRef<{ score: number; at: number }>({ score: 0, at: 0 });
   const liveNoticeRef = useRef('');
@@ -147,6 +168,15 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
 
   /** Hand a transcript to the app (shared by live and upload paths). False if nothing usable. */
   const deliver = useCallback((cap: CaptureState, raw: string, via: string): boolean => {
+    if (cap.needsConfirm) {
+      if (jarvisCheck(raw, true) !== 'yes') {
+        logEvent('wake', `Not "Jarvis" ("${raw}"); ignored`);
+        return false;
+      }
+      cap.needsConfirm = false;
+      builtInStats.detections++;
+      logEvent('wake', `"Jarvis" confirmed by transcript (${via})`);
+    }
     const text = stripWakePhrase(raw);
     const afterSpeechMs = cap.lastSpeechAt ? Date.now() - cap.lastSpeechAt : 0;
     builtInStats.transcriptions++;
@@ -183,7 +213,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     }
     transcribingRef.current = true;
     setState('transcribing');
-    setInterimTranscript('…');
+    if (!cap.needsConfirm) setInterimTranscript('…');
     try {
       const res = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: encodeWav16k(audio) });
       if (res.status === 401) {
@@ -223,15 +253,34 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     logEvent('wake', 'Sound but no words; standing by');
     endCapture(cap);
     toStandby();
-    live.current.onFollowUpTimeout?.();
+    if (!cap.needsConfirm) live.current.onFollowUpTimeout?.();
   }, [endCapture, toStandby]);
 
-  const beginCapture = useCallback((kind: CaptureState['kind'], waitMs?: number) => {
+  /** A plain-"Jarvis" capture turned out to be "Jarvis": now react like any wake word */
+  const confirmWake = useCallback((cap: CaptureState, how: string) => {
+    if (!cap.needsConfirm) return;
+    cap.needsConfirm = false;
+    builtInStats.detections++;
+    logEvent('wake', `"Jarvis" confirmed (${how})`);
+    setIsListening(true);
+    live.current.onWakeWordDetected?.('');
+  }, []);
+
+  /** ...or it wasn't: drop it without a sound */
+  const rejectWake = useCallback((cap: CaptureState, heard: string) => {
+    logEvent('wake', `Not "Jarvis" ("${heard}"); ignored`);
+    endCapture(cap);
+    toStandby();
+  }, [endCapture, toStandby]);
+
+  const beginCapture = useCallback((kind: CaptureState['kind'], waitMs?: number, confirm?: { sinceMs: number }) => {
     const previous = captureRef.current;
     if (previous) endCapture(previous);
     // Wake captures include the pre-roll (the wake phrase and whatever followed it so far);
-    // follow-ups and manual starts just keep the last 300 ms so the first word isn't clipped
-    const keepMs = kind === 'wake' ? PRE_ROLL_MS : 300;
+    // follow-ups and manual starts just keep the last 300 ms so the first word isn't clipped.
+    // Plain "Jarvis" keeps only what you said since you started talking, so the transcript
+    // begins with the word that has to be "Jarvis".
+    const keepMs = confirm ? Math.min(PRE_ROLL_MS, confirm.sinceMs + 300) : kind === 'wake' ? PRE_ROLL_MS : 300;
     const pre: typeof preRollRef.current = [];
     let ms = 0;
     for (let i = preRollRef.current.length - 1; i >= 0 && ms < keepMs; i--) {
@@ -251,6 +300,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       liveFailed: false,
       forcedAt: 0,
       liveHeardWords: false,
+      needsConfirm: Boolean(confirm),
     };
 
     if (getLiveTranscription() && !liveTranscriptionUnavailable()) {
@@ -258,12 +308,22 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         onUpdate: (t) => {
           if (captureRef.current === cap) {
             cap.liveHeardWords = true;
+            if (cap.needsConfirm) {
+              const check = jarvisCheck(t, false);
+              if (check === 'no') return rejectWake(cap, t);
+              if (check === 'wait') return;
+              confirmWake(cap, 'live');
+            }
             setInterimTranscript(stripWakePhrase(t) || '…');
           }
         },
         onEndOfTurn: (t, trigger) => {
           if (captureRef.current !== cap) return;
           if (t) cap.liveHeardWords = true;
+          if (cap.needsConfirm) {
+            if (t && jarvisCheck(t, true) === 'yes') confirmWake(cap, 'live');
+            else if (t) return rejectWake(cap, t);
+          }
           const command = stripWakePhrase(t);
           if (!command) {
             if (trigger === 'manual' && !cap.liveHeardWords) {
@@ -300,10 +360,13 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
 
     captureRef.current = cap;
     setState('capturing');
-    setIsListening(true);
-    setTranscript('');
-    setInterimTranscript('');
-  }, [deliver, endCapture, finishWithUpload, noWordsHeard, toStandby]);
+    // A plain-"Jarvis" capture isn't shown until it's confirmed
+    if (!cap.needsConfirm) {
+      setIsListening(true);
+      setTranscript('');
+      setInterimTranscript('');
+    }
+  }, [deliver, endCapture, finishWithUpload, noWordsHeard, toStandby, confirmWake, rejectWake]);
 
   // Get a live-transcription token while Jarvis talks, so the follow-up connects instantly
   useEffect(() => {
@@ -327,6 +390,14 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         detectorRef.current = new WakeWordDetector(models);
         builtInStats.modelStatus = 'ready';
         logEvent('wake', 'Built-in "hey Jarvis" listener ready');
+        loadHeyPrompt()
+          .then((prompt) => {
+            if (cancelled) return;
+            heyPromptRef.current = prompt;
+            promptDetectorRef.current = new WakeWordDetector(models);
+            logEvent('wake', 'Plain "Jarvis" listener ready');
+          })
+          .catch((err) => logEvent('wake', `Plain "Jarvis" listener unavailable: ${(err as Error).message}`));
       })
       .catch((err) => {
         builtInStats.modelStatus = 'error';
@@ -341,15 +412,25 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       const now = Date.now();
       const L = live.current;
 
-      // Voice activity per 10 ms frame (adaptive to the room's noise floor)
+      // Voice activity per 10 ms frame (adaptive to the room's noise floor). The floor follows
+      // quiet frames down, and rises to the quietest level of the last 3 s: in a room that's
+      // already louder than the starting floor (a fan, a TV), every frame would otherwise count
+      // as speech and the floor would never catch up.
       let speechFrames = 0;
+      const recentDb = recentDbRef.current;
       for (let f = 0; f + frameLen <= audio.length; f += frameLen) {
         let e = 0;
         for (let i = 0; i < frameLen; i++) e += audio[f + i] * audio[f + i];
         const db = 10 * Math.log10(e / frameLen + 1e-10);
+        recentDb.push(db);
         const isSpeech = db > noiseFloorRef.current + 12 && db > -55;
         if (isSpeech) speechFrames++;
         else noiseFloorRef.current = 0.995 * noiseFloorRef.current + 0.005 * db;
+      }
+      if (recentDb.length > 300) recentDb.splice(0, recentDb.length - 300);
+      if (recentDb.length >= 100) {
+        const quietest = Math.min(...recentDb);
+        if (quietest > noiseFloorRef.current + 3) noiseFloorRef.current = quietest;
       }
       const chunkMs = (audio.length / WAKE_SAMPLE_RATE) * 1000;
       const chunkHasSpeech = speechFrames >= 2;
@@ -370,7 +451,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
           if (!cap.liveFailed) cap.live?.send(audio);
         }
         if (chunkHasSpeech) {
-          if (!cap.speechStarted) setInterimTranscript((t) => t || '…'); // you're talking: the window stays open
+          if (!cap.speechStarted && !cap.needsConfirm) setInterimTranscript((t) => t || '…'); // you're talking: the window stays open
           cap.speechStarted = true;
           cap.lastSpeechAt = now;
           cap.speechMs += chunkMs;
@@ -388,7 +469,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
           if (now - cap.startedAt > cap.waitMs) {
             logEvent('wake', cap.kind === 'follow-up' ? 'Follow-up window closed' : `No command heard (speech before: ${Math.round(cap.preSpeechMs)} ms); standing by`);
             cancelCapture();
-            L.onFollowUpTimeout?.();
+            if (!cap.needsConfirm) L.onFollowUpTimeout?.();
           }
         } else if (useLive) {
           // Flux decides when the turn is over; nudge it if it's quiet for a while, then give up on it
@@ -421,9 +502,13 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         }
         const l = live.current;
         const threshold = l.isJarvisSpeaking ? WAKE_THRESHOLD_WHILE_SPEAKING : WAKE_THRESHOLD;
-        if (score < threshold || Date.now() - lastWakeRef.current < REFRACTORY_MS) return;
-        if (transcribingRef.current) return;
+        if (score < threshold) return;
         const current = captureRef.current;
+        // "hey Jarvis" heard while a plain-"Jarvis" capture waits for its transcript: that settles
+        // it at once (the plain detector usually fires first, so this skips the cooldown)
+        if (current?.needsConfirm) return confirmWake(current, `"hey Jarvis" ${score.toFixed(2)}`);
+        if (Date.now() - lastWakeRef.current < REFRACTORY_MS) return;
+        if (transcribingRef.current) return;
         // Already capturing a command; a follow-up window that hasn't heard anything yet gives way
         if (current && (current.kind !== 'follow-up' || current.speechStarted)) return;
         lastWakeRef.current = Date.now();
@@ -437,6 +522,56 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
           l.onWakeWordDetected?.('');
           beginCapture('wake');
         }
+      });
+
+      // Plain "Jarvis": at the start of each utterance, feed the second detector room sound,
+      // a recorded "hey", then you; for the next 2.5 s it scores "hey Jarvis…" as usual
+      const promptDetector = promptDetectorRef.current;
+      const prompt = heyPromptRef.current;
+      if (!promptDetector || !prompt) return;
+      const quietBefore = now - lastSpeechChunkAtRef.current;
+      if (chunkHasSpeech) lastSpeechChunkAtRef.current = now;
+      const eligible = () => {
+        const c = captureRef.current;
+        return L.wakeWordEnabled && !L.isJarvisSpeaking && !transcribingRef.current && !c;
+      };
+      let feed: Float32Array | null = null;
+      if (chunkHasSpeech && quietBefore > ONSET_QUIET_MS && eligible()) {
+        // Room sound from just before this chunk (the pre-roll ends with this chunk)
+        const leadLen = Math.round((WAKE_SAMPLE_RATE * PROMPT_LEAD_MS) / 1000);
+        const before: Float32Array[] = [];
+        let have = 0;
+        for (let i = preRollRef.current.length - 2; i >= 0 && have < leadLen; i--) {
+          before.unshift(preRollRef.current[i].audio);
+          have += preRollRef.current[i].audio.length;
+        }
+        const lead = new Float32Array(have);
+        let o = 0;
+        for (const b of before) {
+          lead.set(b, o);
+          o += b.length;
+        }
+        const leadTail = lead.subarray(Math.max(0, lead.length - leadLen));
+        const gap = Math.round((WAKE_SAMPLE_RATE * PROMPT_GAP_MS) / 1000);
+        feed = new Float32Array(leadTail.length + prompt.length + gap + audio.length);
+        feed.set(leadTail, 0);
+        feed.set(prompt, leadTail.length);
+        feed.set(audio, leadTail.length + prompt.length + gap);
+        promptWindowRef.current = { onsetAt: now - chunkMs, until: now + PROMPT_WINDOW_MS };
+      } else if (promptWindowRef.current && now < promptWindowRef.current.until) {
+        feed = audio;
+      } else {
+        promptWindowRef.current = null;
+      }
+      if (!feed) return;
+      const windowAtFeed = promptWindowRef.current;
+      void promptDetector.process(feed).then((score) => {
+        if (score < WAKE_THRESHOLD || !windowAtFeed || promptWindowRef.current !== windowAtFeed) return;
+        if (Date.now() - lastWakeRef.current < REFRACTORY_MS || !eligible()) return;
+        lastWakeRef.current = Date.now();
+        promptWindowRef.current = null; // one candidate per utterance
+        logEvent('wake', `Maybe "Jarvis" (score ${score.toFixed(2)}); checking the transcript`);
+        beginCapture('wake', undefined, { sinceMs: Date.now() - windowAtFeed.onsetAt });
       });
     });
 

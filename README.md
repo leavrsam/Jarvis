@@ -162,9 +162,20 @@ some phones it hears only silence while voice ID holds the microphone. The **bui
 
 1. **"Hey Jarvis" is detected on the device** with the openWakeWord models in
    `public/models/wakeword/` (melspectrogram → embedding → `hey_jarvis_v0.1`), run with
-   onnxruntime-web. No audio leaves the device while waiting. Say **"hey Jarvis"**, not
-   just "Jarvis". The models are from openWakeWord v0.5.1 and licensed **CC BY-NC-SA 4.0**
-   (non-commercial use only).
+   onnxruntime-web. No audio leaves the device while waiting. The models are from
+   openWakeWord v0.5.1 and licensed **CC BY-NC-SA 4.0** (non-commercial use only).
+
+   **Plain "Jarvis" works too.** The model was trained on "hey Jarvis", and on its own it
+   catches "Jarvis, turn on the lights" rarely. So whenever you start talking after a pause, a
+   second detector hears a short recorded "hey" (`hey_prompt.wav`) and then you, for 2.5 s, at
+   the same 0.8 threshold. On 10 synthetic voices in a 10-minute test stream this caught every
+   "Jarvis…" phrase (9/9 each), while everyday sentences never triggered. Words that sound
+   alike at the start of a sentence ("jars", "Travis", "harvest") can trigger it, so a wake from
+   this path stays silent (no chime, not shown as listening) until the transcript confirms it
+   starts with "Jarvis"; otherwise it's dropped (it shows in the event log as "Not Jarvis").
+   With live transcription the confirmation comes within about half a second; in upload mode
+   the command simply runs once its transcript starts with "Jarvis". "Hey Jarvis" still reacts
+   instantly.
 2. **The command is recorded from the same stream.** That includes the last ~2 s, so "Hey Jarvis,
    what's the weather?" said in one breath is kept whole. Recording stops after ~0.9 s of silence.
 3. **The command is transcribed by Deepgram Nova-3** through `POST /api/transcribe` (same-origin,
@@ -269,6 +280,49 @@ Phones and narrow windows keep the compact layout (subtitles along the bottom).
 
 ---
 
+## 📲 Install as an App & Push Notifications
+
+**Install:** Jarvis is an installable web app (manifest + service worker). It gets its own
+window and icon and stays up to date with every deploy (nothing is cached).
+- **Mac / Windows (Chrome or Edge):** the install icon at the right of the address bar, or
+  Settings → **Jarvis app** → Install. It then opens from the Dock / Start menu / Launchpad.
+- **Android (Chrome):** ⋮ → **Add to Home screen** → Install (or Settings → Install).
+- **iPhone / iPad (Safari):** Share → **Add to Home Screen**. Required for notifications on iOS.
+
+**Notifications (like ntfy, built in):** Settings → **Notifications** → Turn on, on each device
+that should get alerts (phone, MacBook, kiosk). They arrive even when Jarvis is closed; tapping
+one opens Jarvis. If Jarvis is open, it also shows a banner, and with `"speak": true` reads it
+aloud when it isn't busy.
+
+Send one from n8n (HTTP Request node) or anything else:
+```
+POST https://<your-jarvis>/api/notify
+X-Jarvis-Key: <JARVIS_NOTIFY_SECRET>          (or Authorization: Bearer <secret>)
+Content-Type: application/json
+
+{ "title": "Laundry", "message": "The washer is done.", "priority": 4, "speak": true }
+```
+Optional fields: `url` (opened on tap; `/` = Jarvis), `tag` (a newer notification with the same
+tag replaces the old one), `tags`, `priority` 1-5 (4+ = high urgency, 5 = stays until dismissed,
+1 = silent). ntfy-style requests work too (plain-text body with `Title`, `Priority`, `Tags`,
+`Click` headers), so an ntfy workflow only needs the new URL and the key header. Response:
+`{ sent, failed, removed }`; devices that uninstalled or revoked permission are removed
+automatically.
+
+**Setup (once):**
+1. Keys: run `npx web-push generate-vapid-keys` and set `VAPID_PUBLIC_KEY` and
+   `VAPID_PRIVATE_KEY` in Vercel → Settings → Environment Variables. Optional: `VAPID_SUBJECT`
+   (`mailto:you@example.com`).
+2. A small store for the device list: Vercel → Storage → add **Upstash Redis** (free tier) and
+   connect it to the project. It sets `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or set
+   `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` yourself).
+3. `JARVIS_NOTIFY_SECRET`: a long random string for n8n's requests (falls back to
+   `JARVIS_WEBHOOK_SECRET`).
+4. Redeploy, then turn notifications on in Settings on each device and press **Send test**.
+
+`/api/push` (HUD: same-origin, login, 30/min) lists, adds and removes devices and sends tests;
+`/api/notify` (secret, 60/min, 10 wrong secrets/min per IP) sends.
+
 ## 🖥️ Jarvis's Screen (images, video, cameras)
 
 Jarvis can put things on a screen in the HUD. Like the YouTube directives, these go at the start
@@ -309,7 +363,7 @@ The directive parser lives in `src/services/directives.ts` and its tests in
 
 ## 🔒 Server Route Protection
 
-All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/image-search`, `/api/calendar`, `/api/camera`) share `api/_lib/requestGuard.js`:
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/image-search`, `/api/calendar`, `/api/camera`, and the HUD side of `/api/push`) share `api/_lib/requestGuard.js`:
 
 - **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
   `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
@@ -319,6 +373,8 @@ All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/tr
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
 - All of them also require a logged-in session (see **Server-Side Login**).
+- The exception is `/api/notify`, which n8n calls from outside: it needs the
+  `JARVIS_NOTIFY_SECRET` key instead (see **Install as an App & Push Notifications**).
 
 ---
 
