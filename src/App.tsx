@@ -898,15 +898,26 @@ export const App: React.FC = () => {
   // Show notifications that arrive while Jarvis is open; read them out if asked ("speak": true)
   // and Jarvis isn't busy talking, listening or thinking
   const busyRef = useRef(false);
+  const spokenNotesRef = useRef<{ key: string; at: number }[]>([]);
   busyRef.current = audioState !== 'idle' || isProcessing || isListening;
   useEffect(
     () =>
       onPushNotification((note) => {
         setToast(note);
-        if (note.speak && !busyRef.current) {
-          const text = note.body ? `${note.title}. ${note.body}` : note.title;
-          audioEngine.speak(text, () => setAudioState('speaking'), () => setAudioState('idle'));
+        if (!note.speak || busyRef.current) return;
+        const text = note.body ? `${note.title}. ${note.body}` : note.title;
+        // Never let a chatty workflow turn Jarvis into a loudspeaker: the same text is read at
+        // most once per 10 minutes, and at most 6 notifications an hour (banners still show)
+        const now = Date.now();
+        const recent = spokenNotesRef.current.filter((n) => now - n.at < 60 * 60_000);
+        const key = text.trim().toLowerCase();
+        if (recent.some((n) => n.key === key && now - n.at < 10 * 60_000) || recent.length >= 6) {
+          logEvent('command', `Notification not read aloud (repeat or too many this hour): "${note.title}"`);
+          spokenNotesRef.current = recent;
+          return;
         }
+        spokenNotesRef.current = [...recent, { key, at: now }];
+        audioEngine.speak(text, () => setAudioState('speaking'), () => setAudioState('idle'));
       }),
     []
   );
