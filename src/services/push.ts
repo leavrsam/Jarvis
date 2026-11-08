@@ -27,6 +27,8 @@ export interface PushStatus {
   serverConfigured: boolean;
   missing: string[];
   devices: { id: string; name: string; createdAt: string; endpointHost: string }[];
+  /** Server's VAPID public key (fetched with the status, so "Turn on" needs no network first) */
+  publicKey: string | null;
   error?: string;
 }
 
@@ -85,12 +87,14 @@ export async function getPushStatus(): Promise<PushStatus> {
     serverConfigured: false,
     missing: [],
     devices: [],
+    publicKey: null,
   };
   try {
     const data = await api('GET');
     status.serverConfigured = Boolean(data.configured);
     status.missing = data.missing || [];
     status.devices = data.devices || [];
+    status.publicKey = data.publicKey || null;
   } catch (err) {
     status.error = (err as Error).message;
   }
@@ -109,26 +113,81 @@ function deviceName(): string {
   return `${os} · ${browser}${isStandalone() ? ' (app)' : ''}`;
 }
 
-/** Ask permission, subscribe this device and register it with the server */
-export async function enablePush(): Promise<void> {
+/** Rejects with `message` if `p` hasn't settled within `ms` (p keeps running) */
+function within<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
+const PERMISSION_HELP =
+  'No permission prompt? Allow notifications for Jarvis in the phone settings (long-press the Jarvis icon → App info → Notifications → Allow), or in the browser\'s site settings, then tap Turn on again.';
+
+/**
+ * Ask permission, subscribe this device and register it with the server.
+ * Must be called straight from a tap: browsers only show the permission prompt during a user
+ * gesture, so the permission is requested before anything else is awaited.
+ */
+export async function enablePush(publicKey: string | null, onStep?: (step: string) => void): Promise<void> {
   if (!pushSupported()) throw new Error('This browser does not support push notifications.');
-  const { publicKey, configured } = await api('GET');
-  if (!configured || !publicKey) throw new Error('Push is not set up on the server yet.');
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') throw new Error('Notifications are blocked for this site. Allow them in the browser settings.');
+  // 1. Permission first, while the tap still counts as a user gesture
+  onStep?.('Asking for permission…');
+  const asked = Notification.permission === 'granted' ? Promise.resolve<NotificationPermission>('granted') : Notification.requestPermission();
+  const permission = await within(asked, 15000, PERMISSION_HELP);
+  if (permission !== 'granted') throw new Error(permission === 'denied' ? `Notifications are blocked for Jarvis. ${PERMISSION_HELP}` : PERMISSION_HELP);
+
+  // 2. Server key (normally already loaded with the panel)
+  let key = publicKey;
+  if (!key) {
+    onStep?.('Getting the server key…');
+    const data = await within(api('GET'), 15000, 'The server took too long to answer. Try again.');
+    if (!data.configured || !data.publicKey) throw new Error('Push is not set up on the server yet.');
+    key = data.publicKey as string;
+  }
+
+  // 3. Subscribe with the browser's push service
+  onStep?.('Connecting to the push service…');
   const reg = await registerServiceWorker();
-  if (!reg) throw new Error('Service worker unavailable.');
-  await navigator.serviceWorker.ready;
+  if (!reg) throw new Error('Service worker unavailable (the page must be served over https).');
+  await within(navigator.serviceWorker.ready, 10000, 'The service worker did not start. Reload Jarvis and try again.');
+  const keyBytes = urlBase64ToUint8Array(key);
   let sub = await reg.pushManager.getSubscription();
   // A subscription made with a different (old) key can't receive our pushes
-  const key = urlBase64ToUint8Array(publicKey);
   const current = sub?.options?.applicationServerKey;
-  if (sub && current && !sameBytes(new Uint8Array(current), key)) {
+  if (sub && current && !sameBytes(new Uint8Array(current), keyBytes)) {
     await sub.unsubscribe();
     sub = null;
   }
-  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-  await api('POST', { action: 'subscribe', subscription: sub.toJSON(), name: deviceName() });
+  if (!sub) {
+    try {
+      sub = await within(
+        reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes }),
+        20000,
+        'The push service did not answer. Check the connection and try again.'
+      );
+    } catch (err) {
+      const msg = (err as Error).message || String(err);
+      throw new Error(
+        /push service|registration failed/i.test(msg)
+          ? `The browser's push service refused (${msg}). On Android: allow notifications for Jarvis (long-press the icon → App info → Notifications) and for Chrome, check Google Play services is up to date, then try again.`
+          : msg
+      );
+    }
+  }
+
+  // 4. Tell the server about this device
+  onStep?.('Registering this device…');
+  await within(api('POST', { action: 'subscribe', subscription: sub.toJSON(), name: deviceName() }), 15000, 'The server took too long to save this device. Try again.');
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array) {

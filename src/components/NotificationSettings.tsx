@@ -23,23 +23,35 @@ export const NotificationSettings: React.FC = () => {
   const [status, setStatus] = useState<PushStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [isError, setIsError] = useState(false);
   const [canInstall, setCanInstall] = useState(canPromptInstall());
   const installed = isStandalone();
 
   const refresh = useCallback(async () => setStatus(await getPushStatus()), []);
   useEffect(() => {
     void refresh();
-    return onInstallAvailabilityChange(() => setCanInstall(canPromptInstall()));
+    // Coming back from the phone's settings (e.g. after allowing notifications): re-check
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const off = onInstallAvailabilityChange(() => setCanInstall(canPromptInstall()));
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      off();
+    };
   }, [refresh]);
 
   const run = async (fn: () => Promise<string | void>) => {
     setBusy(true);
     setMessage('');
+    setIsError(false);
     try {
       const msg = await fn();
       if (msg) setMessage(msg);
     } catch (err) {
-      setMessage((err as Error).message);
+      setIsError(true);
+      setMessage((err as Error).message || String(err));
     } finally {
       setBusy(false);
       void refresh();
@@ -133,10 +145,10 @@ export const NotificationSettings: React.FC = () => {
                 </button>
               ) : (
                 <button
-                  disabled={busy || status.permission === 'denied'}
+                  disabled={busy}
                   onClick={() => run(async () => {
-                    await enablePush();
-                    return 'Notifications on for this device.';
+                    await enablePush(status.publicKey, setMessage);
+                    return 'Notifications on for this device. Press Send test.';
                   })}
                   className={`${btn} border-amber-500/60 bg-amber-950/40 hover:bg-amber-900/50 text-amber-200`}
                 >
@@ -157,7 +169,12 @@ export const NotificationSettings: React.FC = () => {
           </>
         )}
 
-        {message && <p className="text-[11px] text-amber-200 font-sans">{message}</p>}
+        {message && <p className={`text-[11px] font-sans ${isError ? 'text-red-300' : 'text-amber-200'}`} role={isError ? 'alert' : 'status'}>{message}</p>}
+        {status && status.supported && (
+          <p className="text-[10px] text-amber-600 font-mono-tech">
+            permission: {status.permission} · this device: {status.subscribed ? 'subscribed' : 'not subscribed'} · devices on server: {status.devices.length}
+          </p>
+        )}
 
         {status && status.devices.length > 0 && (
           <div className="pt-2 border-t border-amber-900/50 space-y-1">
