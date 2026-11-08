@@ -191,6 +191,8 @@ export const App: React.FC = () => {
   const conversationSpeakerRef = useRef<{ id: string; name: string; isOwner: boolean; confidence: number } | null>(null);
   /** For the on-screen countdown while the follow-up window is open */
   const [followUpWindow, setFollowUpWindow] = useState<{ endsAt: number; totalMs: number } | null>(null);
+  /** Shown instead of a reply when a command wasn't answered (e.g. an ignored follow-up) */
+  const [replyNotice, setReplyNotice] = useState<string | null>(null);
   // In-flight n8n request, so a new command can cancel it
   const requestAbortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
@@ -351,6 +353,7 @@ export const App: React.FC = () => {
     }
     // Record user prompt for HUD attribution
     setLastQuery(trimmedQuery);
+    setReplyNotice(null);
 
     // Voice ID: the utterance audio is grabbed right now (synchronously, from the rolling mic
     // buffer); the voiceprint is computed while the UI switches to "processing" below.
@@ -422,8 +425,14 @@ export const App: React.FC = () => {
         convo !== null &&
         ((heardId !== null && heardId !== convo.id) ||
           (speakerResult.reason === 'no-match' && speakerResult.confidence < FOLLOW_UP_STRANGER_SCORE && speakerResult.speechSeconds >= 1.5));
-      if (differentPerson) {
+      if (differentPerson && speakerResult.isOwner) {
+        // The owner can always follow up; they take over the conversation
+        logEvent('voice-id', `${speakerResult.name} (owner) took over the conversation from ${convo!.name}`);
+        conversationSpeakerRef.current = { id: heardId ?? convo!.id, name: speakerResult.name, isOwner: true, confidence: speakerResult.confidence };
+      } else if (differentPerson) {
         logEvent('voice-id', `Follow-up ignored: ${speakerResult.name} isn't ${convo!.name}, who started this conversation ("${trimmedQuery.slice(0, 40)}")`);
+        setReplyNotice(`Not answered: that sounded like ${speakerResult.name}, and Jarvis was talking with ${convo!.name}. Say “Hey Jarvis” to ask.`);
+        audioEngine.playSfx('standby');
         inConversationRef.current = false;
         setIsProcessing(false);
         if (requestAbortRef.current === controller) requestAbortRef.current = null;
@@ -1068,6 +1077,7 @@ export const App: React.FC = () => {
             interimTranscript={interimTranscript}
             lastQuery={lastQuery}
             lastResponse={lastResponse}
+            notice={replyNotice}
             lastSpeaker={lastSpeaker}
             speakerConfidence={speakerConfidence}
             isOwner={isOwner}
@@ -1179,7 +1189,7 @@ export const App: React.FC = () => {
           transcript={transcript}
           interimTranscript={interimTranscript}
           lastQuery={lastQuery}
-          lastResponse={lastResponse}
+          lastResponse={replyNotice ?? lastResponse}
           lastSpeaker={lastSpeaker}
           speakerConfidence={speakerConfidence}
           isOwner={isOwner}

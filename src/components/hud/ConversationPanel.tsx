@@ -2,7 +2,7 @@
 // Live transcript while you talk, the current exchange (big and readable from across the room),
 // earlier exchanges below, and talk / type controls at the bottom.
 import React, { useEffect, useRef, useState } from 'react';
-import { Fingerprint, Mic, RotateCcw, Send, Square, Trash2 } from 'lucide-react';
+import { Fingerprint, Mic, RotateCcw, Send, Square, Trash2, Info } from 'lucide-react';
 import type { JarvisAudioState } from '../../services/audioEngine';
 import type { DialogueEntry } from '../SubtitlesOverlay';
 import { cleanForDisplay } from '../../services/replyStream';
@@ -15,6 +15,8 @@ interface ConversationPanelProps {
   interimTranscript: string;
   lastQuery: string;
   lastResponse: string;
+  /** Shown instead of the reply when the last command wasn't answered (and why) */
+  notice?: string | null;
   lastSpeaker?: string;
   speakerConfidence?: number;
   isOwner?: boolean;
@@ -136,11 +138,16 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = (p) => {
                   </span>
                   Thinking…
                 </div>
+              ) : p.notice ? (
+                <p className="flex items-start gap-2 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-[14px] leading-snug text-amber-300">
+                  <Info className="w-4 h-4 mt-0.5 shrink-0" />
+                  {p.notice}
+                </p>
               ) : (
                 <p className="text-[22px] leading-[1.4] text-amber-50 font-medium">{reply}</p>
               )}
             </div>
-            {reply && (
+            {reply && !p.notice && (
               <div className="mt-3 flex items-center gap-2">
                 {p.canStop ? (
                   <button

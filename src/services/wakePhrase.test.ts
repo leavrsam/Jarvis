@@ -53,6 +53,12 @@ describe('commandAfterWakePhrase', () => {
     expect(commandAfterWakePhrase('And what about tomorrow?')).toEqual({ command: 'And what about tomorrow?', hadWakePhrase: false });
   });
 
+  it('leaves a mention of Jarvis mid-sentence alone', () => {
+    expect(commandAfterWakePhrase('Can you make it say Jarvis drop?')).toEqual({ command: 'Can you make it say Jarvis drop?', hadWakePhrase: false });
+    expect(commandAfterWakePhrase('I named him Jarvis because of the movies').hadWakePhrase).toBe(false);
+    expect(commandAfterWakePhrase('anyway, Jarvis, play some music')).toEqual({ command: 'play some music', hadWakePhrase: true });
+  });
+
   it('does not treat a person called Travis as the wake word', () => {
     expect(commandAfterWakePhrase('Ask Travis about tomorrow').hadWakePhrase).toBe(false);
     expect(commandAfterWakePhrase('Ask Travis about tomorrow').command).toBe('Ask Travis about tomorrow');

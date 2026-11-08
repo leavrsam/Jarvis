@@ -34,9 +34,11 @@ export function jarvisCheck(text: string, final: boolean): 'yes' | 'no' | 'wait'
   return 'no';
 }
 
-// The wake phrase in the middle of a transcript: "hey/ok Jarvis" (or a close mishearing), or
-// "Jarvis" on its own. A bare "Travis" mid-sentence is left alone (it's probably a person).
-const WAKE_ANYWHERE = /\b(?:(?:hey|hi|ok|okay|yo)[\s,.!-]+(?:jarvis|jervis|travis|jarvi)|jarvis)\b[\s,.!?-]*/i;
+// The wake phrase in the middle of a transcript, only when it's clearly addressing Jarvis:
+// "hey/ok Jarvis", "Jarvis" starting a sentence, or "Jarvis," (direct address). A mention like
+// "make it say Jarvis drop" is not a wake phrase, and "Travis" mid-sentence is a person.
+const WAKE_ANYWHERE =
+  /(?:\b(?:hey|hi|ok|okay|yo)[\s,.!-]+(?:jarvis|jervis|jarvi)\b|(?:^|[.!?]\s+)(?:jarvis|jervis)\b|\b(?:jarvis|jervis),)[\s,.!?-]*/i;
 
 /**
  * The command in a transcript that may start with other people's talk: everything after the
