@@ -248,7 +248,16 @@ export default async function handler(req, res) {
     const ip = clientIp(req);
     if (!secretMatches(given)) {
       const wait = notifyFailures(ip);
-      return sendJson(res, wait ? 429 : 401, { error: wait ? 'rate_limited' : 'unauthorized' });
+      if (wait) return sendJson(res, 429, { error: 'rate_limited' });
+      // Enough to debug a mismatch without revealing anything secret: which variable this
+      // deployment compares against, and a short hash of the key that arrived (compare it with
+      // the first 8 hex digits of the SHA-256 of the value you meant to send).
+      return sendJson(res, 401, {
+        error: 'unauthorized',
+        checkedAgainst: process.env.JARVIS_NOTIFY_SECRET?.trim() ? 'JARVIS_NOTIFY_SECRET' : process.env.JARVIS_WEBHOOK_SECRET?.trim() ? 'JARVIS_WEBHOOK_SECRET (JARVIS_NOTIFY_SECRET is not set in this deployment)' : 'nothing (no secret set)',
+        receivedKeySha256Prefix: createHash('sha256').update(given).digest('hex').slice(0, 8),
+        receivedKeyLength: given.length,
+      });
     }
     const wait = notifyLimiter(ip);
     if (wait) return sendJson(res, 429, { error: 'rate_limited' }, { 'Retry-After': String(wait) });
