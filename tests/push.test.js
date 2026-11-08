@@ -46,3 +46,11 @@ describe('storeConfig', () => {
     expect(storeConfig({ A_KV_REST_API_URL: url, B_KV_REST_API_TOKEN: 't' })).toBeNull();
   });
 });
+
+describe('parseNotification body field names', () => {
+  it('accepts the common names for the text', () => {
+    for (const k of ['message', 'body', 'text', 'content', 'msg', 'description']) {
+      expect(parseNotification(JSON.stringify({ title: 'Reminder', [k]: 'Take the bins out' }), 'application/json', () => '').body).toBe('Take the bins out');
+    }
+  });
+});

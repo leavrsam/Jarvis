@@ -15,9 +15,13 @@ self.addEventListener('push', (event) => {
   const priority = Number(note.priority) || 3;
   event.waitUntil(
     (async () => {
-      // Tell any open Jarvis windows (they can show it in the HUD and speak it)
+      // Tell any open Jarvis windows (they show it in the HUD). Only one of them may read it
+      // aloud: the focused one, else a visible one, else the first, so two open windows
+      // (say, a browser tab and the installed app) don't both speak.
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      for (const w of windows) w.postMessage({ type: 'jarvis-notification', note });
+      const speaker =
+        windows.find((w) => w.focused) || windows.find((w) => w.visibilityState === 'visible') || windows[0];
+      for (const w of windows) w.postMessage({ type: 'jarvis-notification', note, speakHere: w === speaker });
       await self.registration.showNotification(title, {
         body: note.body || '',
         icon: '/icons/icon-192.png',

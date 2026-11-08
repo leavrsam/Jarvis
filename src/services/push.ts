@@ -214,7 +214,11 @@ export async function sendTestPush(): Promise<{ sent: number; failed: number; re
 export function onPushNotification(handler: (note: PushNote) => void): () => void {
   if (!('serviceWorker' in navigator)) return () => {};
   const listener = (e: MessageEvent) => {
-    if (e.data?.type === 'jarvis-notification' && e.data.note) handler(e.data.note as PushNote);
+    if (e.data?.type === 'jarvis-notification' && e.data.note) {
+      // Only one open Jarvis window reads a notification aloud (the service worker picks it)
+      const note = e.data.note as PushNote;
+      handler(e.data.speakHere === false ? { ...note, speak: false } : note);
+    }
   };
   navigator.serviceWorker.addEventListener('message', listener);
   return () => navigator.serviceWorker.removeEventListener('message', listener);

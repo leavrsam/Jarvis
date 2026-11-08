@@ -184,7 +184,7 @@ export function parseNotification(raw, contentType, getHeader) {
     .filter(Boolean)
     .slice(0, 5);
   const title = clean(d.title ?? getHeader('Title', 'X-Title', 'T'), 120) || 'Jarvis';
-  const body = clean(d.message ?? d.body ?? d.text ?? '', 1000);
+  const body = clean(d.message ?? d.body ?? d.text ?? d.content ?? d.msg ?? d.description ?? '', 1000);
   let url = clean(d.url ?? d.click ?? getHeader('Click', 'X-Click'), 500);
   if (url && !/^(https?:\/\/|\/)/i.test(url)) url = '';
   const speakRaw = d.speak ?? getHeader('X-Speak');
