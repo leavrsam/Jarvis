@@ -40,7 +40,7 @@ async function fetchToken(): Promise<string> {
       unavailableReason =
         data.error === 'not_configured'
           ? 'DEEPGRAM_API_KEY is not set'
-          : 'Deepgram refused the key for live transcription (check DEEPGRAM_API_KEY; it needs the Member role or higher)';
+          : `Deepgram refused a live-transcription token (HTTP ${data.status ?? '?'}${data.detail ? `: "${data.detail}"` : ''}). The key needs the Member role or higher`;
     }
     throw new Error(data.error || `HTTP ${res.status}`);
   }

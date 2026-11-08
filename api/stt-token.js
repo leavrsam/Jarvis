@@ -39,9 +39,15 @@ export default async function handler(req, res) {
     if (!upstream.ok) {
       // 400 "Invalid credentials" = bad key; 403 = the key's role is below Member (temporary
       // tokens need Member or higher). Either way the browser stops trying and uploads instead.
-      console.warn('[/api/stt-token] Deepgram grant HTTP', upstream.status);
+      // Deepgram's own message ("Insufficient permissions", "Invalid credentials") is safe to show
+      // and says what to fix; the key itself is never included
+      const detail = await upstream
+        .json()
+        .then((d) => String(d?.err_msg || d?.message || '').slice(0, 160))
+        .catch(() => '');
+      console.warn('[/api/stt-token] Deepgram grant HTTP', upstream.status, detail);
       const rejected = upstream.status === 400 || upstream.status === 401 || upstream.status === 403;
-      sendJson(res, 502, { error: rejected ? 'token_rejected' : 'token_error' });
+      sendJson(res, 502, { error: rejected ? 'token_rejected' : 'token_error', status: upstream.status, detail });
       return;
     }
     const data = await upstream.json();
