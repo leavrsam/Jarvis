@@ -2,7 +2,7 @@
 export function cameraErrorText(camera: string, code: string, detail?: string): string {
   switch (code) {
     case 'not_configured':
-      return `Cameras aren't connected${detail ? `: ${detail}` : ''}. Set it in Vercel (Production), then redeploy.`;
+      return `Cameras aren't connected: ${detail || 'JARVIS_MEDIA_URL is not set'}. Set it in Vercel (Production), then redeploy.`;
     case 'camera_not_found':
       return `n8n doesn't know a camera called “${camera}”${detail ? ` (${detail})` : ''}.`;
     case 'camera_rejected':
