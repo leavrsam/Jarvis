@@ -57,7 +57,7 @@ function useNow(intervalMs: number) {
  * into view, refresh at once if the last load is older than the interval.
  * Returns a cleanup function.
  */
-function everyWhileVisible(load: () => void, intervalMs: number): () => void {
+export function everyWhileVisible(load: () => void, intervalMs: number): () => void {
   let lastAt = Date.now();
   const run = () => {
     lastAt = Date.now();
@@ -274,11 +274,11 @@ interface CalendarInfo {
 const CALENDAR_REFRESH_MS = 5 * 60 * 1000;
 const CALENDAR_LIST_REFRESH_MS = 30 * 60 * 1000;
 const CALENDAR_CHOICE_KEY = 'jarvis_hud_calendars';
-const DEFAULT_EVENT_COLOR = '#f59e0b';
+export const DEFAULT_EVENT_COLOR = '#f59e0b';
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 /** Calendars chosen on this device (null: not chosen yet, use the Google defaults) */
-function readCalendarChoice(): string[] | null {
+export function readCalendarChoice(): string[] | null {
   try {
     const v = JSON.parse(localStorage.getItem(CALENDAR_CHOICE_KEY) || 'null');
     return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null;

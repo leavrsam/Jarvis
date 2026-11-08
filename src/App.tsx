@@ -20,6 +20,17 @@ import { applyScreenDirective, subscribeScreen } from './services/screenControll
 import { addTimer, cancelTimers, dismissRinging, doneAnnouncement, fireDue, ringingTimers } from './services/timers';
 import { isStopCommand } from './services/stopCommand';
 import { TimerStack } from './components/hud/TimerStack';
+import {
+  AirQualityWidget,
+  CameraWidget,
+  CountdownWidget,
+  NotesWidget,
+  QuickCommandsWidget,
+  SpectrumWidget,
+  SunMoonWidget,
+  WeekAheadWidget,
+  WorldClocksWidget,
+} from './components/hud/ExtraWidgets';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { streamJarvisCommand, JarvisBackendError } from './services/jarvisBackend';
 import { ReplyStreamProcessor } from './services/replyStream';
@@ -981,6 +992,24 @@ export const App: React.FC = () => {
         return <CalendarCard />;
       case 'nowPlaying':
         return <NowPlayingCard showIdle={editing} />;
+      case 'camera':
+        return <CameraWidget />;
+      case 'quickCommands':
+        return <QuickCommandsWidget onSend={(text) => handleCommandSubmit(text, 'typed')} />;
+      case 'worldClocks':
+        return <WorldClocksWidget />;
+      case 'airQuality':
+        return <AirQualityWidget />;
+      case 'sunMoon':
+        return <SunMoonWidget />;
+      case 'weekAhead':
+        return <WeekAheadWidget />;
+      case 'countdown':
+        return <CountdownWidget />;
+      case 'notes':
+        return <NotesWidget />;
+      case 'spectrum':
+        return <SpectrumWidget state={audioState} isListening={isListening} />;
       case 'system':
         return (
           <SystemCard

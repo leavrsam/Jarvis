@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   WIDGETS,
-  WidgetId,
+  addWidget,
   clampRect,
+  collapseWidget,
+  expandWidget,
+  findFreeSpot,
+  isOnBoard,
+  isShown,
+  removeWidget,
   defaultRects,
   emptyLayout,
   fitRect,
@@ -26,7 +32,7 @@ describe('defaultRects', () => {
   ]) {
     it(`fits ${vp.w}x${vp.h} on screen with no overlaps (except music, top centre)`, () => {
       const rects = defaultRects(vp);
-      const ids = Object.keys(rects).filter((id) => id !== 'nowPlaying') as WidgetId[];
+      const ids = Object.keys(rects).filter((id) => id !== 'nowPlaying') as (keyof typeof rects)[];
       for (const id of ids) {
         const r = rects[id];
         expect(r.x).toBeGreaterThanOrEqual(0);
@@ -107,5 +113,76 @@ describe('moveInOrder', () => {
   });
   it('skips hidden widgets', () => {
     expect(moveInOrder(['clock', 'system', 'weather'], 'weather', -1, ['system'])).toEqual(['weather', 'system', 'clock']);
+  });
+});
+
+describe('widget library', () => {
+  const vp = { w: 1920, h: 1080 };
+
+  it('starts with the original widgets on the board and library widgets off it', () => {
+    const l = emptyLayout();
+    expect(isOnBoard(l, 'clock')).toBe(true);
+    expect(isOnBoard(l, 'camera')).toBe(false);
+  });
+
+  it('removes and re-adds default and library widgets', () => {
+    let l = removeWidget(emptyLayout(), 'calendar');
+    expect(isOnBoard(l, 'calendar')).toBe(false);
+    l = addWidget(l, 'calendar', vp);
+    expect(isOnBoard(l, 'calendar')).toBe(true);
+    l = addWidget(l, 'notes', vp);
+    expect(isOnBoard(l, 'notes')).toBe(true);
+    expect(l.order).toContain('notes');
+    l = removeWidget(l, 'notes');
+    expect(isOnBoard(l, 'notes')).toBe(false);
+  });
+
+  it('places an added widget in free space without covering the defaults', () => {
+    let l = emptyLayout();
+    for (const id of ['camera', 'quickCommands', 'countdown'] as const) l = addWidget(l, id, vp);
+    const rects = resolveRects(l, vp);
+    const onBoard = WIDGETS.filter((w) => isOnBoard(l, w.id) && w.id !== 'nowPlaying').map((w) => w.id);
+    for (const a of ['camera', 'quickCommands', 'countdown'] as const) {
+      const r = rects[a];
+      expect(r.x + r.w).toBeLessThanOrEqual(vp.w);
+      expect(r.y + r.h).toBeLessThanOrEqual(vp.h);
+      for (const b of onBoard) if (b !== a) expect(overlap(r, rects[b])).toBe(false);
+    }
+  });
+
+  it('minimises to the dock and restores', () => {
+    let l = collapseWidget(emptyLayout(), 'weather');
+    expect(isOnBoard(l, 'weather')).toBe(true);
+    expect(isShown(l, 'weather')).toBe(false);
+    l = expandWidget(l, 'weather');
+    expect(isShown(l, 'weather')).toBe(true);
+    // Removing a minimised widget also clears it from the dock
+    l = removeWidget(collapseWidget(l, 'weather'), 'weather');
+    expect(l.collapsed).not.toContain('weather');
+  });
+
+  it('keeps added/minimised widgets through save and load', () => {
+    const l = collapseWidget(addWidget(emptyLayout(), 'sunMoon', vp), 'sunMoon');
+    const back = parseLayout(JSON.stringify(l));
+    expect(back.added).toEqual(['sunMoon']);
+    expect(back.collapsed).toEqual(['sunMoon']);
+    expect(parseLayout(JSON.stringify({ ...l, added: ['clock', 'bogus'] })).added).toEqual([]);
+  });
+
+  it('falls back to the middle when nothing is free', () => {
+    const full = [{ x: 0, y: 0, w: 4000, h: 4000 }];
+    const r = findFreeSpot(full, { w: 300, h: 200 }, vp);
+    expect(r.w).toBe(300);
+    expect(r.x).toBeGreaterThan(0);
+  });
+});
+
+import { moonName, moonPhase } from '../components/hud/ExtraWidgets';
+
+describe('moon phase', () => {
+  it('matches known new and full moons', () => {
+    expect(moonName(moonPhase(new Date(Date.UTC(2024, 0, 25, 17, 54))))).toBe('Full moon');
+    expect(moonName(moonPhase(new Date(Date.UTC(2024, 1, 9, 22, 59))))).toBe('New moon');
+    expect(moonName(moonPhase(new Date(Date.UTC(2024, 1, 16, 15, 1))))).toBe('First quarter');
   });
 });

@@ -2,7 +2,8 @@
 // Phones / tablets: a stack under the voice screen you can reorder. Hidden widgets, positions
 // and order are saved on this device (services/hudLayout.ts).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, EyeOff, Move, Plus, RotateCcw } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, LayoutGrid, Minus, Move, Plus, RotateCcw, X } from 'lucide-react';
+import { WidgetIcon } from './widgetIcons';
 import {
   GRID,
   HudLayout,
@@ -10,7 +11,13 @@ import {
   Viewport,
   WIDGETS,
   WidgetId,
+  addWidget,
   clampRect,
+  collapseWidget,
+  expandWidget,
+  isOnBoard,
+  isShown,
+  removeWidget,
   emptyLayout,
   loadLayout,
   moveInOrder,
@@ -48,51 +55,174 @@ function useViewport(): Viewport {
 // ---------------------------------------------------------------------------- Edit toolbar
 
 const EditToolbar: React.FC<{
-  hidden: WidgetId[];
-  available: WidgetId[];
   wide: boolean;
-  onShow: (id: WidgetId) => void;
+  onLibrary: () => void;
   onReset: () => void;
   onDone: () => void;
-}> = ({ hidden, available, wide, onShow, onReset, onDone }) => {
-  const hiddenHere = hidden.filter((id) => available.includes(id));
+}> = ({ wide, onLibrary, onReset, onDone }) => (
+  <div
+    className={`${wide ? 'fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[calc(100vw-32px)]' : 'sticky top-2 mx-3'} z-[60] hud-panel px-3 py-2 flex flex-wrap items-center gap-2 text-[12px] text-amber-200 shadow-[0_0_30px_rgba(245,158,11,0.25)]`}
+    role="toolbar"
+    aria-label="Edit layout"
+  >
+    <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
+      <Move className="w-3.5 h-3.5" />
+      {wide ? 'Drag to move · drag any edge or corner to resize' : 'Reorder, minimise or remove widgets'}
+    </span>
+    <button
+      onClick={onLibrary}
+      className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-amber-500/70 bg-amber-950/50 text-amber-100 hover:bg-amber-900/50"
+    >
+      <Plus className="w-3 h-3" />
+      Add widgets
+    </button>
+    <span className="flex-1" />
+    <button onClick={onReset} className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-amber-800/60 text-amber-400 hover:bg-amber-900/40">
+      <RotateCcw className="w-3 h-3" />
+      Reset
+    </button>
+    <button onClick={onDone} className="flex items-center gap-1 px-3 py-1 rounded-full bg-amber-500/25 border border-amber-400 text-amber-100 hover:bg-amber-500/35">
+      <Check className="w-3 h-3" />
+      Done
+    </button>
+  </div>
+);
+
+// ---------------------------------------------------------------------------- Library
+
+const WidgetLibrary: React.FC<{
+  layout: HudLayout;
+  wide: boolean;
+  onAdd: (id: WidgetId) => void;
+  onRestore: (id: WidgetId) => void;
+  onRemove: (id: WidgetId) => void;
+  onClose: () => void;
+}> = ({ layout, wide, onAdd, onRestore, onRemove, onClose }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  const list = WIDGETS.filter((w) => wide || w.mobile);
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose} role="dialog" aria-label="Widget library">
+      <div className="hud-panel w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-amber-900/40">
+          <span className="flex items-center gap-2 hud-label">
+            <LayoutGrid className="w-3.5 h-3.5" /> Widgets
+          </span>
+          <button onClick={onClose} className="p-1.5 text-amber-500 hover:text-amber-200" aria-label="Close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto hud-scroll p-4 grid gap-2.5 sm:grid-cols-2">
+          {list.map((w) => {
+            const on = isOnBoard(layout, w.id);
+            const minimised = on && layout.collapsed.includes(w.id);
+            return (
+              <div key={w.id} className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 ${on ? 'border-amber-600/50 bg-amber-950/25' : 'border-amber-900/50 bg-black/30'}`}>
+                <div className="w-9 h-9 rounded-lg border border-amber-700/50 bg-black/40 flex items-center justify-center shrink-0">
+                  <WidgetIcon id={w.id} className="w-4 h-4 text-amber-300" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px] text-amber-100 font-semibold">{w.label}</div>
+                  <div className="text-[12px] text-amber-500/90 leading-snug">{w.description}</div>
+                </div>
+                <div className="flex flex-col gap-1 items-end shrink-0">
+                  {!on && (
+                    <button onClick={() => onAdd(w.id)} className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500 text-black text-[12px] font-bold hover:bg-amber-400">
+                      <Plus className="w-3 h-3" /> Add
+                    </button>
+                  )}
+                  {minimised && (
+                    <button onClick={() => onRestore(w.id)} className="px-2.5 py-1 rounded-full border border-amber-500/70 text-amber-100 text-[12px] hover:bg-amber-900/40">
+                      Restore
+                    </button>
+                  )}
+                  {on && !minimised && <span className="px-2 py-0.5 text-[11px] text-emerald-300/90">On screen</span>}
+                  {on && (
+                    <button onClick={() => onRemove(w.id)} className="px-2 py-0.5 text-[11px] text-amber-600 hover:text-red-300">
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------- Dock (minimised widgets)
+
+const Dock: React.FC<{ ids: WidgetId[]; wide: boolean; editing: boolean; onRestore: (id: WidgetId) => void }> = ({ ids, wide, editing, onRestore }) => {
+  if (!ids.length) return null;
   return (
     <div
-      className={`${wide ? 'fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[calc(100vw-32px)]' : 'sticky top-2 mx-3'} z-[60] hud-panel px-3 py-2 flex flex-wrap items-center gap-2 text-[12px] text-amber-200 shadow-[0_0_30px_rgba(245,158,11,0.25)]`}
+      className={
+        wide
+          ? `fixed left-1/2 -translate-x-1/2 ${editing ? 'bottom-[76px]' : 'bottom-3'} z-[58] flex items-center gap-1.5 hud-panel px-2 py-1.5`
+          : 'flex flex-wrap justify-center gap-1.5 mb-3'
+      }
       role="toolbar"
-      aria-label="Edit layout"
+      aria-label="Minimised widgets"
     >
-      <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
-        <Move className="w-3.5 h-3.5" />
-        {wide ? 'Drag to move · corner to resize' : 'Reorder or hide widgets'}
-      </span>
-      {hiddenHere.map((id) => (
+      {ids.map((id) => (
         <button
           key={id}
-          onClick={() => onShow(id)}
-          className="flex items-center gap-1 px-2 py-1 rounded-full border border-amber-700/60 text-amber-300 hover:bg-amber-900/40"
+          onClick={() => onRestore(id)}
           title={`Show ${widgetInfo(id).label}`}
+          aria-label={`Show ${widgetInfo(id).label}`}
+          className="group flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-amber-700/60 bg-black/50 text-amber-300 hover:border-amber-400 hover:text-amber-100 transition-colors"
         >
-          <Plus className="w-3 h-3" />
-          {widgetInfo(id).label}
+          <WidgetIcon id={id} className="w-3.5 h-3.5" />
+          <span className="text-[11.5px]">{widgetInfo(id).label}</span>
         </button>
       ))}
-      <span className="flex-1" />
-      <button onClick={onReset} className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-amber-800/60 text-amber-400 hover:bg-amber-900/40">
-        <RotateCcw className="w-3 h-3" />
-        Reset
-      </button>
-      <button onClick={onDone} className="flex items-center gap-1 px-3 py-1 rounded-full bg-amber-500/25 border border-amber-400 text-amber-100 hover:bg-amber-500/35">
-        <Check className="w-3 h-3" />
-        Done
-      </button>
     </div>
   );
 };
 
 // ---------------------------------------------------------------------------- Wide: free frame
 
-type DragMode = 'move' | 'resize';
+/** Which edges a drag moves: n/s/e/w combinations for resizing, or the whole card */
+type DragMode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+const HANDLES: { mode: Exclude<DragMode, 'move'>; className: string; cursor: string }[] = [
+  { mode: 'nw', className: '-left-1.5 -top-1.5 w-5 h-5', cursor: 'cursor-nwse-resize' },
+  { mode: 'ne', className: '-right-1.5 -top-1.5 w-5 h-5', cursor: 'cursor-nesw-resize' },
+  { mode: 'sw', className: '-left-1.5 -bottom-1.5 w-5 h-5', cursor: 'cursor-nesw-resize' },
+  { mode: 'se', className: '-right-1.5 -bottom-1.5 w-5 h-5', cursor: 'cursor-nwse-resize' },
+  { mode: 'n', className: 'left-5 right-5 -top-1 h-2.5', cursor: 'cursor-ns-resize' },
+  { mode: 's', className: 'left-5 right-5 -bottom-1 h-2.5', cursor: 'cursor-ns-resize' },
+  { mode: 'w', className: 'top-5 bottom-5 -left-1 w-2.5', cursor: 'cursor-ew-resize' },
+  { mode: 'e', className: 'top-5 bottom-5 -right-1 w-2.5', cursor: 'cursor-ew-resize' },
+];
+
+/** New rect for a drag: edges named in `mode` follow the pointer; the opposite edges stay put */
+function dragRect(mode: DragMode, start: Rect, dx: number, dy: number, id: WidgetId): Rect {
+  if (mode === 'move') return { ...start, x: snap(start.x + dx), y: snap(start.y + dy) };
+  const { minW, minH } = widgetInfo(id);
+  let { x, y, w, h } = start;
+  if (mode.includes('e')) w = Math.max(minW, snap(start.w + dx));
+  if (mode.includes('s')) h = Math.max(minH, snap(start.h + dy));
+  if (mode.includes('w')) {
+    w = Math.max(minW, snap(start.w - dx));
+    x = start.x + start.w - w;
+  }
+  if (mode.includes('n')) {
+    h = Math.max(minH, snap(start.h - dy));
+    y = start.y + start.h - h;
+  }
+  return { x, y, w, h };
+}
 
 const WidgetFrame: React.FC<{
   id: WidgetId;
@@ -101,10 +231,11 @@ const WidgetFrame: React.FC<{
   editing: boolean;
   z: number;
   onCommit: (id: WidgetId, rect: Rect) => void;
-  onHide: (id: WidgetId) => void;
+  onMinimise: (id: WidgetId) => void;
+  onRemove: (id: WidgetId) => void;
   onFocus: (id: WidgetId) => void;
   children: React.ReactNode;
-}> = ({ id, rect, vp, editing, z, onCommit, onHide, onFocus, children }) => {
+}> = ({ id, rect, vp, editing, z, onCommit, onMinimise, onRemove, onFocus, children }) => {
   const [live, setLive] = useState<Rect | null>(null);
   const drag = useRef<{ mode: DragMode; px: number; py: number; start: Rect } | null>(null);
   const r = live ?? rect;
@@ -121,13 +252,7 @@ const WidgetFrame: React.FC<{
   const move = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
-    const dx = e.clientX - d.px;
-    const dy = e.clientY - d.py;
-    const next =
-      d.mode === 'move'
-        ? { ...d.start, x: snap(d.start.x + dx), y: snap(d.start.y + dy) }
-        : { ...d.start, w: snap(d.start.w + dx), h: snap(d.start.h + dy) };
-    setLive(clampRect(next, vp, id));
+    setLive(clampRect(dragRect(d.mode, d.start, e.clientX - d.px, e.clientY - d.py, id), vp, id));
   };
   const end = () => {
     if (!drag.current) return;
@@ -174,26 +299,40 @@ const WidgetFrame: React.FC<{
                 {Math.round(r.w)}×{Math.round(r.h)}
               </span>
             </span>
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => onHide(id)}
-              className="p-1.5 rounded bg-black/80 border border-amber-700/60 text-amber-300 hover:text-amber-100"
-              title={`Hide ${label}`}
-              aria-label={`Hide ${label}`}
+            <span className="flex items-center gap-1">
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onMinimise(id)}
+                className="p-1.5 rounded bg-black/80 border border-amber-700/60 text-amber-300 hover:text-amber-100"
+                title={`Minimise ${label} (it waits in the dock at the bottom)`}
+                aria-label={`Minimise ${label}`}
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onRemove(id)}
+                className="p-1.5 rounded bg-black/80 border border-amber-700/60 text-amber-300 hover:text-red-300"
+                title={`Remove ${label} (add it back from Add widgets)`}
+                aria-label={`Remove ${label}`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          </div>
+          {HANDLES.map((hd) => (
+            <div
+              key={hd.mode}
+              className={`absolute ${hd.className} ${hd.cursor} touch-none flex items-center justify-center`}
+              onPointerDown={begin(hd.mode)}
+              onPointerMove={move}
+              onPointerUp={end}
+              onPointerCancel={end}
+              title="Drag to resize"
             >
-              <EyeOff className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div
-            className="absolute -right-1 -bottom-1 w-6 h-6 cursor-nwse-resize flex items-end justify-end p-1"
-            onPointerDown={begin('resize')}
-            onPointerMove={move}
-            onPointerUp={end}
-            onPointerCancel={end}
-            title="Drag to resize"
-          >
-            <span className="block w-3.5 h-3.5 border-r-[3px] border-b-[3px] border-amber-300 rounded-br" />
-          </div>
+              {hd.mode.length === 2 && <span className="block w-2.5 h-2.5 rounded-sm bg-amber-300 shadow-[0_0_6px_rgba(251,191,36,0.9)]" />}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -230,8 +369,18 @@ export const WidgetBoard: React.FC<WidgetBoardProps> = ({ wide, editing, onDoneE
     return () => window.removeEventListener('keydown', onKey);
   }, [editing, onDoneEditing]);
 
-  const hide = (id: WidgetId) => update({ ...layout, hidden: [...layout.hidden.filter((h) => h !== id), id] });
-  const show = (id: WidgetId) => update({ ...layout, hidden: layout.hidden.filter((h) => h !== id) });
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const remove = (id: WidgetId) => update(removeWidget(layout, id));
+  const add = (id: WidgetId) => update(addWidget(layout, id, wide ? vp : undefined));
+  const minimise = (id: WidgetId) => update(collapseWidget(layout, id));
+  const restore = (id: WidgetId) => {
+    update(expandWidget(layout, id));
+    setFront((f) => [...f.filter((x) => x !== id), id]);
+  };
+  const dockIds = layout.collapsed.filter((id) => isOnBoard(layout, id) && (wide || widgetInfo(id).mobile));
+  const library = libraryOpen && (
+    <WidgetLibrary layout={layout} wide={wide} onAdd={add} onRestore={restore} onRemove={remove} onClose={() => setLibraryOpen(false)} />
+  );
   const reset = () => {
     update(emptyLayout());
     setFront([]);
@@ -240,19 +389,12 @@ export const WidgetBoard: React.FC<WidgetBoardProps> = ({ wide, editing, onDoneE
 
   if (wide) {
     const rects = resolveRects(layout, vp);
-    const ids = WIDGETS.map((w) => w.id).filter((id) => !layout.hidden.includes(id));
+    const ids = WIDGETS.map((w) => w.id).filter((id) => isShown(layout, id));
     return (
       <>
-        {editing && (
-          <EditToolbar
-            hidden={layout.hidden}
-            available={WIDGETS.map((w) => w.id)}
-            wide
-            onShow={show}
-            onReset={reset}
-            onDone={onDoneEditing}
-          />
-        )}
+        {editing && <EditToolbar wide onLibrary={() => setLibraryOpen(true)} onReset={reset} onDone={onDoneEditing} />}
+        <Dock ids={dockIds} wide editing={editing} onRestore={restore} />
+        {library}
         {ids.map((id) => (
           <WidgetFrame
             key={id}
@@ -262,7 +404,8 @@ export const WidgetBoard: React.FC<WidgetBoardProps> = ({ wide, editing, onDoneE
             editing={editing}
             z={20 + Math.max(0, front.indexOf(id) + 1)}
             onCommit={(wid, rect) => update(withRect(layout, vp, wid, rect))}
-            onHide={hide}
+            onMinimise={minimise}
+            onRemove={remove}
             onFocus={toFront}
           >
             {render(id, editing)}
@@ -274,7 +417,8 @@ export const WidgetBoard: React.FC<WidgetBoardProps> = ({ wide, editing, onDoneE
 
   // Phones / tablets: a reorderable stack
   const mobileIds = layout.order.filter((id) => widgetInfo(id).mobile);
-  const visible = mobileIds.filter((id) => !layout.hidden.includes(id));
+  const visible = mobileIds.filter((id) => isShown(layout, id));
+  const notShown = mobileIds.filter((id) => !isShown(layout, id));
   return (
     <section className="relative z-20 px-3 pb-8 pb-safe" aria-label="Widgets">
       {/* Peeks out below the voice screen so it's clear there's more to scroll to */}
@@ -282,9 +426,9 @@ export const WidgetBoard: React.FC<WidgetBoardProps> = ({ wide, editing, onDoneE
         <ChevronDown className="w-3.5 h-3.5 animate-bounce" />
         AT A GLANCE
       </div>
-      {editing && (
-        <EditToolbar hidden={layout.hidden} available={mobileIds} wide={false} onShow={show} onReset={reset} onDone={onDoneEditing} />
-      )}
+      {editing && <EditToolbar wide={false} onLibrary={() => setLibraryOpen(true)} onReset={reset} onDone={onDoneEditing} />}
+      <Dock ids={dockIds} wide={false} editing={editing} onRestore={restore} />
+      {library}
       <div className="mx-auto max-w-xl grid gap-3 mt-1 sm:grid-cols-2 sm:max-w-3xl">
         {visible.map((id, i) => (
           <div key={id} className={`relative hud-widget-stack ${id === 'calendar' || id === 'system' ? 'sm:col-span-2' : ''}`}>
@@ -292,18 +436,21 @@ export const WidgetBoard: React.FC<WidgetBoardProps> = ({ wide, editing, onDoneE
               <div className="flex items-center justify-between gap-2 mb-1 px-1">
                 <span className="text-[12px] font-semibold text-amber-300">{widgetInfo(id).label}</span>
                 <div className="flex items-center gap-1">
-                  <IconBtn label={`Move ${widgetInfo(id).label} up`} disabled={i === 0} onClick={() => update({ ...layout, order: moveInOrder(layout.order, id, -1, layout.hidden) })}>
+                  <IconBtn label={`Move ${widgetInfo(id).label} up`} disabled={i === 0} onClick={() => update({ ...layout, order: moveInOrder(layout.order, id, -1, notShown) })}>
                     <ArrowUp className="w-4 h-4" />
                   </IconBtn>
                   <IconBtn
                     label={`Move ${widgetInfo(id).label} down`}
                     disabled={i === visible.length - 1}
-                    onClick={() => update({ ...layout, order: moveInOrder(layout.order, id, 1, layout.hidden) })}
+                    onClick={() => update({ ...layout, order: moveInOrder(layout.order, id, 1, notShown) })}
                   >
                     <ArrowDown className="w-4 h-4" />
                   </IconBtn>
-                  <IconBtn label={`Hide ${widgetInfo(id).label}`} onClick={() => hide(id)}>
-                    <EyeOff className="w-4 h-4" />
+                  <IconBtn label={`Minimise ${widgetInfo(id).label}`} onClick={() => minimise(id)}>
+                    <Minus className="w-4 h-4" />
+                  </IconBtn>
+                  <IconBtn label={`Remove ${widgetInfo(id).label}`} onClick={() => remove(id)}>
+                    <X className="w-4 h-4" />
                   </IconBtn>
                 </div>
               </div>

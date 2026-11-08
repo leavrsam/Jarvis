@@ -159,7 +159,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           <button
             onClick={() => window.dispatchEvent(new Event('jarvis:edit-layout'))}
             className="flex items-center space-x-1 px-2.5 py-2 lg:py-1 rounded border border-amber-800/60 bg-black/60 hover:bg-amber-950/60 text-[10px] font-orbitron text-amber-400 transition-all hover:border-amber-500"
-            title="Arrange widgets: move, resize, hide"
+            title="Arrange widgets: move, resize, minimise, add or remove"
             aria-label="Arrange widgets"
           >
             <LayoutGrid className="w-3 h-3 text-amber-300" />

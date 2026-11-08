@@ -234,16 +234,35 @@ meter (trigger at 0.8), detections, transcriptions and errors. If the models can
 cards are widgets. Tap **Layout** (grid icon) in the top bar to arrange them; **Done** or Esc
 finishes. The layout is saved on that device (browser storage), so a kiosk TV and a laptop can
 each have their own.
-- **Wide screens (1024 px and up):** drag a widget to move it, drag its bottom-right corner to
-  resize it (both snap to an 8 px grid and stay on screen), or focus it and use the arrow keys
-  (Shift + arrows resize). The eye button hides a widget; hidden widgets appear as **+ Name**
-  buttons in the toolbar. **Reset** restores the default layout. If the window size changes,
+- **Wide screens (1024 px and up):** drag a widget to move it, or drag **any corner or edge** to
+  resize it (the opposite side stays put; both snap to an 8 px grid and stay on screen), or focus
+  it and use the arrow keys (Shift + arrows resize).
+  - **–** minimises a widget into the **dock**, a row of icons at the bottom centre that's always
+    visible. Tap an icon to bring the widget back.
+  - **✕** removes it from the screen. Add it back from **Add widgets**.
+  - **Reset** restores the default layout. If the window size changes,
   widgets on the right stay anchored to the right edge and positions and heights scale with the
   height, so columns stay in order. Widgets may overlap; the last one you moved is on top.
 - **Phones and tablets (under 1024 px):** the first screen is the voice view (reactor,
   subtitles, tap to talk). Scroll down for the widgets (**At a glance**). In layout mode each one
-  gets up / down / hide buttons. The conversation lives in the subtitles and **Logs** here, so it
-  isn't in the stack.
+  gets up / down / minimise / remove buttons, and minimised widgets wait as chips at the top of
+  the stack. The conversation lives in the subtitles and **Logs** here, so it isn't in the stack.
+
+**Widget library** (layout mode → **Add widgets**): every widget with a description, showing
+whether it's on screen, minimised (Restore) or available (Add). New widgets are placed in free
+space, avoiding the reactor's core. Settings for the widgets below are saved per device (⚙ in
+the widget):
+- **Camera:** a snapshot from one camera via `/api/camera`, with its caption. It refreshes every
+  minute, and ⤢ shows it on the big screen. Set the camera name in ⚙.
+- **Quick commands:** one-tap buttons that send a command to Jarvis. Edit the list in ⚙.
+- **World clocks:** times in chosen cities, marked "tomorrow" or "yesterday" where it differs.
+- **Air & UV:** US AQI, PM2.5, ozone and the UV index now and today's max (Open-Meteo, no key).
+- **Sun & moon:** sunrise, sunset, golden hour, daylight (and its change since yesterday), and
+  the moon phase with how much is lit.
+- **Week ahead:** the next 7 days from the calendars chosen in the calendar card.
+- **Countdown:** days until a date you pick.
+- **Note:** a sticky note saved on the device.
+- **Audio:** a live spectrum of the mic and Jarvis's voice.
 
 By default on wide screens (TV, desktop) the middle stays clear for the reactor:
 - **Left, at a glance:** a large clock and date with a greeting; local weather (Open-Meteo, now
