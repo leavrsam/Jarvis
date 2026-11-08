@@ -172,6 +172,28 @@ some phones it hears only silence while voice ID holds the microphone. The **bui
    Settings → Environment Variables. This is the same key the Voice Lab uses. A command costs
    about $0.0004.
 
+**Live transcription (default):** while you talk, the audio streams to Deepgram **Flux**, a model
+built for voice assistants. Flux transcribes as you speak and decides when you've finished your
+sentence from the words and the delivery, not only from silence, so the text is ready right
+away. The browser connects with a 30-second token from `POST /api/stt-token` (same-origin,
+60/min, login required), and the API key never leaves the server. If live transcription isn't
+available, the app records and uploads to `/api/transcribe` as before. The key needs the
+**Member** role or higher to issue tokens. You can turn live transcription off under
+**VOICE ID → LISTENING ENGINE**.
+
+**Conversation flow**, modelled on Alexa Follow-Up Mode and Google Continued Conversation:
+- After a reply, Jarvis keeps listening without the wake word for **6 s if he asked you
+  something, otherwise 3 s**. The window counts until you *start* talking, so it never cuts you
+  off mid-sentence.
+- A cyan "STILL LISTENING" ring counts down on screen. A soft falling two-note tone plays when the
+  window closes; after that, say "hey Jarvis" again.
+- Only the person who started the conversation can follow up without the wake word. Voice ID
+  checks each follow-up, so friends talking nearby aren't answered. Anyone can still say
+  "hey Jarvis". If voice ID isn't sure who's speaking, the follow-up is accepted.
+- "Thanks", "that's all", "never mind", "I'm good" and similar replies end the conversation.
+- Each reply's timing (voice ID, first text from n8n, first audio) and how soon your words were
+  transcribed show up in **VOICE ID → Recent listening events**.
+
 Switch engines under **VOICE ID → LISTENING ENGINE**. The panel shows a live wake-word score
 meter (trigger at 0.8), detections, transcriptions and errors. If the models can't load or
 `DEEPGRAM_API_KEY` is missing, the app falls back to the browser recognizer.
@@ -213,13 +235,13 @@ The directive parser lives in `src/services/directives.ts` and its tests in
 
 ## 🔒 Server Route Protection
 
-All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/camera`) share `api/_lib/requestGuard.js`:
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/camera`) share `api/_lib/requestGuard.js`:
 
 - **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
   `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
   No CORS headers are sent, so other sites' pages can't call these routes. Add extra origins with
   `JARVIS_ALLOWED_ORIGINS` (comma-separated) if you ever need to.
-- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/camera` 30/min
+- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/stt-token` 60/min, `/api/camera` 30/min
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
 - All of them also require a logged-in session (see **Server-Side Login**).

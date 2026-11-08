@@ -14,6 +14,9 @@
     },
     "api/camera.js": {
       "maxDuration": 30
+    },
+    "api/stt-token.js": {
+      "maxDuration": 10
     }
   }
 }

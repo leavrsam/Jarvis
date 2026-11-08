@@ -13,6 +13,8 @@ import authHandler from './api/auth.js';
 import transcribeHandler from './api/transcribe.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import cameraHandler from './api/camera.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import sttTokenHandler from './api/stt-token.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -65,6 +67,10 @@ export default defineConfig(({ mode }) => {
           // Camera snapshots for the HUD screen
           server.middlewares.use('/api/camera', (req, res) => {
             void cameraHandler(req, res);
+          });
+          // Short-lived Deepgram token for live transcription
+          server.middlewares.use('/api/stt-token', (req, res) => {
+            void sttTokenHandler(req, res);
           });
         },
       },

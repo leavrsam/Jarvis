@@ -7,6 +7,7 @@ import { logEvent } from './services/eventLog';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { ScreenPanel } from './components/ScreenPanel';
+import { FollowUpCountdown } from './components/FollowUpCountdown';
 import { parseDirective } from './services/directives';
 import { applyScreenDirective, subscribeScreen } from './services/screenController';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
@@ -36,7 +37,21 @@ function failureMessage(partial: boolean, kind?: string): string {
   return "I can't reach my systems, sir. Please try again in a moment.";
 }
 
-const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|thank you jarvis|thanks jarvis|goodbye|bye jarvis|stop listening|go to sleep|stand by|standby)\b/i;
+const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|that is all|that'll be all|thank you jarvis|thanks jarvis|goodbye|good night|bye jarvis|stop listening|go to sleep|stand by|standby|never ?mind|nothing else|i'm good|im good|i'm done|im done)\b/i;
+/** A bare "thanks" / "thank you" / "perfect" as the whole follow-up also ends the conversation */
+const CONVERSATION_END_EXACT = /^(?:ok(?:ay)?[, ]*)?(?:thanks|thank you|thanks a lot|cheers|perfect|great|got it|cool|ok|okay|no|nope|no thanks|no thank you)[.!]*$/i;
+
+/**
+ * Follow-up window (like Alexa Follow-Up Mode / Google Continued Conversation): how long Jarvis
+ * keeps listening without the wake word after a reply. Counted until you START talking.
+ */
+const FOLLOW_UP_AFTER_QUESTION_MS = 6000;
+const FOLLOW_UP_AFTER_STATEMENT_MS = 3000;
+
+/** Did the reply end by asking the user something? */
+function replyAsksQuestion(text: string): boolean {
+  return /\?\s*["'”’)]*\s*$/.test(text.trim());
+}
 
 export const App: React.FC = () => {
   // Server-side session (HttpOnly cookie). Checked on load; any protected call answering 401
@@ -125,7 +140,15 @@ export const App: React.FC = () => {
   const isSpeakingRef = useRef(false);
   // Tracks whether we are in an active multi-turn dialogue loop
   const inConversationRef = useRef(false);
-  const startListeningRef = useRef<(isFollowUp?: boolean) => void>(() => {});
+  const startListeningRef = useRef<(isFollowUp?: boolean, timeoutMs?: number) => void>(() => {});
+  /** The last reply's text (decides the follow-up window) */
+  const lastReplyRef = useRef('');
+  /** A follow-up window is open: the next command may come without "hey Jarvis" */
+  const followUpOpenRef = useRef(false);
+  /** Who started this conversation (voice ID profile); follow-ups are only taken from them */
+  const conversationSpeakerRef = useRef<{ id: string; name: string } | null>(null);
+  /** For the on-screen countdown while the follow-up window is open */
+  const [followUpWindow, setFollowUpWindow] = useState<{ endsAt: number; totalMs: number } | null>(null);
   // In-flight n8n request, so a new command can cancel it
   const requestAbortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
@@ -196,12 +219,22 @@ export const App: React.FC = () => {
     }
     await audioEngine.startMicListening();
     setAudioState('listening');
-    startListeningRef.current(true);
+    // (+0.7 s when the mic was closed while Jarvis talked and is only now reopening, e.g. Android)
+    const windowMs =
+      (replyAsksQuestion(lastReplyRef.current) ? FOLLOW_UP_AFTER_QUESTION_MS : FOLLOW_UP_AFTER_STATEMENT_MS) +
+      (voiceCapture.isRunning() ? 0 : 700);
+    followUpOpenRef.current = true;
+    setFollowUpWindow({ endsAt: Date.now() + windowMs, totalMs: windowMs });
+    startListeningRef.current(true, windowMs);
   }, []);
 
   // Execute Backend Dispatch to n8n Webhook with Biometric Speaker Metadata
-  const handleCommandSubmit = useCallback(async (query: string, source: 'voice' | 'typed' = 'voice') => {
+  const handleCommandSubmit = useCallback(async (query: string, source: 'voice' | 'typed' = 'voice', meta?: { wakeWord: boolean }) => {
     if (!query || query.trim().length === 0) return;
+    // A follow-up: spoken in the follow-up window without "hey Jarvis"
+    const isFollowUp = source === 'voice' && followUpOpenRef.current && !meta?.wakeWord;
+    followUpOpenRef.current = false;
+    setFollowUpWindow(null);
 
     const trimmedQuery = query.trim();
     // Record user prompt for HUD attribution
@@ -212,7 +245,7 @@ export const App: React.FC = () => {
     const speakerPromise = voiceBiometrics.identifySpeaker(trimmedQuery, source);
 
     // Check if the user is signing off ("That's all, thanks Jarvis")
-    if (CONVERSATION_END_REGEX.test(trimmedQuery)) {
+    if (CONVERSATION_END_REGEX.test(trimmedQuery) || CONVERSATION_END_EXACT.test(trimmedQuery)) {
       inConversationRef.current = false;
     } else {
       inConversationRef.current = true;
@@ -235,6 +268,7 @@ export const App: React.FC = () => {
     const t0 = performance.now();
 
     const speakerResult = await speakerPromise;
+    const voiceIdMs = Math.round(performance.now() - t0);
     if (!isCurrent()) return;
     setLastSpeaker(speakerResult.name);
     setSpeakerConfidence(speakerResult.confidence);
@@ -255,6 +289,30 @@ export const App: React.FC = () => {
       return;
     }
 
+    // Follow-ups are only taken from the person who started the conversation (friends chatting
+    // nearby shouldn't be answered). Uncertain voice ID gives the benefit of the doubt.
+    if (source === 'voice') {
+      const heardId = speakerResult.reason === 'match' ? speakerResult.matchedProfile?.id ?? null : null;
+      const convo = conversationSpeakerRef.current;
+      const differentPerson =
+        isFollowUp &&
+        convo !== null &&
+        ((heardId !== null && heardId !== convo.id) || (speakerResult.reason === 'no-match' && speakerResult.speechSeconds >= 1));
+      if (differentPerson) {
+        logEvent('voice-id', `Follow-up ignored: ${speakerResult.name} isn't ${convo!.name}, who started this conversation ("${trimmedQuery.slice(0, 40)}")`);
+        inConversationRef.current = false;
+        setIsProcessing(false);
+        if (requestAbortRef.current === controller) requestAbortRef.current = null;
+        audioEngine.setState('idle');
+        setAudioState('idle');
+        return;
+      }
+      // A new conversation (wake word) records who started it
+      if (!isFollowUp) {
+        conversationSpeakerRef.current = heardId ? { id: heardId, name: speakerResult.name } : null;
+      }
+    }
+
     // Owner gate: only verified owner voice commands are carried out
     if (source === 'voice' && voiceBiometrics.isOwnerGateEnabled() && !speakerResult.isOwner) {
       setIsProcessing(false);
@@ -265,6 +323,7 @@ export const App: React.FC = () => {
           ? "I didn't quite catch your voice, sir. Could you say that again?"
           : `My apologies. I'm only taking instructions from ${ownerName} at the moment.`;
       setLastResponse(refusal);
+      lastReplyRef.current = refusal;
       audioEngine.setState('speaking');
       setAudioState('speaking');
       await audioEngine.speak(refusal, undefined, () => {
@@ -282,7 +341,9 @@ export const App: React.FC = () => {
     const speech = audioEngine.createSpeechQueue(
       () => {
         if (!isCurrent()) return;
-        console.info(`[Jarvis] first audio after ${Math.round(performance.now() - t0)}ms`);
+        firstAudioMs = Math.round(performance.now() - t0);
+        console.info(`[Jarvis] first audio after ${firstAudioMs}ms`);
+        logEvent('command', `Timing: voice ID ${voiceIdMs} ms · first text ${firstTextMs ?? '?'} ms · first audio ${firstAudioMs} ms (from your command)`);
         audioEngine.setState('speaking');
         setAudioState('speaking');
       },
@@ -293,6 +354,8 @@ export const App: React.FC = () => {
     );
 
     let gotText = false;
+    let firstTextMs: number | null = null;
+    let firstAudioMs: number | null = null;
     const reply = new ReplyStreamProcessor({
       // Directives (PLAY_YOUTUBE: <id>, SHOW_IMAGE: <url>, CLEAR_SCREEN, ...) are executed, never spoken
       onDirective: (directive) => {
@@ -335,6 +398,7 @@ export const App: React.FC = () => {
           signal: controller.signal,
           onText: (delta) => {
             if (!isCurrent()) return;
+            if (firstTextMs === null) firstTextMs = Math.round(performance.now() - t0);
             clearTimeout(ackTimer);
             reply.push(delta);
           },
@@ -359,6 +423,8 @@ export const App: React.FC = () => {
     // Flush whatever is left of the reply (the last sentence may have no trailing space)
     reply.end();
     const finalText = reply.displayText;
+    lastReplyRef.current = finalText;
+    if (firstAudioMs === null && firstTextMs !== null) logEvent('command', `Timing: voice ID ${voiceIdMs} ms · first text ${firstTextMs} ms (from your command)`);
 
     if (failed) {
       audioEngine.playSfx('error');
@@ -395,6 +461,8 @@ export const App: React.FC = () => {
   // Handler for Wake Word ("Hey Jarvis" / "Jarvis") trigger
   const handleWakeWordDetected = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
+    followUpOpenRef.current = false;
+    setFollowUpWindow(null);
 
     inConversationRef.current = true;
     interruptCurrentReply();
@@ -423,6 +491,8 @@ export const App: React.FC = () => {
   // Hands-Free Vocal Interruption / Barge-In Handler (Triggered while Jarvis is actively speaking)
   const handleBargeIn = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
+    followUpOpenRef.current = false;
+    setFollowUpWindow(null);
 
     // Immediately kill TTS audio playback, the queued sentences and the in-flight n8n request
     interruptCurrentReply();
@@ -439,6 +509,10 @@ export const App: React.FC = () => {
   }, [isAuthenticated, interruptCurrentReply]);
 
   const handleFollowUpTimeout = useCallback(() => {
+    const wasFollowUp = followUpOpenRef.current;
+    followUpOpenRef.current = false;
+    setFollowUpWindow(null);
+    if (wasFollowUp) audioEngine.playSfx('standby'); // the window closed: say "hey Jarvis" next time
     inConversationRef.current = false;
     audioEngine.stopMicListening();
     setAudioState('idle');
@@ -454,12 +528,12 @@ export const App: React.FC = () => {
   }), []);
   const builtInEnabled = isAuthenticated && listeningEngine === 'builtin' && !builtInUnavailable;
   const listeningOptions = {
-    onFinalSubmit: (query: string) => handleCommandSubmit(query, 'voice'),
+    onFinalSubmit: (query: string, meta?: { wakeWord: boolean }) => handleCommandSubmit(query, 'voice', meta),
     onWakeWordDetected: handleWakeWordDetected,
     onFollowUpTimeout: handleFollowUpTimeout,
     onBargeIn: handleBargeIn,
     silenceTimeoutMs: 750,
-    followUpTimeoutMs: 15000,
+    followUpTimeoutMs: FOLLOW_UP_AFTER_STATEMENT_MS, // per window: see resumeFollowUpListening
     // 'processing' also covers the gap between the first streamed text and the first audio
     isJarvisSpeaking: audioState === 'speaking' || audioState === 'processing' || isProcessing || !isAuthenticated,
     currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
@@ -487,6 +561,9 @@ export const App: React.FC = () => {
   // Manual Push-to-Talk or Hotkey Toggle
   const handleToggleListening = useCallback(async () => {
     if (!isAuthenticated) return;
+    // Starting or stopping by hand is never a follow-up
+    followUpOpenRef.current = false;
+    setFollowUpWindow(null);
     audioEngine.ensureContext();
 
     // If Jarvis is speaking or still fetching a reply, pressing Space / clicking the orb interrupts him and starts listening immediately!
@@ -737,6 +814,11 @@ export const App: React.FC = () => {
           onReactorClick={handleToggleListening}
         />
       </section>
+
+      {/* Follow-up window: how long Jarvis keeps listening without "hey Jarvis" */}
+      {followUpWindow && isListening && !transcript && !interimTranscript && (
+        <FollowUpCountdown endsAt={followUpWindow.endsAt} totalMs={followUpWindow.totalMs} />
+      )}
 
       {/* Bottom Subtitles & Voice Controls Overlay */}
       <SubtitlesOverlay

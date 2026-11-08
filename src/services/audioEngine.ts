@@ -1773,11 +1773,31 @@ class JarvisAudioEngine {
     };
   }
 
-  public playSfx(type: 'activate' | 'wake' | 'processing' | 'response' | 'error') {
+  public playSfx(type: 'activate' | 'wake' | 'processing' | 'response' | 'error' | 'standby') {
     try {
       this.ensureContext();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
+
+      if (type === 'standby') {
+        // Soft falling two-note "I've stopped listening" (the reverse of the wake chime, quieter)
+        [880, 587.33].forEach((freq, idx) => {
+          if (!this.ctx) return;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          const start = now + idx * 0.09;
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, start);
+          gain.gain.setValueAtTime(0.06, start);
+          gain.gain.exponentialRampToValueAtTime(0.001, start + 0.18);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          if (this.analyser) gain.connect(this.analyser);
+          osc.start(start);
+          osc.stop(start + 0.22);
+        });
+        return;
+      }
 
       if (type === 'wake') {
         const frequencies = [587.33, 880, 1174.66];

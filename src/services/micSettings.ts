@@ -72,3 +72,21 @@ export function setReleaseMicWhileSpeaking(on: boolean) {
   } catch {}
   window.dispatchEvent(new Event(EVENT));
 }
+
+const LIVE_STT_KEY = 'jarvis_live_transcription';
+
+/** Live (streaming) transcription for the built-in listener. On unless turned off. */
+export function getLiveTranscription(): boolean {
+  try {
+    return localStorage.getItem(LIVE_STT_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function setLiveTranscription(on: boolean) {
+  try {
+    localStorage.setItem(LIVE_STT_KEY, on ? 'on' : 'off');
+  } catch {}
+  window.dispatchEvent(new Event(EVENT));
+}

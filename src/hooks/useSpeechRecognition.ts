@@ -37,7 +37,8 @@ interface SpeechRecognitionInstance extends EventTarget {
 }
 
 export interface UseSpeechRecognitionOptions {
-  onFinalSubmit?: (text: string) => void;
+  /** A finished command. meta.wakeWord: it started with "hey Jarvis" (not a follow-up reply). */
+  onFinalSubmit?: (text: string, meta?: { wakeWord: boolean }) => void;
   onWakeWordDetected?: (trailingQuery?: string) => void;
   onFollowUpTimeout?: () => void;
   onBargeIn?: (trailingQuery?: string) => void;
@@ -130,6 +131,8 @@ export function useSpeechRecognition({
 
   // Store callbacks in refs so recognition instance never tears down on re-renders
   const onFinalSubmitRef = useRef(onFinalSubmit);
+  /** The command being heard started with the wake word (vs. a follow-up reply) */
+  const fromWakeWordRef = useRef(false);
   const onWakeWordDetectedRef = useRef(onWakeWordDetected);
   const onFollowUpTimeoutRef = useRef(onFollowUpTimeout);
   const onBargeInRef = useRef(onBargeIn);
@@ -211,7 +214,8 @@ export function useSpeechRecognition({
       activeTranscriptRef.current = '';
       setIsListening(false);
       isListeningRef.current = false;
-      onFinalSubmitRef.current?.(query);
+      onFinalSubmitRef.current?.(query, { wakeWord: fromWakeWordRef.current });
+      fromWakeWordRef.current = false;
     }
   }, [clearSilenceTimer, clearFollowUpTimer]);
 
@@ -229,7 +233,7 @@ export function useSpeechRecognition({
     }, delay);
   }, [clearSilenceTimer, clearFollowUpTimer, triggerSubmission]);
 
-  const armFollowUpTimer = useCallback(() => {
+  const armFollowUpTimer = useCallback((timeoutMs?: number) => {
     clearFollowUpTimer();
     followUpTimerRef.current = setTimeout(() => {
       if (isListeningRef.current && activeTranscriptRef.current.trim().length === 0) {
@@ -239,11 +243,12 @@ export function useSpeechRecognition({
         setInterimTranscript('');
         onFollowUpTimeoutRef.current?.();
       }
-    }, followUpTimeoutMsRef.current);
+    }, timeoutMs ?? followUpTimeoutMsRef.current);
   }, [clearFollowUpTimer]);
 
   const handleWakeWordDetection = useCallback((trailingQuery?: string) => {
     wakeWordHandledRef.current = true;
+    fromWakeWordRef.current = true;
     setIsListening(true);
     isListeningRef.current = true;
 
@@ -477,7 +482,8 @@ export function useSpeechRecognition({
     };
   }, [clearSilenceTimer, clearFollowUpTimer, handleWakeWordDetection, resetSilenceTimer, restartRecognition]);
 
-  const startListening = useCallback((isFollowUp = false) => {
+  const startListening = useCallback((isFollowUp = false, timeoutMs?: number) => {
+    fromWakeWordRef.current = false;
     isJarvisSpeakingRef.current = false;
     activeTranscriptRef.current = '';
     setTranscript('');
@@ -486,7 +492,7 @@ export function useSpeechRecognition({
     isListeningRef.current = true;
     clearSilenceTimer();
     if (isFollowUp) {
-      armFollowUpTimer();
+      armFollowUpTimer(timeoutMs);
     } else {
       clearFollowUpTimer();
     }

@@ -23,7 +23,8 @@ import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
 import { builtInStats, getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
 import { getListeningEngine, ListeningEngine, setListeningEngine } from '../services/listeningEngine';
-import { EchoCancelMode, getEchoCancelMode, getReleaseMicWhileSpeaking, isAndroid, setEchoCancelMode, setReleaseMicWhileSpeaking, wantsEchoCancellation } from '../services/micSettings';
+import { EchoCancelMode, getEchoCancelMode, getLiveTranscription, getReleaseMicWhileSpeaking, isAndroid, setEchoCancelMode, setLiveTranscription, setReleaseMicWhileSpeaking, wantsEchoCancellation } from '../services/micSettings';
+import { liveTranscriptionUnavailable } from '../services/liveTranscriber';
 
 interface VoiceBiometricsModalProps {
   isOpen: boolean;
@@ -272,6 +273,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
               ))}
             </div>
             <EchoCancelSetting />
+            {engine === 'builtin' && <LiveTranscriptionSetting />}
             {engine === 'builtin' ? <BuiltInStatus /> : (
               <>
                 <ListenerStatus micPaused={micPaused} />
@@ -734,6 +736,32 @@ const EchoCancelSetting: React.FC = () => {
   );
 };
 
+const LiveTranscriptionSetting: React.FC = () => {
+  const [on, setOn] = useState(() => getLiveTranscription());
+  const unavailable = liveTranscriptionUnavailable();
+  return (
+    <label className="flex items-start gap-2 text-[10px] text-amber-300">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setLiveTranscription(e.target.checked);
+          setOn(e.target.checked);
+        }}
+        className="mt-0.5 accent-amber-400"
+      />
+      <span>
+        <span className="text-amber-200 font-bold">Live transcription (faster replies)</span>
+        <span className="block text-amber-500">
+          Transcribes while you talk (Deepgram Flux), which also hears when you've finished your sentence. Off: records,
+          then uploads after you stop (about a second slower).
+          {on && unavailable && <span className="block text-red-400">Not available right now: {unavailable}. Using uploads.</span>}
+        </span>
+      </span>
+    </label>
+  );
+};
+
 const BuiltInStatus: React.FC = () => {
   const [, tick] = useState(0);
   useEffect(() => {
@@ -765,7 +793,7 @@ const BuiltInStatus: React.FC = () => {
       )}
       <div className="text-amber-500">
         detections {st.detections} · transcriptions {st.transcriptions}
-        {st.lastTranscriptMs ? ` (last ${st.lastTranscriptMs} ms)` : ''}
+        {st.lastTranscriptMs ? ` (last: text ready ${st.lastTranscriptMs} ms after you stopped)` : ''}
       </div>
       {st.lastError && <div className="text-red-300">Last error: {st.lastError}</div>}
     </div>

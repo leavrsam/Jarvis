@@ -1,5 +1,7 @@
 // Built-in listening: "hey Jarvis" detected on the device (openWakeWord), the command recorded
-// from the same microphone stream voice ID uses, and transcribed by Deepgram via /api/transcribe.
+// from the same microphone stream voice ID uses, and transcribed by Deepgram: live while you talk
+// (Flux, which also decides when you've finished), or by uploading the recording afterwards
+// (/api/transcribe) if live transcription isn't available.
 //
 // Why: the browser's speech recognizer doesn't exist in Android WebView (Fully Kiosk), and on some
 // phones it only gets silence while another stream (voice ID) holds the microphone. This uses one
@@ -11,6 +13,8 @@ import { loadWakeWordModels, WakeWordDetector, WAKE_SAMPLE_RATE } from '../servi
 import { builtInStats, logEvent } from '../services/eventLog';
 import { isLikelyEcho } from '../services/echoMatch';
 import { notifyAuthRequired } from '../services/auth';
+import { LiveTurn, liveTranscriptionUnavailable, prefetchLiveToken } from '../services/liveTranscriber';
+import { getLiveTranscription } from '../services/micSettings';
 import type { UseSpeechRecognitionOptions } from './useSpeechRecognition';
 
 /** Trigger level. "Hey Jarvis" scored 0.99-1.00; near-misses like "hey Travis" reached 0.72. */
@@ -32,8 +36,12 @@ const SHORT_COMMAND_WAIT_MS = 1200;
 const NO_SPEECH_AFTER_WAKE_MS = 6000;
 const MAX_COMMAND_MS = 12000;
 const END_SILENCE_MS = 900;
+/** Live mode: Flux decides the end of a turn; if it hasn't after this much silence, ask it to */
+const LIVE_FORCE_END_AFTER_MS = 2000;
+/** ...and if it still hasn't answered this long after being asked, upload the recording instead */
+const LIVE_GIVE_UP_AFTER_MS = 1500;
 
-const WAKE_PREFIX = /^\s*(?:(?:hey|ok|hi)\s+)?(?:jarvis|travis|jervis)[,.!\s]*/i;
+export const WAKE_PREFIX = /^\s*(?:(?:hey|ok|hi)\s+)?(?:jarvis|travis|jervis)[,.!\s]*/i;
 
 export interface BuiltInListeningOptions extends UseSpeechRecognitionOptions {
   /** Run this engine (the browser engine is used otherwise) */
@@ -73,6 +81,13 @@ type CaptureState = {
   speechMs: number;
   /** Speech already in the pre-roll when capture began */
   preSpeechMs: number;
+  /** Give up if nobody starts talking within this long */
+  waitMs: number;
+  /** Live transcription for this capture (null: upload the recording when it ends) */
+  live: LiveTurn | null;
+  liveFailed: boolean;
+  /** When we asked Flux to end the turn (0: not asked) */
+  forcedAt: number;
 };
 
 export function useBuiltInListening(opts: BuiltInListeningOptions) {
@@ -104,52 +119,55 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
   const noiseFloorRef = useRef(-60);
   const transcribingRef = useRef(false);
   const scoreDecayRef = useRef<{ score: number; at: number }>({ score: 0, at: 0 });
+  const liveNoticeRef = useRef('');
 
   const setState = (state: typeof builtInStats.state) => {
     builtInStats.state = state;
   };
 
-  const beginCapture = useCallback((kind: CaptureState['kind']) => {
-    // Wake captures include the pre-roll (the wake phrase and whatever followed it so far);
-    // follow-ups and manual starts just keep the last 300 ms so the first word isn't clipped
-    const keepMs = kind === 'wake' ? PRE_ROLL_MS : 300;
-    const pre: typeof preRollRef.current = [];
-    let ms = 0;
-    for (let i = preRollRef.current.length - 1; i >= 0 && ms < keepMs; i--) {
-      pre.unshift(preRollRef.current[i]);
-      ms += (preRollRef.current[i].audio.length / WAKE_SAMPLE_RATE) * 1000;
-    }
-    captureRef.current = {
-      kind,
-      startedAt: Date.now(),
-      audio: pre.map((p) => p.audio),
-      speechStarted: false,
-      lastSpeechAt: 0,
-      speechMs: 0,
-      preSpeechMs: kind === 'wake' ? pre.reduce((n, p) => n + p.speechMs, 0) : 0,
-    };
-    setState('capturing');
-    setIsListening(true);
-    setTranscript('');
-    setInterimTranscript('');
+  /** Stop capturing (the capture object stays usable for the transcript that follows) */
+  const endCapture = useCallback((cap: CaptureState) => {
+    if (captureRef.current === cap) captureRef.current = null;
+    cap.live?.close();
   }, []);
 
-  const cancelCapture = useCallback(() => {
-    captureRef.current = null;
+  const toStandby = useCallback(() => {
     setState('standby');
     setIsListening(false);
     setInterimTranscript('');
   }, []);
 
-  const finishCapture = useCallback(async () => {
+  const cancelCapture = useCallback(() => {
     const cap = captureRef.current;
-    captureRef.current = null;
-    if (!cap) return;
+    if (cap) endCapture(cap);
+    toStandby();
+  }, [endCapture, toStandby]);
+
+  /** Hand a transcript to the app (shared by live and upload paths). False if nothing usable. */
+  const deliver = useCallback((cap: CaptureState, raw: string, via: string): boolean => {
+    const text = raw.replace(WAKE_PREFIX, '').trim();
+    const afterSpeechMs = cap.lastSpeechAt ? Date.now() - cap.lastSpeechAt : 0;
+    builtInStats.transcriptions++;
+    builtInStats.lastTranscriptMs = afterSpeechMs;
+    logEvent('heard', `"${raw}" (${via}; text ready ${afterSpeechMs} ms after you stopped)`);
+    if (!text) return false;
+    const echoRef = live.current.getEchoReference?.(1500) || '';
+    if (echoRef && isLikelyEcho(text, echoRef, 0.75)) {
+      logEvent('echo-ignored', `"${text}"`);
+      return false;
+    }
+    setTranscript(text);
+    // "hey Jarvis" said (or the capture began with it): a fresh request, not a follow-up reply
+    live.current.onFinalSubmit?.(text, { wakeWord: cap.kind === 'wake' || WAKE_PREFIX.test(raw) });
+    return true;
+  }, []);
+
+  /** Upload the recorded audio and transcribe it (no live transcription, or it failed) */
+  const finishWithUpload = useCallback(async (cap: CaptureState) => {
+    endCapture(cap);
     if ((!cap.speechStarted || cap.speechMs < 250) && cap.preSpeechMs < PRE_ROLL_COMMAND_SPEECH_MS) {
       logEvent('wake', `Too little speech to transcribe (${Math.round(cap.speechMs)} ms)`);
-      setState('standby');
-      setIsListening(false);
-      setInterimTranscript('');
+      toStandby();
       return;
     }
     const total = cap.audio.reduce((n, a) => n + a.length, 0);
@@ -162,7 +180,6 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     transcribingRef.current = true;
     setState('transcribing');
     setInterimTranscript('…');
-    const t0 = performance.now();
     try {
       const res = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: encodeWav16k(audio) });
       if (res.status === 401) {
@@ -176,29 +193,94 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         if (data.error === 'not_configured') live.current.onUnavailable?.('Speech-to-text is not configured on the server (DEEPGRAM_API_KEY)');
         return;
       }
-      builtInStats.transcriptions++;
-      builtInStats.lastTranscriptMs = Math.round(performance.now() - t0);
-      const raw = String(data.transcript || '').trim();
-      const text = raw.replace(WAKE_PREFIX, '').trim();
-      logEvent('heard', `"${raw}" (transcribed in ${builtInStats.lastTranscriptMs} ms)`);
-      if (!text) return;
-      const echoRef = live.current.getEchoReference?.(1500) || '';
-      if (echoRef && isLikelyEcho(text, echoRef, 0.75)) {
-        logEvent('echo-ignored', `"${text}"`);
-        return;
-      }
-      setTranscript(text);
-      live.current.onFinalSubmit?.(text);
+      deliver(cap, String(data.transcript || '').trim(), 'uploaded');
     } catch (err) {
       builtInStats.lastError = `transcription: ${(err as Error).message}`;
       logEvent('wake', `Transcription error: ${(err as Error).message}`);
     } finally {
       transcribingRef.current = false;
-      setState('standby');
-      setIsListening(false);
-      setInterimTranscript('');
+      toStandby();
     }
-  }, []);
+  }, [deliver, endCapture, toStandby]);
+
+  const beginCapture = useCallback((kind: CaptureState['kind'], waitMs?: number) => {
+    const previous = captureRef.current;
+    if (previous) endCapture(previous);
+    // Wake captures include the pre-roll (the wake phrase and whatever followed it so far);
+    // follow-ups and manual starts just keep the last 300 ms so the first word isn't clipped
+    const keepMs = kind === 'wake' ? PRE_ROLL_MS : 300;
+    const pre: typeof preRollRef.current = [];
+    let ms = 0;
+    for (let i = preRollRef.current.length - 1; i >= 0 && ms < keepMs; i--) {
+      pre.unshift(preRollRef.current[i]);
+      ms += (preRollRef.current[i].audio.length / WAKE_SAMPLE_RATE) * 1000;
+    }
+    const cap: CaptureState = {
+      kind,
+      startedAt: Date.now(),
+      audio: pre.map((p) => p.audio),
+      speechStarted: false,
+      lastSpeechAt: 0,
+      speechMs: 0,
+      preSpeechMs: kind === 'wake' ? pre.reduce((n, p) => n + p.speechMs, 0) : 0,
+      waitMs: waitMs ?? (kind === 'follow-up' ? live.current.followUpTimeoutMs : NO_SPEECH_AFTER_WAKE_MS),
+      live: null,
+      liveFailed: false,
+      forcedAt: 0,
+    };
+
+    if (getLiveTranscription() && !liveTranscriptionUnavailable()) {
+      cap.live = new LiveTurn({
+        onUpdate: (t) => {
+          if (captureRef.current === cap) setInterimTranscript(t.replace(WAKE_PREFIX, '').trim() || '…');
+        },
+        onEndOfTurn: (t, trigger) => {
+          if (captureRef.current !== cap) return;
+          const command = t.replace(WAKE_PREFIX, '').trim();
+          if (!command) {
+            if (trigger === 'manual' && cap.speechMs >= 250) {
+              // Asked to end, nothing came back: try the recording instead
+              void finishWithUpload(cap);
+              return;
+            }
+            // Only "hey Jarvis" so far (a pause before the command): keep listening for it
+            cap.speechStarted = false;
+            cap.speechMs = 0;
+            cap.preSpeechMs = 0;
+            cap.startedAt = Date.now();
+            cap.forcedAt = 0;
+            setInterimTranscript('');
+            return;
+          }
+          endCapture(cap);
+          deliver(cap, t, `live${trigger === 'model' ? '' : `, ${trigger}`}`);
+          toStandby();
+        },
+        onError: (reason) => {
+          cap.liveFailed = true;
+          const unavailable = liveTranscriptionUnavailable();
+          const note = unavailable ? `Live transcription unavailable (${unavailable}); uploading recordings instead` : `Live transcription dropped (${reason}); using the recording`;
+          builtInStats.lastError = note;
+          if (liveNoticeRef.current !== note) {
+            liveNoticeRef.current = note;
+            logEvent('wake', note);
+          }
+        },
+      });
+      for (const p of pre) cap.live.send(p.audio);
+    }
+
+    captureRef.current = cap;
+    setState('capturing');
+    setIsListening(true);
+    setTranscript('');
+    setInterimTranscript('');
+  }, [deliver, endCapture, finishWithUpload, toStandby]);
+
+  // Get a live-transcription token while Jarvis talks, so the follow-up connects instantly
+  useEffect(() => {
+    if (enabled && isJarvisSpeaking && getLiveTranscription()) void prefetchLiveToken().catch(() => {});
+  }, [enabled, isJarvisSpeaking]);
 
   // Audio loop: wake word + command capture, on every mic chunk
   useEffect(() => {
@@ -210,6 +292,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     let cancelled = false;
     builtInStats.modelStatus = 'loading';
     void voiceCapture.start();
+    if (getLiveTranscription()) void prefetchLiveToken().catch(() => {});
     loadWakeWordModels()
       .then((models) => {
         if (cancelled) return;
@@ -254,22 +337,44 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       const cap = captureRef.current;
       if (cap) {
         // Don't record Jarvis himself (a reply that starts while we're capturing)
-        if (!L.isJarvisSpeaking || cap.kind !== 'follow-up') cap.audio.push(audio);
+        if (!L.isJarvisSpeaking || cap.kind !== 'follow-up') {
+          cap.audio.push(audio);
+          if (!cap.liveFailed) cap.live?.send(audio);
+        }
         if (chunkHasSpeech) {
+          if (!cap.speechStarted) setInterimTranscript((t) => t || '…'); // you're talking: the window stays open
           cap.speechStarted = true;
           cap.lastSpeechAt = now;
           cap.speechMs += chunkMs;
         }
-        const waitLimit = cap.kind === 'follow-up' ? L.followUpTimeoutMs : NO_SPEECH_AFTER_WAKE_MS;
-        if (!cap.speechStarted && cap.preSpeechMs >= PRE_ROLL_COMMAND_SPEECH_MS && now - cap.startedAt > SHORT_COMMAND_WAIT_MS) {
-          // "Hey Jarvis, stop": the command was over before detection; it's in the pre-roll
-          void finishCapture();
-        } else if (!cap.speechStarted && now - cap.startedAt > waitLimit) {
-          logEvent('wake', `No command heard (speech before: ${Math.round(cap.preSpeechMs)} ms); standing by`);
-          cancelCapture();
-          L.onFollowUpTimeout?.();
-        } else if (cap.speechStarted && (now - cap.lastSpeechAt > END_SILENCE_MS || now - cap.startedAt > MAX_COMMAND_MS)) {
-          void finishCapture();
+        const useLive = Boolean(cap.live) && !cap.liveFailed;
+        // When the user stopped talking (or, for "hey Jarvis, stop" said before detection, when capture began)
+        const quietSince = cap.speechStarted
+          ? cap.lastSpeechAt
+          : cap.preSpeechMs >= PRE_ROLL_COMMAND_SPEECH_MS
+            ? cap.startedAt
+            : 0;
+        const tooLong = now - cap.startedAt > MAX_COMMAND_MS;
+
+        if (!quietSince) {
+          if (now - cap.startedAt > cap.waitMs) {
+            logEvent('wake', cap.kind === 'follow-up' ? 'Follow-up window closed' : `No command heard (speech before: ${Math.round(cap.preSpeechMs)} ms); standing by`);
+            cancelCapture();
+            L.onFollowUpTimeout?.();
+          }
+        } else if (useLive) {
+          // Flux decides when the turn is over; nudge it if it's quiet for a while, then give up on it
+          const quietFor = now - quietSince;
+          if (!cap.forcedAt && (quietFor > LIVE_FORCE_END_AFTER_MS || tooLong)) {
+            cap.forcedAt = now;
+            cap.live!.forceEndTurn();
+          } else if (cap.forcedAt && now - cap.forcedAt > LIVE_GIVE_UP_AFTER_MS) {
+            cap.liveFailed = true;
+            void finishWithUpload(cap);
+          }
+        } else {
+          const endAfter = cap.speechStarted ? END_SILENCE_MS : SHORT_COMMAND_WAIT_MS;
+          if (now - quietSince > endAfter || tooLong) void finishWithUpload(cap);
         }
       }
 
@@ -284,14 +389,17 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         const l = live.current;
         const threshold = l.isJarvisSpeaking ? WAKE_THRESHOLD_WHILE_SPEAKING : WAKE_THRESHOLD;
         if (score < threshold || Date.now() - lastWakeRef.current < REFRACTORY_MS) return;
-        if (captureRef.current || transcribingRef.current) return; // already listening
+        if (transcribingRef.current) return;
+        const current = captureRef.current;
+        // Already capturing a command; a follow-up window that hasn't heard anything yet gives way
+        if (current && (current.kind !== 'follow-up' || current.speechStarted)) return;
         lastWakeRef.current = Date.now();
         builtInStats.detections++;
         if (l.isJarvisSpeaking) {
           logEvent('barge-in', `"hey Jarvis" (score ${score.toFixed(2)})`);
           l.onBargeIn?.('');
           beginCapture('wake');
-        } else if (l.wakeWordEnabled) {
+        } else if (l.wakeWordEnabled || current) {
           logEvent('wake', `"hey Jarvis" detected (score ${score.toFixed(2)})`);
           l.onWakeWordDetected?.('');
           beginCapture('wake');
@@ -302,24 +410,27 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     return () => {
       cancelled = true;
       unsubscribe();
+      const cap = captureRef.current;
+      if (cap) cap.live?.close();
       captureRef.current = null;
       builtInStats.active = false;
     };
-  }, [enabled, beginCapture, cancelCapture, finishCapture]);
+  }, [enabled, beginCapture, cancelCapture, finishWithUpload]);
 
   const startListening = useCallback(
-    (isFollowUp = false) => {
+    (isFollowUp = false, timeoutMs?: number) => {
       if (!enabled || transcribingRef.current) return;
-      beginCapture(isFollowUp ? 'follow-up' : 'manual');
+      beginCapture(isFollowUp ? 'follow-up' : 'manual', timeoutMs);
     },
     [enabled, beginCapture]
   );
 
   const stopListening = useCallback(() => {
     const cap = captureRef.current;
-    if (cap?.speechStarted) void finishCapture();
+    if (!cap) return toStandby();
+    if (cap.speechStarted) void finishWithUpload(cap);
     else cancelCapture();
-  }, [finishCapture, cancelCapture]);
+  }, [finishWithUpload, cancelCapture, toStandby]);
 
   return { isListening, transcript, interimTranscript, startListening, stopListening };
 }
