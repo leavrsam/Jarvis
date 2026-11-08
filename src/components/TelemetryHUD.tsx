@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NotificationSettings } from './NotificationSettings';
+import { ThinkingCueSetting } from './ThinkingCueSetting';
 import {
   LayoutGrid,
   Cpu,
@@ -321,6 +322,9 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
                 )}
               </div>
             </div>
+
+            {/* Thinking cue: soft tone or silent while a reply is on its way */}
+            <ThinkingCueSetting />
 
             {/* Install as an app + push notifications */}
             <NotificationSettings />

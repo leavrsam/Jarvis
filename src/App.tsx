@@ -33,11 +33,9 @@ import { getReleaseMicWhileSpeaking, onMicSettingsChange } from './services/micS
 
 
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
-// How long to wait for the n8n agent before playing a spoken "One moment, sir." n8n usually
-// answers in under a second now, so this only covers genuinely slow requests (tool calls).
-/** If Jarvis hasn't started TALKING by now (text may have arrived; the voice takes a moment), a short
- *  "One moment, sir" covers the silence */
-const ACK_DELAY_MS = 2000;
+/** If Jarvis hasn't started talking by now, a soft thinking tone plays until his first word
+ *  (it fades out the instant he speaks, so it never delays the answer). Quick replies skip it. */
+const THINKING_CUE_DELAY_MS = 600;
 
 // Spoken when the n8n run fails. "partial" = the connection dropped after part of the reply.
 function failureMessage(partial: boolean, kind?: string): string {
@@ -248,13 +246,6 @@ export const App: React.FC = () => {
     }
   }, [audioState, isProcessing]);
 
-  // Pre-synthesize the instant "One moment, sir." phrases once unlocked
-  useEffect(() => {
-    if (isAuthenticated) {
-      void audioEngine.preloadAcknowledgements();
-    }
-  }, [isAuthenticated]);
-
   // Request notification permission when wake word is enabled
   useEffect(() => {
     if (isWakeWordActive) {
@@ -430,16 +421,21 @@ export const App: React.FC = () => {
       return;
     }
 
-    // If the n8n agent hasn't answered quickly, cover the wait with an instant spoken acknowledgement
-    const ackTimer = setTimeout(() => {
-      audioEngine.playAcknowledgement(speakerResult.isOwner);
-    }, ACK_DELAY_MS);
+    // If the reply isn't playing yet after a moment, a soft thinking tone lets you know he's on it;
+    // it stops the instant his first word plays (or the request ends / is interrupted)
+    const cueTimer = setTimeout(() => {
+      if (isCurrent()) audioEngine.startThinkingCue();
+    }, THINKING_CUE_DELAY_MS);
+    const stopCue = () => {
+      clearTimeout(cueTimer);
+      audioEngine.stopThinkingCue();
+    };
 
     // Sentences are spoken as soon as each one is complete, back-to-back
     const speech = audioEngine.createSpeechQueue(
       () => {
         if (!isCurrent()) return;
-        clearTimeout(ackTimer);
+        stopCue();
         firstAudioMs = Math.round(performance.now() - t0);
         hudMetrics.firstAudioMs = firstAudioMs;
         hudMetrics.brainMs = firstTextMs ?? 0;
@@ -450,6 +446,7 @@ export const App: React.FC = () => {
         setAudioState('speaking');
       },
       () => {
+        stopCue(); // the reply finished (or couldn't be voiced): never leave the tone running
         // Automatically re-open mic for seamless multi-turn back-and-forth dialogue
         if (isCurrent()) void resumeFollowUpListening();
       }
@@ -521,7 +518,7 @@ export const App: React.FC = () => {
       );
     } catch (err) {
       if (controller.signal.aborted || !isCurrent()) {
-        clearTimeout(ackTimer);
+        stopCue();
         return; // interrupted by the user; the new command takes over
       }
       failed = true;
@@ -533,14 +530,14 @@ export const App: React.FC = () => {
       if (requestAbortRef.current === controller) requestAbortRef.current = null;
     }
     if (!isCurrent()) {
-      clearTimeout(ackTimer);
+      stopCue();
       return;
     }
 
     // Flush whatever is left of the reply (the last sentence may have no trailing space)
     reply.end();
     const finalText = reply.displayText;
-    if (!finalText) clearTimeout(ackTimer); // nothing to say (e.g. only a screen directive)
+    if (!finalText) stopCue(); // nothing to say (e.g. only a screen directive)
     lastReplyRef.current = finalText;
     if (firstAudioMs === null && firstTextMs !== null) logEvent('command', `Timing: voice ID ${voiceIdMs} ms · first text ${firstTextMs} ms (from your command)`);
 

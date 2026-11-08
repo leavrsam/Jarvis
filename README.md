@@ -68,6 +68,12 @@ A full-screen, futuristic sci-fi voice assistant web HUD inspired by Stark Indus
 - Prioritizes British voices: `en-GB-RyanNeural` (Microsoft Edge Natural Voice), `Google UK English Male`, `Daniel`, and `en-GB` variants.
 - Routes synthesized voice cadences into the Web Audio `AnalyserNode` to drive real-time visualizer oscillations during vocal playback.
 
+**While thinking:** Jarvis no longer says "One moment, sir" (it had to finish before the real
+answer could start). If a reply isn't playing after 0.6 s, a soft low pulsing tone fades in and is
+cut the instant his first word plays, so it never delays the answer; quick replies skip it.
+Settings → **While thinking** switches between the soft tone and silent (the reactor's amber
+"thinking" glow shows either way), with a 3-second preview.
+
 ### 6. Server-Side Login
 - The passcode is checked **on the server** (`api/auth.js`) against `JARVIS_LOGIN_PASSWORD`, using scrypt
   (deliberately slow) and a constant-time comparison. Nothing secret is in the browser code.

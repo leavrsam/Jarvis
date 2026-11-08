@@ -151,11 +151,11 @@ const MAX_GEMINI_IN_FLIGHT = 2;
 const GEMINI_ATTEMPTS = 2;
 const GEMINI_SERVER_TIMEOUT_MS = 15000;
 
-// Short holding phrases, pre-synthesized so they play with zero latency
-// Kept few: each is a Gemini request the first time (then saved on the device), and the TTS
-// rate limit is shared with real replies.
-const ACK_PHRASES_OWNER = ['One moment, sir.', 'Working on it, sir.'];
-const ACK_PHRASES_GUEST = ['One moment, please.'];
+/** Thinking cue: off or a soft tone while Jarvis works out a reply (Settings). Default: tone. */
+export type ThinkingCue = 'tone' | 'off';
+const THINKING_CUE_KEY = 'jarvis_thinking_cue';
+/** The tone never plays longer than this, whatever happens to the request */
+const THINKING_CUE_MAX_MS = 45_000;
 
 class JarvisAudioEngine {
   private ctx: AudioContext | null = null;
@@ -191,11 +191,8 @@ class JarvisAudioEngine {
   private clientGeminiApiKey: string = '';
   private lastActiveEngine: string = 'gemini-3.8-flash-tts';
 
-  // Instant acknowledgement ("One moment, sir.") played while the n8n agent works
-  private ackBuffers: Map<string, AudioBuffer> = new Map();
-  private ackPreloadPromise: Promise<void> | null = null;
-  private ackPromise: Promise<void> | null = null;
-  private lastAckPhrase = '';
+  // Thinking cue (soft pulsing tone while a reply is on its way)
+  private thinkingCue: { gain: GainNode; nodes: AudioScheduledSourceNode[]; timer: ReturnType<typeof setTimeout> } | null = null;
   private lastPrewarmAt = 0;
 
   // Gemini request throttling + diagnostics
@@ -219,6 +216,13 @@ class JarvisAudioEngine {
   private voiceLabels: Record<string, string> = { [REFINED_JARVIS_RECIPE.baseVoice]: 'Original Mk-VII' };
 
   constructor() {
+    // The old spoken "One moment, sir" clips were saved on the device; they're no longer used
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k?.startsWith('jarvis_ack::')) localStorage.removeItem(k);
+      }
+    } catch {}
     this.initVoicePreset();
   }
 
@@ -268,7 +272,6 @@ class JarvisAudioEngine {
 
   public setVoicePreset(presetId: string): JarvisNeuralVoicePreset {
     const found = JARVIS_NEURAL_VOICES.find((p) => p.id === presetId) || JARVIS_NEURAL_VOICES[0];
-    if (found.model !== this.selectedPreset.model) this.ackBuffers.clear(); // acks are per model
     this.selectedPreset = found;
     try {
       localStorage.setItem('jarvis_neural_voice_id', found.id);
@@ -290,7 +293,6 @@ class JarvisAudioEngine {
 
   public setCustomDesignedVoiceId(voiceId: string) {
     this.customDesignedVoiceId = voiceId.trim();
-    this.resetAcknowledgements();
     this.audioBufferCache.clear();
     try {
       if (this.customDesignedVoiceId) {
@@ -399,12 +401,6 @@ class JarvisAudioEngine {
     } catch {}
   }
 
-  /** Drop pre-synthesized "One moment, sir." clips so they're re-made in the current voice. */
-  private resetAcknowledgements() {
-    // Re-synthesized lazily on the next wake word (prewarm), so intermediate voices don't cost extra calls.
-    this.ackBuffers.clear();
-    this.ackPreloadPromise = null;
-  }
 
   /**
    * Build the refined "Mk-VIII" voice by chaining remixes from the original designed voice,
@@ -429,9 +425,6 @@ class JarvisAudioEngine {
   }
 
   public setVoiceTuning(patch: Partial<JarvisVoiceTuning>): JarvisVoiceTuning {
-    if (patch.style !== undefined && patch.style !== this.voiceTuning.style) {
-      this.resetAcknowledgements();
-    }
     this.voiceTuning = { ...this.voiceTuning, ...patch };
     try {
       localStorage.setItem('jarvis_voice_tuning', JSON.stringify(this.voiceTuning));
@@ -739,7 +732,7 @@ class JarvisAudioEngine {
    * so firing every sentence at once only invites rate limiting and slows the first ones down.
    */
   private async withGeminiSlot<T>(task: () => Promise<T>, priority: 'high' | 'low' = 'high'): Promise<T> {
-    // Low priority (pre-making "One moment, sir" clips) never takes the last free slot and always
+    // Low priority (background synthesis) never takes the last free slot and always
     // yields to waiting speech, so it can't delay what Jarvis is actually saying.
     const canRun = () =>
       priority === 'high'
@@ -1218,6 +1211,7 @@ class JarvisAudioEngine {
       if (ctx.state === 'suspended') await ctx.resume();
       const input = ctx.createGain();
       this.connectJarvisVocalChain(input, preset.hudDsp);
+      this.stopThinkingCue();
       this.currentState = 'speaking';
       onStart();
 
@@ -1270,6 +1264,7 @@ class JarvisAudioEngine {
 
       this.connectJarvisVocalChain(source, this.selectedPreset.hudDsp);
 
+      this.stopThinkingCue(); // the reply is ready: the thinking tone gets out of the way
       this.currentState = 'speaking';
       onStart?.();
 
@@ -1297,105 +1292,6 @@ class JarvisAudioEngine {
       headers: this.buildTtsHeaders(),
       body: JSON.stringify({ action: 'status' }),
     }).catch(() => {});
-    void this.preloadAcknowledgements();
-  }
-
-  private ackStorageKey(phrase: string): string {
-    return `jarvis_ack::${this.selectedPreset.model}::${this.customDesignedVoiceId}::${this.getEffectiveStyle()}::${phrase}`;
-  }
-
-  /**
-   * Synthesize the short "holding" phrases ahead of time so they can play instantly.
-   * They're saved on the device per voice + delivery, so after the first time they cost no
-   * Gemini requests at all. Only the Gemini voice is accepted: a holding phrase in the backup
-   * voice would sound wrong, so on failure it's simply skipped and retried later.
-   */
-  public async preloadAcknowledgements(): Promise<void> {
-    if (this.ackPreloadPromise) return this.ackPreloadPromise;
-    const preset = this.selectedPreset;
-    if (preset.provider === 'edge') return;
-    const phrases = [...ACK_PHRASES_OWNER, ...ACK_PHRASES_GUEST];
-    const ctx = this.ensureContext();
-    const controller = new AbortController();
-
-    const loadOne = async (phrase: string) => {
-      if (this.ackBuffers.has(phrase)) return;
-      const key = this.ackStorageKey(phrase);
-      try {
-        const stored = localStorage.getItem(key);
-        if (stored) {
-          const bytes = Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
-          this.ackBuffers.set(phrase, await ctx.decodeAudioData(bytes.buffer));
-          return;
-        }
-      } catch {}
-
-      const voice =
-        preset.voice === 'AUTO_DESIGN_JARVIS' && this.customDesignedVoiceId ? this.customDesignedVoiceId : preset.voice;
-      const result = await this.withGeminiSlot(
-        () =>
-          this.requestTts(
-            {
-              text: phrase,
-              provider: preset.provider,
-              model: preset.model,
-              voice,
-              style: this.getEffectiveStyle(),
-              fallback: false,
-              geminiTimeoutMs: GEMINI_SERVER_TIMEOUT_MS,
-            },
-            controller.signal,
-            GEMINI_SERVER_TIMEOUT_MS + 3000
-          ),
-        'low'
-      );
-      if (!result.response) return;
-      const raw = await result.response.arrayBuffer();
-      if (raw.byteLength < 256) return;
-      this.ackBuffers.set(phrase, await ctx.decodeAudioData(raw.slice(0)));
-      try {
-        let binary = '';
-        const bytes = new Uint8Array(raw);
-        for (let i = 0; i < bytes.length; i += 0x8000) {
-          binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        }
-        localStorage.setItem(key, btoa(binary));
-      } catch {
-        // Storage full or unavailable: the clip still works for this session
-      }
-    };
-
-    // One at a time: these are background work and shouldn't add to rate-limit pressure
-    this.ackPreloadPromise = (async () => {
-      for (const phrase of phrases) {
-        try {
-          await loadOne(phrase);
-        } catch {}
-      }
-      if (this.ackBuffers.size < phrases.length) this.ackPreloadPromise = null;
-    })();
-    return this.ackPreloadPromise;
-  }
-
-  /**
-   * Play a short pre-synthesized acknowledgement ("One moment, sir.") to cover backend latency.
-   * Does nothing if no phrase is ready yet. A following speak() waits for it to finish.
-   */
-  public playAcknowledgement(isOwner: boolean) {
-    if (this.ackPromise || this.activeSourceNode) return;
-    const pool = (isOwner ? ACK_PHRASES_OWNER : ACK_PHRASES_GUEST).filter((p) => this.ackBuffers.has(p));
-    if (pool.length === 0) return;
-    let phrase = pool[Math.floor(Math.random() * pool.length)];
-    if (pool.length > 1 && phrase === this.lastAckPhrase) {
-      phrase = pool[(pool.indexOf(phrase) + 1) % pool.length];
-    }
-    this.lastAckPhrase = phrase;
-    const buffer = this.ackBuffers.get(phrase)!;
-    const end = this.noteSpeech(phrase);
-    this.ackPromise = this.playBuffer(buffer).finally(() => {
-      end();
-      this.ackPromise = null;
-    });
   }
 
   public async speak(
@@ -1403,10 +1299,6 @@ class JarvisAudioEngine {
     onStart?: () => void,
     onEnd?: () => void
   ): Promise<void> {
-    // Let a holding phrase finish naturally instead of cutting it off mid-word
-    if (this.ackPromise) {
-      await this.ackPromise;
-    }
     this.stopSpeaking();
 
     const spokenText = this.cleanSpeechText(text);
@@ -1448,7 +1340,7 @@ class JarvisAudioEngine {
   /**
    * Start a speech queue for a streamed reply. Each enqueued sentence is synthesized as soon as
    * it arrives (in parallel) and played in order with no gap. stopSpeaking() cancels the queue,
-   * including sentences not yet synthesized. A playing "One moment, sir." finishes first.
+   * including sentences not yet synthesized. The first sentence also ends the thinking tone.
    */
   public createSpeechQueue(onStart?: () => void, onEnd?: () => void): SpeechQueue {
     this.stopSpeaking();
@@ -1509,7 +1401,6 @@ class JarvisAudioEngine {
             continue;
           }
           const clip = clips[i++];
-          if (this.ackPromise) await this.ackPromise;
           if (signal.aborted) break;
           await clip.play(handleStart);
         }
@@ -1572,6 +1463,7 @@ class JarvisAudioEngine {
       utterance.pitch = 0.94;
 
       utterance.onstart = () => {
+        this.stopThinkingCue();
         this.currentState = 'speaking';
         this.startTtsVisualizerModulation();
         onStart?.();
@@ -1658,6 +1550,7 @@ class JarvisAudioEngine {
   }
 
   public stopSpeaking() {
+    this.stopThinkingCue();
     if (this.activeAbortController) {
       try {
         this.activeAbortController.abort();
@@ -1784,6 +1677,82 @@ class JarvisAudioEngine {
       treble,
       spectralCentroid,
     };
+  }
+
+  public getThinkingCue(): ThinkingCue {
+    try {
+      return localStorage.getItem(THINKING_CUE_KEY) === 'off' ? 'off' : 'tone';
+    } catch {
+      return 'tone';
+    }
+  }
+
+  public setThinkingCue(cue: ThinkingCue) {
+    try {
+      localStorage.setItem(THINKING_CUE_KEY, cue);
+    } catch {}
+    if (cue === 'off') this.stopThinkingCue();
+  }
+
+  /**
+   * A soft, low pulsing tone while Jarvis works out a reply, so you know he's on it. It fades in
+   * gently and is cut (60 ms fade) the moment his first word plays, so it never delays the
+   * answer. Replaces the spoken "One moment, sir", which had to finish before the reply could
+   * start.
+   */
+  public startThinkingCue() {
+    if (this.thinkingCue || this.getThinkingCue() === 'off') return;
+    if (this.activeSourceNode || this.currentState === 'speaking') return;
+    const ctx = this.ensureContext();
+    if (ctx.state === 'suspended') void ctx.resume();
+    const now = ctx.currentTime;
+
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0, now);
+    out.gain.linearRampToValueAtTime(1, now + 0.6);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 900;
+    filter.Q.value = 0.7;
+    // Breathing: the level swells and settles about once a second
+    const pulse = ctx.createGain();
+    pulse.gain.value = 0.028;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.9;
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0.018;
+    lfo.connect(lfoDepth).connect(pulse.gain);
+
+    // Two soft sines a fifth apart (G3 + D4), slightly detuned for a little movement
+    const tones = [196, 293.7].map((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = f;
+      o.detune.value = i ? 4 : -4;
+      o.connect(pulse);
+      return o;
+    });
+    pulse.connect(filter).connect(out).connect(ctx.destination);
+    const nodes: AudioScheduledSourceNode[] = [lfo, ...tones];
+    for (const n of nodes) n.start(now);
+
+    const timer = setTimeout(() => this.stopThinkingCue(), THINKING_CUE_MAX_MS);
+    this.thinkingCue = { gain: out, nodes, timer };
+  }
+
+  /** Fade the thinking tone out quickly (safe to call any time) */
+  public stopThinkingCue() {
+    const cue = this.thinkingCue;
+    if (!cue || !this.ctx) return;
+    this.thinkingCue = null;
+    clearTimeout(cue.timer);
+    const now = this.ctx.currentTime;
+    try {
+      cue.gain.gain.cancelScheduledValues(now);
+      cue.gain.gain.setValueAtTime(cue.gain.gain.value, now);
+      cue.gain.gain.linearRampToValueAtTime(0, now + 0.06);
+      for (const n of cue.nodes) n.stop(now + 0.1);
+    } catch {}
   }
 
   public playSfx(type: 'activate' | 'wake' | 'processing' | 'response' | 'error' | 'standby' | 'timer') {
