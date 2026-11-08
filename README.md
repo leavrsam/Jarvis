@@ -323,6 +323,30 @@ automatically.
 `/api/push` (HUD: same-origin, login, 30/min) lists, adds and removes devices and sends tests;
 `/api/notify` (secret, 60/min, 10 wrong secrets/min per IP) sends.
 
+## ⏲️ Timers
+
+Jarvis sets timers with directives on the first lines of a reply, like the `SHOW_*` ones. They're
+never spoken or shown in the subtitles:
+
+| Directive | What it does |
+| --- | --- |
+| `SET_TIMER: <seconds> \| <label>` | Starts a countdown tile (e.g. `SET_TIMER: 600 \| pasta`). Whole seconds, up to a day; the label is optional, and a trailing "timer" is dropped. Several can run at once; a new timer with the same label replaces the old one. |
+| `CANCEL_TIMER: <label or "all">` | Removes the matching timer(s): the exact label first, otherwise labels containing it. |
+
+- Timers show as tiles in the centre column above the status line (on phones, under the top bar),
+  with a live countdown, a progress bar and ✕ to cancel.
+- When a timer ends, a bell chimes, the tile turns into "**Pasta is done**", and Jarvis says
+  "Sir, your pasta timer is done." This repeats every 30 s until dismissed. Several finished
+  timers are announced together. If Jarvis is talking or listening, the spoken reminder waits for
+  a gap.
+- To dismiss: tap the tile, or say "Hey Jarvis" (that silences it) and then "stop" (or "turn it
+  off", "thanks", …). That "stop" is handled locally and isn't sent to n8n.
+- Each timer stores its end time on the device (localStorage), so it keeps time while Jarvis
+  talks or music plays and survives a reload. A timer that ended while the page was closed rings
+  when it opens.
+
+---
+
 ## 🖥️ Jarvis's Screen (images, video, cameras)
 
 Jarvis can put things on a screen in the HUD. Like the YouTube directives, these go at the start

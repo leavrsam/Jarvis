@@ -6,6 +6,7 @@
 //   SHOW_IMAGE_SEARCH: <what to show>     (the app finds a real photo; Jarvis doesn't need a URL)
 //   SHOW_IMAGE: <https url>               SHOW_VIDEO: <https url to an mp4/webm file>
 //   SHOW_CAMERA: <camera name>            CLEAR_SCREEN
+//   SET_TIMER: <seconds> | <label>        CANCEL_TIMER: <label or "all">
 //
 // Pure logic (no DOM), shared by the reply stream parser and the HUD screen.
 
@@ -18,7 +19,9 @@ export type Directive =
   | { type: 'show-image-search'; query: string }
   | { type: 'show-video'; url: string }
   | { type: 'show-camera'; camera: string }
-  | { type: 'clear-screen' };
+  | { type: 'clear-screen' }
+  | { type: 'set-timer'; seconds: number; label: string }
+  | { type: 'cancel-timer'; label: string | 'all' };
 
 /** Every directive keyword (used while a reply is still streaming in) */
 export const DIRECTIVE_KEYWORDS = [
@@ -38,9 +41,11 @@ export const DIRECTIVE_KEYWORDS = [
   'SHOW_VIDEO',
   'SHOW_CAMERA',
   'CLEAR_SCREEN',
+  'SET_TIMER',
+  'CANCEL_TIMER',
 ];
 /** Keywords followed by ": <argument>" */
-export const ARG_KEYWORDS = new Set(['PLAY_YOUTUBE_PLAYLIST', 'PLAY_YOUTUBE', 'SET_VOLUME', 'SHOW_IMAGE', 'SHOW_IMAGE_SEARCH', 'SHOW_VIDEO', 'SHOW_CAMERA']);
+export const ARG_KEYWORDS = new Set(['PLAY_YOUTUBE_PLAYLIST', 'PLAY_YOUTUBE', 'SET_VOLUME', 'SHOW_IMAGE', 'SHOW_IMAGE_SEARCH', 'SHOW_VIDEO', 'SHOW_CAMERA', 'SET_TIMER', 'CANCEL_TIMER']);
 
 // One alternation, used anchored (leading directive) and global (stripping / late directives).
 // URLs run to the next whitespace; a camera name runs to the end of its line.
@@ -52,6 +57,8 @@ const DIRECTIVE_SOURCE =
   String.raw`|SHOW_IMAGE:[ \t]*\S+` +
   String.raw`|SHOW_VIDEO:[ \t]*\S+` +
   String.raw`|SHOW_CAMERA:[ \t]*[^\n]*[^\s]` +
+  String.raw`|SET_TIMER:[ \t]*[^\n]*[^\s]` +
+  String.raw`|CANCEL_TIMER:[ \t]*[^\n]*[^\s]` +
   String.raw`|\b(?:PAUSE_YOUTUBE|RESUME_YOUTUBE|STOP_YOUTUBE|NEXT_YOUTUBE|YOUTUBE_NEXT|PREV_YOUTUBE|PREVIOUS_YOUTUBE|YOUTUBE_PREV|CLEAR_SCREEN)\b`;
 
 export const LEADING_DIRECTIVE_RE = new RegExp(`^(?:${DIRECTIVE_SOURCE})`, 'i');
@@ -81,6 +88,22 @@ export function normalizeImageQuery(value: string): string | null {
     .trim();
   if (!q || q.length > 100 || !/[\p{L}\p{N}]/u.test(q)) return null;
   return q;
+}
+
+/** Longest timer Jarvis can set (a day) */
+export const MAX_TIMER_SECONDS = 24 * 60 * 60;
+
+/** Timer label: plain words, up to 40 characters, without a trailing "timer" ("pasta timer" → "pasta") */
+export function normalizeTimerLabel(value: string): string {
+  const label = value
+    .trim()
+    .replace(/^["'“‘\[]+|["'”’\]]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\btimer\b\s*$/i, '')
+    .trim()
+    .slice(0, 40)
+    .trim();
+  return /[\p{L}\p{N}]/u.test(label) ? label : '';
 }
 
 /** Parse one directive string (e.g. "SHOW_IMAGE: https://..."). Null if it isn't a valid one. */
@@ -127,6 +150,18 @@ export function parseDirective(text: string): Directive | null {
     }
     case 'CLEAR_SCREEN':
       return { type: 'clear-screen' };
+    case 'SET_TIMER': {
+      // "<seconds> | <label>"; the label is optional
+      const [secs, ...rest] = arg.split('|');
+      const seconds = Number(secs.trim());
+      if (!/^\d+$/.test(secs.trim()) || seconds < 1 || seconds > MAX_TIMER_SECONDS) return null;
+      return { type: 'set-timer', seconds, label: normalizeTimerLabel(rest.join('|')) || 'timer' };
+    }
+    case 'CANCEL_TIMER': {
+      if (/^(?:all|everything|all timers)$/i.test(arg.trim())) return { type: 'cancel-timer', label: 'all' };
+      const label = normalizeTimerLabel(arg);
+      return label ? { type: 'cancel-timer', label } : null;
+    }
     default:
       return null;
   }

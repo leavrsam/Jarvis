@@ -17,6 +17,8 @@ import { ConversationPanel } from './components/hud/ConversationPanel';
 import { StateCaption } from './components/hud/StateCaption';
 import { parseDirective } from './services/directives';
 import { applyScreenDirective, subscribeScreen } from './services/screenController';
+import { addTimer, cancelTimers, dismissRinging, doneAnnouncement, fireDue, ringingTimers } from './services/timers';
+import { TimerStack } from './components/hud/TimerStack';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { streamJarvisCommand, JarvisBackendError } from './services/jarvisBackend';
 import { ReplyStreamProcessor } from './services/replyStream';
@@ -49,6 +51,9 @@ function failureMessage(partial: boolean, kind?: string): string {
 const CONVERSATION_END_REGEX = /\b(?:that's all|thats all|that is all|that'll be all|thank you jarvis|thanks jarvis|goodbye|good night|bye jarvis|stop listening|go to sleep|stand by|standby|never ?mind|nothing else|i'm good|im good|i'm done|im done)\b/i;
 /** A bare "thanks" / "thank you" / "perfect" as the whole follow-up also ends the conversation */
 const CONVERSATION_END_EXACT = /^(?:ok(?:ay)?[, ]*)?(?:thanks|thank you|thanks a lot|cheers|perfect|great|got it|cool|ok|okay|no|nope|no thanks|no thank you)[.!]*$/i;
+
+/** "Stop" and friends, said to a ringing timer */
+const TIMER_STOP_REGEX = /^(?:(?:ok(?:ay)?|alright|yes|thanks?|thank you)[,.!\s]+)?(?:stop|dismiss|cancel|silence|quiet|enough|shut up|turn (?:it |that )?off|got it|thanks?|thank you|okay|ok)(?:[,.!\s]+(?:it|that|the timer|the alarm|timer|alarm|please|thanks?|thank you|jarvis))*[.!\s]*$/i;
 
 /**
  * Follow-up window (like Alexa Follow-Up Mode / Google Continued Conversation): how long Jarvis
@@ -149,6 +154,10 @@ export const App: React.FC = () => {
   const [speakerConfidence, setSpeakerConfidence] = useState<number>(0.96);
   const [isOwner, setIsOwner] = useState<boolean>(true);
   const isSpeakingRef = useRef(false);
+  /** When "hey Jarvis" silenced a ringing timer (a following "stop" is then for the timer) */
+  const timerSilencedAtRef = useRef(0);
+  /** Jarvis is busy (talking / listening / thinking): timer announcements wait for a gap */
+  const jarvisBusyRef = useRef(false);
   // Tracks whether we are in an active multi-turn dialogue loop
   const inConversationRef = useRef(false);
   const startListeningRef = useRef<(isFollowUp?: boolean, timeoutMs?: number) => void>(() => {});
@@ -174,6 +183,44 @@ export const App: React.FC = () => {
     audioEngine.stopSpeaking();
     setIsProcessing(false);
   }, []);
+
+  // Timers: ring when due (chime + "Sir, your pasta timer is done"), repeating every 30 s until
+  // dismissed. End times are absolute, so they keep time whatever else is going on; the spoken
+  // reminder waits for a moment when Jarvis isn't talking, listening or thinking.
+  useEffect(() => {
+    jarvisBusyRef.current = audioState !== 'idle' || isProcessing;
+  }, [audioState, isProcessing]);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let nextAnnounceAt = 0;
+    const tick = () => {
+      const now = Date.now();
+      const fresh = fireDue(now);
+      if (fresh.length) {
+        audioEngine.playSfx('timer');
+        logEvent('command', `Timer done: ${fresh.map((t) => t.label).join(', ')}`);
+        nextAnnounceAt = now;
+      }
+      const ringing = ringingTimers();
+      if (!ringing.length) {
+        nextAnnounceAt = 0;
+        return;
+      }
+      if (now < nextAnnounceAt || jarvisBusyRef.current) return;
+      nextAnnounceAt = now + 30_000;
+      if (!fresh.length) audioEngine.playSfx('timer');
+      const text = doneAnnouncement(ringing.map((t) => t.label));
+      logEvent('command', `Timer reminder: "${text}"`);
+      void audioEngine.speak(
+        text,
+        () => setAudioState('speaking'),
+        () => setAudioState('idle')
+      );
+    };
+    tick();
+    const t = setInterval(tick, 500);
+    return () => clearInterval(t);
+  }, [isAuthenticated]);
 
   // HUD screen up: the reactor moves aside on wide displays
   const [screenActive, setScreenActive] = useState(false);
@@ -260,6 +307,20 @@ export const App: React.FC = () => {
     setFollowUpWindow(null);
 
     const trimmedQuery = query.trim();
+
+    // "Hey Jarvis, stop" while a timer rings (or just after "hey Jarvis" silenced it): that's
+    // for the timer, not a question for n8n
+    if (
+      (ringingTimers().length > 0 || Date.now() - timerSilencedAtRef.current < 15_000) &&
+      TIMER_STOP_REGEX.test(trimmedQuery)
+    ) {
+      const n = dismissRinging();
+      timerSilencedAtRef.current = 0;
+      logEvent('command', `"${trimmedQuery}": timer dismissed${n ? '' : ' (already silenced)'}`);
+      inConversationRef.current = false;
+      setAudioState('idle');
+      return;
+    }
     // Record user prompt for HUD attribution
     setLastQuery(trimmedQuery);
 
@@ -401,6 +462,20 @@ export const App: React.FC = () => {
       // Directives (PLAY_YOUTUBE: <id>, SHOW_IMAGE_SEARCH: <what>, CLEAR_SCREEN, ...) are executed, never spoken
       onDirective: (directive) => {
         const parsed = parseDirective(directive);
+        if (parsed?.type === 'set-timer') {
+          addTimer(parsed.seconds, parsed.label);
+          logEvent('command', `Timer: ${parsed.label} for ${parsed.seconds} s`);
+          return;
+        }
+        if (parsed?.type === 'cancel-timer') {
+          const n = cancelTimers(parsed.label);
+          logEvent('command', `Timer cancelled: ${parsed.label} (${n} removed)`);
+          return;
+        }
+        if (!parsed && /^(?:SET|CANCEL)_TIMER/i.test(directive.trim())) {
+          logEvent('command', `Ignored timer directive (needs whole seconds, up to a day): ${directive.slice(0, 80)}`);
+          return;
+        }
         if (parsed && applyScreenDirective(parsed)) {
           logEvent('command', `Screen: ${directive.slice(0, 80)}`);
           return;
@@ -504,6 +579,10 @@ export const App: React.FC = () => {
   // Handler for Wake Word ("Hey Jarvis" / "Jarvis") trigger
   const handleWakeWordDetected = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
+    if (dismissRinging()) {
+      timerSilencedAtRef.current = Date.now();
+      logEvent('command', 'Timer silenced by "hey Jarvis"');
+    }
     followUpOpenRef.current = false;
     setFollowUpWindow(null);
 
@@ -534,6 +613,10 @@ export const App: React.FC = () => {
   // Hands-Free Vocal Interruption / Barge-In Handler (Triggered while Jarvis is actively speaking)
   const handleBargeIn = useCallback(async (trailingQuery?: string) => {
     if (!isAuthenticated) return;
+    if (dismissRinging()) {
+      timerSilencedAtRef.current = Date.now();
+      logEvent('command', 'Timer silenced by "hey Jarvis"');
+    }
     followUpOpenRef.current = false;
     setFollowUpWindow(null);
 
@@ -935,6 +1018,9 @@ export const App: React.FC = () => {
         </section>
 
         <WidgetBoard wide editing={editingLayout} onDoneEditing={stopEditingLayout} render={renderWidget} />
+
+        {/* Timers: centre column, above the status caption */}
+        <TimerStack className="absolute z-40 left-[360px] right-[470px] bottom-[15%]" />
         {toast && <NotificationToast note={toast} onClose={closeToast} />}
       </main>
     );
@@ -952,6 +1038,9 @@ export const App: React.FC = () => {
 
         {/* Floating music controls */}
         <YouTubeMediaHUD />
+
+        {/* Timers, just under the top bar */}
+        <TimerStack className="absolute z-40 inset-x-3 top-14" />
 
         {/* Jarvis's screen (SHOW_IMAGE / SHOW_IMAGE_SEARCH / SHOW_VIDEO / SHOW_CAMERA) */}
         <ScreenPanel />

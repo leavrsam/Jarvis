@@ -1786,11 +1786,40 @@ class JarvisAudioEngine {
     };
   }
 
-  public playSfx(type: 'activate' | 'wake' | 'processing' | 'response' | 'error' | 'standby') {
+  public playSfx(type: 'activate' | 'wake' | 'processing' | 'response' | 'error' | 'standby' | 'timer') {
     try {
       this.ensureContext();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
+
+      if (type === 'timer') {
+        // Gentle bell: a rising three-note arpeggio, played twice, with soft decaying tails
+        [0, 0.9].forEach((offset) => {
+          [659.25, 830.61, 987.77].forEach((freq, idx) => {
+            if (!this.ctx) return;
+            const osc = this.ctx.createOscillator();
+            const overtone = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            const start = now + offset + idx * 0.14;
+            osc.type = 'sine';
+            overtone.type = 'sine';
+            osc.frequency.setValueAtTime(freq, start);
+            overtone.frequency.setValueAtTime(freq * 2, start);
+            gain.gain.setValueAtTime(0.0001, start);
+            gain.gain.exponentialRampToValueAtTime(0.11, start + 0.015);
+            gain.gain.exponentialRampToValueAtTime(0.001, start + 0.9);
+            osc.connect(gain);
+            overtone.connect(gain);
+            gain.connect(this.ctx.destination);
+            if (this.analyser) gain.connect(this.analyser);
+            osc.start(start);
+            overtone.start(start);
+            osc.stop(start + 0.95);
+            overtone.stop(start + 0.95);
+          });
+        });
+        return;
+      }
 
       if (type === 'standby') {
         // Soft falling two-note "I've stopped listening" (the reverse of the wake chime, quieter)
