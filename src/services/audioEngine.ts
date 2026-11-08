@@ -58,7 +58,7 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     // Kept deliberately short: Google's TTS guide says long per-line direction causes voice drift.
     // Identity (age, timbre, accent) lives in the designed voice itself.
     style: 'calm, precise, dryly understated',
-    rate: '+0%',
+    rate: '+6%',
     pitch: '-2Hz',
     hudDsp: true,
   },
@@ -75,7 +75,7 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     description:
       'Your designed Jarvis voice on Gemini 3.8 Flash-Lite TTS: built for low latency; may be slightly less nuanced than Flash.',
     style: 'calm, precise, dryly understated',
-    rate: '+0%',
+    rate: '+6%',
     pitch: '-2Hz',
     hudDsp: true,
   },
@@ -448,7 +448,11 @@ class JarvisAudioEngine {
   }
 
   private getEffectiveStyle(): string {
-    return this.voiceTuning.style.trim() || this.selectedPreset.style;
+    const style = this.voiceTuning.style.trim() || this.selectedPreset.style;
+    // Gemini has no speed setting; pace is part of the delivery direction. A touch brisker than
+    // its default (unless a custom style already says how fast to speak).
+    if (this.selectedPreset.provider !== 'gemini' || /\b(pace|tempo|brisk|quick|fast|slow|leisurely|unhurried)\b/i.test(style)) return style;
+    return `${style}, at a slightly brisk pace`;
   }
 
   /** Reset the playback output before the next sound (see resetOutput), once this time has passed */
