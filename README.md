@@ -218,7 +218,9 @@ On wide screens (TV, desktop) the middle stays clear for the reactor:
 
 **Calendar card:** shows today's all-day events as chips, what's on **now** (until when, where),
 the next event with a countdown ("in 25 min · Zoom"), the rest of today, and tomorrow. It
-refreshes every 5 minutes. The data comes from an n8n webhook, which can use the same Google
+refreshes every 5 minutes (calendar list every 30) while the HUD is visible, and pauses in a
+background tab, catching up as soon as you look at it again. That is at most ~290 webhook calls
+a day per open HUD, far inside Google Calendar's free quota (the API has no usage charges). The data comes from an n8n webhook, which can use the same Google
 Calendar credentials as the agent:
 1. In n8n, create a workflow with: **Webhook** (GET, path `jarvis-calendar`, Header Auth
    `X-Jarvis-Key` = the same secret as the command webhook) → **Google Calendar: Get Many**

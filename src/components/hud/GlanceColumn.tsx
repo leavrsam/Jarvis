@@ -51,6 +51,33 @@ function useNow(intervalMs: number) {
   return now;
 }
 
+/**
+ * Run `load` now and then every `intervalMs`, but only while the page is visible: a HUD left
+ * open in a background tab (or on another device) makes no calls. When the page comes back
+ * into view, refresh at once if the last load is older than the interval.
+ * Returns a cleanup function.
+ */
+function everyWhileVisible(load: () => void, intervalMs: number): () => void {
+  let lastAt = Date.now();
+  const run = () => {
+    lastAt = Date.now();
+    load();
+  };
+  const tick = () => {
+    if (!document.hidden) run();
+  };
+  const onVisible = () => {
+    if (!document.hidden && Date.now() - lastAt >= intervalMs) run();
+  };
+  load();
+  const t = setInterval(tick, intervalMs);
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    clearInterval(t);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
 function greeting(hour: number) {
   if (hour < 3) return 'Good evening';
   if (hour < 12) return 'Good morning';
@@ -289,11 +316,10 @@ const CalendarCard: React.FC = () => {
         if (!cancelled && res.ok && Array.isArray(data.calendars)) setCalendars(data.calendars);
       } catch {}
     };
-    void load();
-    const t = setInterval(load, CALENDAR_LIST_REFRESH_MS);
+    const stop = everyWhileVisible(() => void load(), CALENDAR_LIST_REFRESH_MS);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stop();
     };
   }, []);
 
@@ -344,11 +370,10 @@ const CalendarCard: React.FC = () => {
         if (!cancelled) setStatus('error');
       }
     };
-    void load();
-    const t = setInterval(load, CALENDAR_REFRESH_MS);
+    const stop = everyWhileVisible(() => void load(), CALENDAR_REFRESH_MS);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey]);
