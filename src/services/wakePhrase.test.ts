@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { jarvisCheck, startsWithWakePhrase, stripWakePhrase } from './wakePhrase';
+import { commandAfterWakePhrase, jarvisCheck, startsWithWakePhrase, stripWakePhrase } from './wakePhrase';
 
 describe('stripWakePhrase', () => {
   it('removes the wake phrase however it is punctuated', () => {
@@ -37,5 +37,24 @@ describe('jarvisCheck (plain "Jarvis" wake confirmation)', () => {
   it('waits on partial live transcripts that could still become Jarvis', () => {
     for (const t of ['', 'Ja', 'Jar', 'Jarv', 'Hey', 'Hey jar']) expect(jarvisCheck(t, false)).toBe('wait');
     for (const t of ['Jars', 'Travis', 'Hey Travis', 'Can you', 'Jar of']) expect(jarvisCheck(t, false)).toBe('no');
+  });
+});
+
+
+describe('commandAfterWakePhrase', () => {
+  it('drops other people’s talk before the wake phrase', () => {
+    expect(commandAfterWakePhrase("So I told him no. Hey, Jarvis. What's the weather?")).toEqual({ command: "What's the weather?", hadWakePhrase: true });
+    expect(commandAfterWakePhrase('yeah totally hey jarvis turn off the lights')).toEqual({ command: 'turn off the lights', hadWakePhrase: true });
+    expect(commandAfterWakePhrase('Right. Jarvis, what time is it?')).toEqual({ command: 'what time is it?', hadWakePhrase: true });
+  });
+
+  it('handles a wake phrase at the start, or none at all', () => {
+    expect(commandAfterWakePhrase('Hey Jarvis, play some music')).toEqual({ command: 'play some music', hadWakePhrase: true });
+    expect(commandAfterWakePhrase('And what about tomorrow?')).toEqual({ command: 'And what about tomorrow?', hadWakePhrase: false });
+  });
+
+  it('does not treat a person called Travis as the wake word', () => {
+    expect(commandAfterWakePhrase('Ask Travis about tomorrow').hadWakePhrase).toBe(false);
+    expect(commandAfterWakePhrase('Ask Travis about tomorrow').command).toBe('Ask Travis about tomorrow');
   });
 });

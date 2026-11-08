@@ -90,3 +90,24 @@ export function setLiveTranscription(on: boolean) {
   } catch {}
   window.dispatchEvent(new Event(EVENT));
 }
+
+const FOCUS_KEY = 'jarvis_focus_nearest_voice';
+
+/**
+ * After "hey Jarvis", focus on the voice that said it: speech much quieter than it (other people
+ * further from the mic) is turned down before transcription. On unless turned off.
+ */
+export function getFocusNearestVoice(): boolean {
+  try {
+    return localStorage.getItem(FOCUS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function setFocusNearestVoice(on: boolean) {
+  try {
+    localStorage.setItem(FOCUS_KEY, on ? 'on' : 'off');
+  } catch {}
+  window.dispatchEvent(new Event(EVENT));
+}

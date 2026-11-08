@@ -33,3 +33,19 @@ export function jarvisCheck(text: string, final: boolean): 'yes' | 'no' | 'wait'
   if (OPENERS.includes(first) && words.length === 2 && couldBeJarvis(second)) return 'wait';
   return 'no';
 }
+
+// The wake phrase in the middle of a transcript: "hey/ok Jarvis" (or a close mishearing), or
+// "Jarvis" on its own. A bare "Travis" mid-sentence is left alone (it's probably a person).
+const WAKE_ANYWHERE = /\b(?:(?:hey|hi|ok|okay|yo)[\s,.!-]+(?:jarvis|jervis|travis|jarvi)|jarvis)\b[\s,.!?-]*/i;
+
+/**
+ * The command in a transcript that may start with other people's talk: everything after the
+ * first wake phrase ("...so anyway. Hey Jarvis, what's the weather?" → "what's the weather?").
+ * Without a wake phrase, the text as-is (minus a leading wake phrase).
+ */
+export function commandAfterWakePhrase(text: string): { command: string; hadWakePhrase: boolean } {
+  if (WAKE_PREFIX.test(text)) return { command: stripWakePhrase(text), hadWakePhrase: true };
+  const m = WAKE_ANYWHERE.exec(text);
+  if (!m) return { command: text.trim(), hadWakePhrase: false };
+  return { command: text.slice(m.index + m[0].length).trim(), hadWakePhrase: true };
+}

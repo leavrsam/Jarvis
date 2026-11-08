@@ -14,8 +14,8 @@ import { builtInStats, hudMetrics, logEvent } from '../services/eventLog';
 import { isLikelyEcho } from '../services/echoMatch';
 import { notifyAuthRequired } from '../services/auth';
 import { LiveTurn, liveTranscriptionUnavailable, prefetchLiveToken } from '../services/liveTranscriber';
-import { getLiveTranscription } from '../services/micSettings';
-import { jarvisCheck, startsWithWakePhrase, stripWakePhrase } from '../services/wakePhrase';
+import { getFocusNearestVoice, getLiveTranscription } from '../services/micSettings';
+import { commandAfterWakePhrase, jarvisCheck } from '../services/wakePhrase';
 import type { UseSpeechRecognitionOptions } from './useSpeechRecognition';
 
 /** Trigger level. "Hey Jarvis" scored 0.99-1.00; near-misses like "hey Travis" reached 0.72. */
@@ -50,6 +50,47 @@ const PROMPT_WINDOW_MS = 2500;
 /** Room sound fed before the "hey" (from just before you spoke), and the gap after it */
 const PROMPT_LEAD_MS = 480;
 const PROMPT_GAP_MS = 80;
+/**
+ * Nearest-voice focus: speech this much quieter than the voice that said "hey Jarvis" (people
+ * further away, a TV) is turned down before transcription. Measured from the strong part of the
+ * wake phrase, so ~13 dB below it still keeps the speaker's quieter syllables.
+ */
+const FOCUS_BELOW_DB = 13;
+/** ...turned down to this fraction (about -22 dB), not muted, so nothing sounds chopped */
+const FOCUS_ATTENUATION = 0.08;
+/** Keep this many 10 ms frames after a loud one, so word endings aren't clipped */
+const FOCUS_HANGOVER_FRAMES = 8;
+
+/**
+ * Turn down the frames quieter than the gate (other voices), keeping a short tail after loud
+ * frames. Returns the new audio and how many frames passed (the focused speaker talking).
+ */
+function applyFocus(
+  audio: Float32Array,
+  frameDb: Float32Array,
+  gateDb: number,
+  state: { hang: number },
+  frameLen: number
+): { audio: Float32Array; loudFrames: number } {
+  const out = new Float32Array(audio.length);
+  let loudFrames = 0;
+  for (let f = 0; f < frameDb.length; f++) {
+    const loud = frameDb[f] >= gateDb;
+    if (loud) {
+      loudFrames++;
+      state.hang = FOCUS_HANGOVER_FRAMES;
+    }
+    const keep = loud || state.hang-- > 0;
+    const gain = keep ? 1 : FOCUS_ATTENUATION;
+    const end = Math.min(audio.length, (f + 1) * frameLen);
+    for (let i = f * frameLen; i < end; i++) out[i] = audio[i] * gain;
+  }
+  // Samples after the last whole frame follow the last decision
+  const tail = frameDb.length * frameLen;
+  const tailGain = state.hang > 0 ? 1 : FOCUS_ATTENUATION;
+  for (let i = tail; i < audio.length; i++) out[i] = audio[i] * tailGain;
+  return { audio: out, loudFrames };
+}
 
 
 export interface BuiltInListeningOptions extends UseSpeechRecognitionOptions {
@@ -104,6 +145,9 @@ type CaptureState = {
    * until the transcript confirms it starts with "Jarvis"; dropped quietly otherwise.
    */
   needsConfirm: boolean;
+  /** Nearest-voice focus: frames below this level (dB) are turned down; null = off */
+  gateDb: number | null;
+  gateState: { hang: number };
 };
 
 export function useBuiltInListening(opts: BuiltInListeningOptions) {
@@ -135,7 +179,9 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
   const lastSpeechChunkAtRef = useRef(0);
   const promptWindowRef = useRef<{ onsetAt: number; until: number } | null>(null);
   const captureRef = useRef<CaptureState | null>(null);
-  const preRollRef = useRef<{ audio: Float32Array; speechMs: number }[]>([]);
+  const preRollRef = useRef<{ audio: Float32Array; speechMs: number; frameDb: Float32Array }[]>([]);
+  /** How loud the person who said "hey Jarvis" was (dB), for follow-ups in the same conversation */
+  const speakerLevelRef = useRef<{ db: number; at: number } | null>(null);
   const lastWakeRef = useRef(0);
   const noiseFloorRef = useRef(-60);
   // Quietest 10 ms frames of the last few seconds: lets the noise floor rise in a noisy room
@@ -177,7 +223,8 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       builtInStats.detections++;
       logEvent('wake', `"Jarvis" confirmed by transcript (${via})`);
     }
-    const text = stripWakePhrase(raw);
+    // Talk from before "hey Jarvis" (the recording starts ~2 s early) is not part of the command
+    const { command: text, hadWakePhrase } = commandAfterWakePhrase(raw);
     const afterSpeechMs = cap.lastSpeechAt ? Date.now() - cap.lastSpeechAt : 0;
     builtInStats.transcriptions++;
     builtInStats.lastTranscriptMs = afterSpeechMs;
@@ -192,7 +239,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     }
     setTranscript(text);
     // "hey Jarvis" said (or the capture began with it): a fresh request, not a follow-up reply
-    live.current.onFinalSubmit?.(text, { wakeWord: cap.kind === 'wake' || startsWithWakePhrase(raw) });
+    live.current.onFinalSubmit?.(text, { wakeWord: cap.kind === 'wake' || hadWakePhrase });
     return true;
   }, []);
 
@@ -287,10 +334,39 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       pre.unshift(preRollRef.current[i]);
       ms += (preRollRef.current[i].audio.length / WAKE_SAMPLE_RATE) * 1000;
     }
+    // Nearest-voice focus: how loud the wake phrase was (the speaker's level), from the pre-roll
+    let gateDb: number | null = null;
+    if (getFocusNearestVoice()) {
+      const floor = noiseFloorRef.current;
+      if (kind === 'wake') {
+        // The wake phrase is in the last ~1.6 s before detection; earlier pre-roll may be other people
+        const speech: number[] = [];
+        let msBack = 0;
+        for (let i = pre.length - 1; i >= 0 && msBack < 1600; i--) {
+          for (const db of pre[i].frameDb) if (db > floor + 12) speech.push(db);
+          msBack += (pre[i].audio.length / WAKE_SAMPLE_RATE) * 1000;
+        }
+        if (speech.length >= 20) {
+          speech.sort((a, b) => a - b);
+          // The stronger part of the wake phrase (vowels), not its quiet consonants
+          const level = speech[Math.floor(speech.length * 0.85)];
+          speakerLevelRef.current = { db: level, at: Date.now() };
+        }
+      }
+      const level = speakerLevelRef.current;
+      // Follow-ups reuse the level from this conversation's wake phrase (within a few minutes)
+      if (level && (kind === 'wake' || (kind === 'follow-up' && Date.now() - level.at < 5 * 60_000))) {
+        gateDb = Math.max(level.db - FOCUS_BELOW_DB, floor + 10);
+      }
+    }
+    const gateState = { hang: 0 };
+    const frameLen = Math.round((WAKE_SAMPLE_RATE * FRAME_MS) / 1000);
+    const preAudio = pre.map((p) => (gateDb === null ? p.audio : applyFocus(p.audio, p.frameDb, gateDb, gateState, frameLen).audio));
+
     const cap: CaptureState = {
       kind,
       startedAt: Date.now(),
-      audio: pre.map((p) => p.audio),
+      audio: preAudio,
       speechStarted: false,
       lastSpeechAt: 0,
       speechMs: 0,
@@ -301,6 +377,8 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       forcedAt: 0,
       liveHeardWords: false,
       needsConfirm: Boolean(confirm),
+      gateDb,
+      gateState,
     };
 
     if (getLiveTranscription() && !liveTranscriptionUnavailable()) {
@@ -314,7 +392,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
               if (check === 'wait') return;
               confirmWake(cap, 'live');
             }
-            setInterimTranscript(stripWakePhrase(t) || '…');
+            setInterimTranscript(commandAfterWakePhrase(t).command || '…');
           }
         },
         onEndOfTurn: (t, trigger) => {
@@ -324,7 +402,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
             if (t && jarvisCheck(t, true) === 'yes') confirmWake(cap, 'live');
             else if (t) return rejectWake(cap, t);
           }
-          const command = stripWakePhrase(t);
+          const command = commandAfterWakePhrase(t).command;
           if (!command) {
             if (trigger === 'manual' && !cap.liveHeardWords) {
               // We asked it to end and it heard no words: a noise blip, not speech
@@ -355,7 +433,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
           }
         },
       });
-      for (const p of pre) cap.live.send(p.audio);
+      for (const a of preAudio) cap.live.send(a);
     }
 
     captureRef.current = cap;
@@ -418,10 +496,12 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       // as speech and the floor would never catch up.
       let speechFrames = 0;
       const recentDb = recentDbRef.current;
-      for (let f = 0; f + frameLen <= audio.length; f += frameLen) {
+      const frameDb = new Float32Array(Math.floor(audio.length / frameLen));
+      for (let f = 0, k = 0; f + frameLen <= audio.length; f += frameLen, k++) {
         let e = 0;
         for (let i = 0; i < frameLen; i++) e += audio[f + i] * audio[f + i];
         const db = 10 * Math.log10(e / frameLen + 1e-10);
+        frameDb[k] = db;
         recentDb.push(db);
         const isSpeech = db > noiseFloorRef.current + 12 && db > -55;
         if (isSpeech) speechFrames++;
@@ -433,10 +513,10 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         if (quietest > noiseFloorRef.current + 3) noiseFloorRef.current = quietest;
       }
       const chunkMs = (audio.length / WAKE_SAMPLE_RATE) * 1000;
-      const chunkHasSpeech = speechFrames >= 2;
+      let chunkHasSpeech = speechFrames >= 2;
 
       // Pre-roll (audio + how much of it was speech), ~2 s
-      preRollRef.current.push({ audio, speechMs: speechFrames * FRAME_MS });
+      preRollRef.current.push({ audio, speechMs: speechFrames * FRAME_MS, frameDb });
       let preLen = preRollRef.current.reduce((n, a) => n + a.audio.length, 0);
       while (preLen > (WAKE_SAMPLE_RATE * PRE_ROLL_MS) / 1000 && preRollRef.current.length > 1) {
         preLen -= preRollRef.current.shift()!.audio.length;
@@ -446,9 +526,17 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       const cap = captureRef.current;
       if (cap) {
         // Don't record Jarvis himself (a reply that starts while we're capturing)
+        // Nearest-voice focus: other (quieter) voices are turned down, and only the focused
+        // speaker counts as "talking" for the end-of-command timing
+        let captured = audio;
+        if (cap.gateDb !== null) {
+          const focused = applyFocus(audio, frameDb, cap.gateDb, cap.gateState, frameLen);
+          captured = focused.audio;
+          chunkHasSpeech = focused.loudFrames >= 2;
+        }
         if (!L.isJarvisSpeaking || cap.kind !== 'follow-up') {
-          cap.audio.push(audio);
-          if (!cap.liveFailed) cap.live?.send(audio);
+          cap.audio.push(captured);
+          if (!cap.liveFailed) cap.live?.send(captured);
         }
         if (chunkHasSpeech) {
           if (!cap.speechStarted && !cap.needsConfirm) setInterimTranscript((t) => t || '…'); // you're talking: the window stays open

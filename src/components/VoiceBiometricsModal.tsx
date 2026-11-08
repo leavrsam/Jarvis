@@ -23,7 +23,7 @@ import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
 import { builtInStats, getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
 import { getListeningEngine, ListeningEngine, setListeningEngine } from '../services/listeningEngine';
-import { EchoCancelMode, getEchoCancelMode, getLiveTranscription, getReleaseMicWhileSpeaking, isAndroid, setEchoCancelMode, setLiveTranscription, setReleaseMicWhileSpeaking, wantsEchoCancellation } from '../services/micSettings';
+import { EchoCancelMode, getEchoCancelMode, getFocusNearestVoice, getLiveTranscription, getReleaseMicWhileSpeaking, isAndroid, setEchoCancelMode, setFocusNearestVoice, setLiveTranscription, setReleaseMicWhileSpeaking, wantsEchoCancellation } from '../services/micSettings';
 import { liveTranscriptionUnavailable } from '../services/liveTranscriber';
 
 interface VoiceBiometricsModalProps {
@@ -274,6 +274,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
             </div>
             <EchoCancelSetting />
             {engine === 'builtin' && <LiveTranscriptionSetting />}
+            {engine === 'builtin' && <FocusSetting />}
             {engine === 'builtin' ? <BuiltInStatus /> : (
               <>
                 <ListenerStatus micPaused={micPaused} />
@@ -756,6 +757,30 @@ const LiveTranscriptionSetting: React.FC = () => {
           Transcribes while you talk (Deepgram Flux), which also hears when you've finished your sentence. Off: records,
           then uploads after you stop (about a second slower).
           {on && unavailable && <span className="block text-red-400">Not available right now: {unavailable}. Using uploads.</span>}
+        </span>
+      </span>
+    </label>
+  );
+};
+
+const FocusSetting: React.FC = () => {
+  const [on, setOn] = useState(() => getFocusNearestVoice());
+  return (
+    <label className="flex items-start gap-2 text-[10px] text-amber-300">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setFocusNearestVoice(e.target.checked);
+          setOn(e.target.checked);
+        }}
+        className="mt-0.5 accent-amber-400"
+      />
+      <span>
+        <span className="text-amber-200 font-bold">Focus on the voice that said "hey Jarvis"</span>
+        <span className="block text-amber-500">
+          Voices noticeably quieter than yours (people across the room, a TV) are turned down while Jarvis listens to your command.
+          Anything said before "hey Jarvis" is always left out. Turn this off if Jarvis misses words when you speak softly.
         </span>
       </span>
     </label>
