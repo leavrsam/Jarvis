@@ -934,14 +934,15 @@ export const ArcReactorVisualizer: React.FC<ArcReactorVisualizerProps> = ({
       gyroTickMat.color.lerp(targetMid, 0.14);
       gyroRing2Mat.color.lerp(targetSec, 0.14);
 
-      // Orbiting beacon sparks along inclined track
+      // Orbiting beacon sparks along inclined track. Each has its own speed, so they drift past
+      // one another; kept slow (a lap every ~12-25 s) so the motion stays calm, not distracting.
       const bPosAttr = beaconGeom.attributes.position as THREE.BufferAttribute;
       const bPosArr = bPosAttr.array as Float32Array;
       for (let b = 0; b < beaconCount; b++) {
-        const beaconAngle = time * (0.8 + b * 0.2) + (b * Math.PI * 2) / beaconCount;
+        const beaconAngle = time * (0.25 + b * 0.05) + (b * Math.PI * 2) / beaconCount;
         bPosArr[b * 3] = Math.cos(beaconAngle) * gyroRingRadius;
         bPosArr[b * 3 + 1] = Math.sin(beaconAngle) * gyroRingRadius;
-        bPosArr[b * 3 + 2] = Math.sin(time * 3 + b) * 0.12;
+        bPosArr[b * 3 + 2] = Math.sin(time * 1 + b) * 0.12;
       }
       bPosAttr.needsUpdate = true;
       beaconMat.color.lerp(targetCore, 0.14);
