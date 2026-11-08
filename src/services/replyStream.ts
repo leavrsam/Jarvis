@@ -54,8 +54,8 @@ export function checkLeadingDirective(text: string, final: boolean): DirectiveCh
   const match = LEADING_DIRECTIVE_RE.exec(text);
   if (match) {
     const end = match[0].length;
-    // A camera name runs to the end of its line, which may not have arrived yet
-    if (!final && /^SHOW_CAMERA/i.test(match[0]) && !text.slice(end).includes('\n')) return { kind: 'pending' };
+    // A camera name / image search runs to the end of its line, which may not have arrived yet
+    if (!final && /^SHOW_(?:CAMERA|IMAGE_SEARCH)/i.test(match[0]) && !text.slice(end).includes('\n')) return { kind: 'pending' };
     // The id/number may still be arriving unless something follows it (or the stream is over)
     const next = text[end];
     if (next === undefined && !final) return { kind: 'pending' };

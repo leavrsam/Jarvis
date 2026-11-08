@@ -70,6 +70,15 @@ describe('parseDirective: screen', () => {
     expect(parseDirective('SHOW_CAMERA: ')).toBeNull();
   });
 
+  it('parses SHOW_IMAGE_SEARCH, with or without brackets/quotes', () => {
+    expect(parseDirective('SHOW_IMAGE_SEARCH: snow leopard')).toEqual({ type: 'show-image-search', query: 'snow leopard' });
+    expect(parseDirective('SHOW_IMAGE_SEARCH: [a fluffy sheep]')).toEqual({ type: 'show-image-search', query: 'a fluffy sheep' });
+    expect(parseDirective('SHOW_IMAGE_SEARCH: "Eiffel Tower at night"')).toEqual({ type: 'show-image-search', query: 'Eiffel Tower at night' });
+    expect(parseDirective('SHOW_IMAGE_SEARCH: ')).toBeNull();
+    expect(parseDirective('SHOW_IMAGE_SEARCH: ' + 'x'.repeat(101))).toBeNull();
+    expect(isScreenDirective(parseDirective('SHOW_IMAGE_SEARCH: cats')!)).toBe(true);
+  });
+
   it('parses CLEAR_SCREEN', () => {
     expect(parseDirective('CLEAR_SCREEN')).toEqual({ type: 'clear-screen' });
   });
@@ -143,6 +152,13 @@ describe('ReplyStreamProcessor directives', () => {
     expect(r.directives).toEqual(['SHOW_CAMERA: front door']);
     expect(parseDirective(r.directives[0])).toEqual({ type: 'show-camera', camera: 'front door' });
     expect(r.sentences).toEqual(['Here is the front door, sir.']);
+  });
+
+  it('waits for the whole SHOW_IMAGE_SEARCH line when it streams in', () => {
+    const r = run(['SHOW_IMAGE', '_SEARCH: snow ', 'leopard\nA snow leopard, ', 'sir.']);
+    expect(r.directives).toEqual(['SHOW_IMAGE_SEARCH: snow leopard']);
+    expect(r.sentences).toEqual(['A snow leopard, sir.']);
+    expect(r.display).toBe('A snow leopard, sir.');
   });
 
   it('handles SHOW_VIDEO and CLEAR_SCREEN', () => {

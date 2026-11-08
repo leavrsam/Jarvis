@@ -207,6 +207,7 @@ of a reply, one per line. They are carried out and never spoken or shown in the 
 
 | Directive | What it does |
 | --- | --- |
+| `SHOW_IMAGE_SEARCH: <what to show>` | **The default for "show me a picture of…".** The app finds a real, openly licensed photo (Openverse, then Wikimedia Commons; no keys needed) and shows it with a small credit line. Language models invent image URLs that don't exist, so Jarvis should only name what to show. |
 | `SHOW_IMAGE: <https url>` | Shows the image, fading in. Stays until `CLEAR_SCREEN`, another `SHOW_*`, the ✕ button, or 3 minutes. |
 | `SHOW_VIDEO: <https url>` | Plays a direct video file (mp4/webm) with controls. It is muted while Jarvis talks or listens, like YouTube's volume ducking. Close it with ✕. |
 | `SHOW_CAMERA: <camera name>` | Shows a snapshot from `/api/camera`, with its caption ("Live" or "Last motion 2:39 PM"), a refresh button, and an automatic refresh every 60 s. Closes after 3 minutes. |
@@ -219,6 +220,10 @@ Example reply: `SHOW_CAMERA: front door` on the first line, then `Here's the fro
 - If an image, video or camera snapshot fails to load, the screen shows "Couldn't load that …".
 - On wide displays (the kiosk/TV), the screen fills the left side, the reactor moves to the right,
   and the subtitles stay at the bottom.
+
+**Image search:** `GET /api/image-search?q=<what>` (same-origin, login, 20/min) searches Openverse
+(photographs first), falls back to Wikimedia Commons, and returns the first of the top results
+that actually loads, with title, creator, licence and source. Results are cached for 30 minutes.
 
 **Camera proxy:** `GET /api/camera?camera=<name>` calls `JARVIS_MEDIA_URL?camera=<name>` with the
 `X-Jarvis-Key: JARVIS_WEBHOOK_SECRET` header (the same secret as the command proxy). It returns
@@ -235,13 +240,13 @@ The directive parser lives in `src/services/directives.ts` and its tests in
 
 ## 🔒 Server Route Protection
 
-All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/camera`) share `api/_lib/requestGuard.js`:
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/image-search`, `/api/camera`) share `api/_lib/requestGuard.js`:
 
 - **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
   `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
   No CORS headers are sent, so other sites' pages can't call these routes. Add extra origins with
   `JARVIS_ALLOWED_ORIGINS` (comma-separated) if you ever need to.
-- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/stt-token` 60/min, `/api/camera` 30/min
+- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/stt-token` 60/min, `/api/image-search` 20/min, `/api/camera` 30/min
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
 - All of them also require a logged-in session (see **Server-Side Login**).

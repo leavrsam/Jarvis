@@ -4,6 +4,7 @@ import type { Directive } from './directives';
 
 export type ScreenContent =
   | { kind: 'image'; url: string }
+  | { kind: 'image-search'; query: string }
   | { kind: 'video'; url: string }
   | { kind: 'camera'; camera: string };
 
@@ -55,6 +56,9 @@ export function applyScreenDirective(d: Directive): boolean {
   switch (d.type) {
     case 'show-image':
       showOnScreen({ kind: 'image', url: d.url });
+      return true;
+    case 'show-image-search':
+      showOnScreen({ kind: 'image-search', query: d.query });
       return true;
     case 'show-video':
       showOnScreen({ kind: 'video', url: d.url });

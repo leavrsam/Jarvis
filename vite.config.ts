@@ -15,6 +15,8 @@ import transcribeHandler from './api/transcribe.js';
 import cameraHandler from './api/camera.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import sttTokenHandler from './api/stt-token.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import imageSearchHandler from './api/image-search.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -77,6 +79,10 @@ export default defineConfig(({ mode }) => {
           // Short-lived Deepgram token for live transcription
           server.middlewares.use('/api/stt-token', (req, res) => {
             void sttTokenHandler(req, res);
+          });
+          // Image search for SHOW_IMAGE_SEARCH
+          server.middlewares.use('/api/image-search', (req, res) => {
+            void imageSearchHandler(req, res);
           });
         },
       },

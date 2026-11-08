@@ -17,6 +17,9 @@
     },
     "api/stt-token.js": {
       "maxDuration": 10
+    },
+    "api/image-search.js": {
+      "maxDuration": 20
     }
   }
 }

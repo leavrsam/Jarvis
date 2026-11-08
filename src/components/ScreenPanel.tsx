@@ -34,6 +34,7 @@ export const ScreenPanel: React.FC = () => {
         <div className="absolute bottom-0 left-0 w-3.5 h-3.5 border-b-2 border-l-2 border-amber-400 z-10" />
         <div className="absolute bottom-0 right-0 w-3.5 h-3.5 border-b-2 border-r-2 border-amber-400 z-10" />
         {content.kind === 'image' && <ImageView url={content.url} />}
+        {content.kind === 'image-search' && <ImageSearchView query={content.query} />}
         {content.kind === 'video' && <VideoView url={content.url} />}
         {content.kind === 'camera' && <CameraView camera={content.camera} />}
       </div>
@@ -101,13 +102,15 @@ const LoadError: React.FC<{ what: string }> = ({ what }) => (
   </div>
 );
 
-const ImageView: React.FC<{ url: string }> = ({ url }) => {
+type ImageCredit = { title: string; creator: string; license: string; source: string };
+
+const ImageView: React.FC<{ url: string; label?: string; credit?: ImageCredit }> = ({ url, label = 'IMAGE', credit }) => {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   useIdleClose();
   return (
     <>
-      <TopBar label="IMAGE" />
+      <TopBar label={label} />
       {!failed && (
         <img
           src={url}
@@ -119,6 +122,57 @@ const ImageView: React.FC<{ url: string }> = ({ url }) => {
         />
       )}
       {failed && <LoadError what="image" />}
+      {credit && loaded && !failed && (
+        <div className="absolute bottom-0 inset-x-0 px-3 py-1.5 bg-gradient-to-t from-black/85 to-transparent text-[10px] font-mono-tech text-amber-300/80 truncate">
+          {[credit.title, credit.creator && `by ${credit.creator}`, credit.license, credit.source].filter(Boolean).join(' · ')}
+        </div>
+      )}
+    </>
+  );
+};
+
+/** SHOW_IMAGE_SEARCH: find a real photo of the query (server side), then show it */
+const ImageSearchView: React.FC<{ query: string }> = ({ query }) => {
+  const [result, setResult] = useState<(ImageCredit & { url: string }) | null>(null);
+  const [status, setStatus] = useState<'searching' | 'found' | 'none'>('searching');
+  useIdleClose(status === 'none');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setStatus('searching');
+    setResult(null);
+    fetch(`/api/image-search?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (res.status === 401) {
+          notifyAuthRequired();
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && typeof data.url === 'string' && data.url.startsWith('https://')) {
+          setResult(data);
+          setStatus('found');
+        } else {
+          setStatus('none');
+        }
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          console.warn('[Screen] image search failed:', err);
+          setStatus('none');
+        }
+      });
+    return () => controller.abort();
+  }, [query]);
+
+  if (status === 'found' && result) return <ImageView url={result.url} label={query.toUpperCase()} credit={result} />;
+  return (
+    <>
+      <TopBar label={query.toUpperCase()} />
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="px-3 py-2 rounded border border-amber-700/60 bg-black/70 text-xs text-amber-300 font-mono-tech">
+          {status === 'searching' ? `Finding a picture of ${query}…` : `Couldn't find a picture of ${query}.`}
+        </span>
+      </div>
     </>
   );
 };

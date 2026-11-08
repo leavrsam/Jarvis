@@ -374,7 +374,7 @@ export const App: React.FC = () => {
     let firstTextMs: number | null = null;
     let firstAudioMs: number | null = null;
     const reply = new ReplyStreamProcessor({
-      // Directives (PLAY_YOUTUBE: <id>, SHOW_IMAGE: <url>, CLEAR_SCREEN, ...) are executed, never spoken
+      // Directives (PLAY_YOUTUBE: <id>, SHOW_IMAGE_SEARCH: <what>, CLEAR_SCREEN, ...) are executed, never spoken
       onDirective: (directive) => {
         const parsed = parseDirective(directive);
         if (parsed && applyScreenDirective(parsed)) {
@@ -819,7 +819,7 @@ export const App: React.FC = () => {
       {/* Futuristic Sci-Fi YouTube Audio Controller Widget */}
       <YouTubeMediaHUD />
 
-      {/* Jarvis's screen (SHOW_IMAGE / SHOW_VIDEO / SHOW_CAMERA) */}
+      {/* Jarvis's screen (SHOW_IMAGE / SHOW_IMAGE_SEARCH / SHOW_VIDEO / SHOW_CAMERA) */}
       <ScreenPanel />
 
       {/* Center Holographic Arc-Reactor Three.js Visualizer (moves right while the screen is up) */}
