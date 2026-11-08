@@ -644,8 +644,12 @@ export const App: React.FC = () => {
     if (jarvisBusy) {
       voiceCapture.release();
       audioEngine.stopMicListening();
-    } else if (!voiceBiometrics.isMicPaused()) {
-      void voiceCapture.start();
+      // Once Android has left call mode, the next sound opens a fresh playback output so the
+      // reply plays as media (the TV), not through the call route the old output was opened on
+      audioEngine.scheduleOutputReset(250);
+    } else {
+      audioEngine.cancelOutputReset();
+      if (!voiceBiometrics.isMicPaused()) void voiceCapture.start();
     }
   }, [isAuthenticated, releaseMic, jarvisBusy]);
 

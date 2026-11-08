@@ -432,7 +432,30 @@ class JarvisAudioEngine {
     return this.voiceTuning.style.trim() || this.selectedPreset.style;
   }
 
+  /** Reset the playback output before the next sound (see resetOutput), once this time has passed */
+  private outputResetAt = 0;
+
+  /**
+   * The mic was just closed (Android call-mode workaround): the next sound, from `delayMs` on,
+   * opens a fresh output. The delay gives Android time to leave call mode.
+   */
+  public scheduleOutputReset(delayMs = 250) {
+    this.outputResetAt = Date.now() + delayMs;
+  }
+
+  public cancelOutputReset() {
+    this.outputResetAt = 0;
+  }
+
   public ensureContext(): AudioContext {
+    if (this.outputResetAt) {
+      // Before the delay something already needs the current output (e.g. a reply clip that
+      // started very fast): keep it, rather than close it under that sound
+      if (Date.now() >= this.outputResetAt && this.resetOutput()) {
+        console.info('[JarvisAudioEngine] Playback output reopened after the mic closed');
+      }
+      this.outputResetAt = 0;
+    }
     if (!this.ctx) {
       const AudioCtx =
         window.AudioContext ||
@@ -467,6 +490,29 @@ class JarvisAudioEngine {
       osc.start();
       this.keepAliveOsc = osc;
     } catch {}
+  }
+
+  /**
+   * Drop the playback context so the next sound opens a fresh one. On Android, Chrome sets up
+   * an audio output for "call" or "media" depending on whether a mic is open at that moment, and
+   * keeps it that way. After the mic is closed, a fresh context plays as media (through the TV
+   * on DeX). Skipped while Jarvis is speaking.
+   */
+  public resetOutput(): boolean {
+    if (!this.ctx) return false;
+    if (this.speechLog.some((e) => e.endedAt === null) || this.activeSourceNode || this.isTtsActive) return false;
+    const old = this.ctx;
+    try {
+      this.micSource?.disconnect();
+    } catch {}
+    this.micSource = null;
+    this.keepAliveOsc = null;
+    this.analyser = null;
+    this.freqData = null;
+    this.timeData = null;
+    this.ctx = null;
+    void old.close().catch(() => {});
+    return true;
   }
 
   public getAnalyser(): AnalyserNode | null {
