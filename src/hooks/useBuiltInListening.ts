@@ -15,6 +15,7 @@ import { isLikelyEcho } from '../services/echoMatch';
 import { notifyAuthRequired } from '../services/auth';
 import { LiveTurn, liveTranscriptionUnavailable, prefetchLiveToken } from '../services/liveTranscriber';
 import { getLiveTranscription } from '../services/micSettings';
+import { startsWithWakePhrase, stripWakePhrase } from '../services/wakePhrase';
 import type { UseSpeechRecognitionOptions } from './useSpeechRecognition';
 
 /** Trigger level. "Hey Jarvis" scored 0.99-1.00; near-misses like "hey Travis" reached 0.72. */
@@ -41,7 +42,6 @@ const LIVE_FORCE_END_AFTER_MS = 2000;
 /** ...and if it still hasn't answered this long after being asked, upload the recording instead */
 const LIVE_GIVE_UP_AFTER_MS = 1500;
 
-export const WAKE_PREFIX = /^\s*(?:(?:hey|ok|hi)\s+)?(?:jarvis|travis|jervis)[,.!\s]*/i;
 
 export interface BuiltInListeningOptions extends UseSpeechRecognitionOptions {
   /** Run this engine (the browser engine is used otherwise) */
@@ -88,6 +88,8 @@ type CaptureState = {
   liveFailed: boolean;
   /** When we asked Flux to end the turn (0: not asked) */
   forcedAt: number;
+  /** Flux has heard words in this capture (if not, a noise blip isn't worth uploading) */
+  liveHeardWords: boolean;
 };
 
 export function useBuiltInListening(opts: BuiltInListeningOptions) {
@@ -145,7 +147,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
 
   /** Hand a transcript to the app (shared by live and upload paths). False if nothing usable. */
   const deliver = useCallback((cap: CaptureState, raw: string, via: string): boolean => {
-    const text = raw.replace(WAKE_PREFIX, '').trim();
+    const text = stripWakePhrase(raw);
     const afterSpeechMs = cap.lastSpeechAt ? Date.now() - cap.lastSpeechAt : 0;
     builtInStats.transcriptions++;
     builtInStats.lastTranscriptMs = afterSpeechMs;
@@ -158,7 +160,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     }
     setTranscript(text);
     // "hey Jarvis" said (or the capture began with it): a fresh request, not a follow-up reply
-    live.current.onFinalSubmit?.(text, { wakeWord: cap.kind === 'wake' || WAKE_PREFIX.test(raw) });
+    live.current.onFinalSubmit?.(text, { wakeWord: cap.kind === 'wake' || startsWithWakePhrase(raw) });
     return true;
   }, []);
 
@@ -203,6 +205,25 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     }
   }, [deliver, endCapture, toStandby]);
 
+  /** The mic picked up sound but live transcription heard no words: treat it as silence */
+  const noWordsHeard = useCallback((cap: CaptureState) => {
+    if (captureRef.current !== cap) return;
+    const waited = Date.now() - cap.startedAt;
+    if (waited < cap.waitMs) {
+      // Still inside the window: keep listening for real speech
+      cap.speechStarted = false;
+      cap.speechMs = 0;
+      cap.preSpeechMs = 0;
+      cap.forcedAt = 0;
+      setInterimTranscript('');
+      return;
+    }
+    logEvent('wake', 'Sound but no words; standing by');
+    endCapture(cap);
+    toStandby();
+    live.current.onFollowUpTimeout?.();
+  }, [endCapture, toStandby]);
+
   const beginCapture = useCallback((kind: CaptureState['kind'], waitMs?: number) => {
     const previous = captureRef.current;
     if (previous) endCapture(previous);
@@ -227,20 +248,25 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       live: null,
       liveFailed: false,
       forcedAt: 0,
+      liveHeardWords: false,
     };
 
     if (getLiveTranscription() && !liveTranscriptionUnavailable()) {
       cap.live = new LiveTurn({
         onUpdate: (t) => {
-          if (captureRef.current === cap) setInterimTranscript(t.replace(WAKE_PREFIX, '').trim() || '…');
+          if (captureRef.current === cap) {
+            cap.liveHeardWords = true;
+            setInterimTranscript(stripWakePhrase(t) || '…');
+          }
         },
         onEndOfTurn: (t, trigger) => {
           if (captureRef.current !== cap) return;
-          const command = t.replace(WAKE_PREFIX, '').trim();
+          if (t) cap.liveHeardWords = true;
+          const command = stripWakePhrase(t);
           if (!command) {
-            if (trigger === 'manual' && cap.speechMs >= 250) {
-              // Asked to end, nothing came back: try the recording instead
-              void finishWithUpload(cap);
+            if (trigger === 'manual' && !cap.liveHeardWords) {
+              // We asked it to end and it heard no words: a noise blip, not speech
+              noWordsHeard(cap);
               return;
             }
             // Only "hey Jarvis" so far (a pause before the command): keep listening for it
@@ -275,7 +301,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     setIsListening(true);
     setTranscript('');
     setInterimTranscript('');
-  }, [deliver, endCapture, finishWithUpload, toStandby]);
+  }, [deliver, endCapture, finishWithUpload, noWordsHeard, toStandby]);
 
   // Get a live-transcription token while Jarvis talks, so the follow-up connects instantly
   useEffect(() => {
@@ -369,8 +395,13 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
             cap.forcedAt = now;
             cap.live!.forceEndTurn();
           } else if (cap.forcedAt && now - cap.forcedAt > LIVE_GIVE_UP_AFTER_MS) {
-            cap.liveFailed = true;
-            void finishWithUpload(cap);
+            if (cap.live!.isOpen && !cap.liveHeardWords) {
+              // Connected and listening, but no words: it was noise (or Jarvis's echo tail)
+              noWordsHeard(cap);
+            } else {
+              cap.liveFailed = true;
+              void finishWithUpload(cap);
+            }
           }
         } else {
           const endAfter = cap.speechStarted ? END_SILENCE_MS : SHORT_COMMAND_WAIT_MS;

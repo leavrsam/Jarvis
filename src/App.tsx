@@ -47,6 +47,8 @@ const CONVERSATION_END_EXACT = /^(?:ok(?:ay)?[, ]*)?(?:thanks|thank you|thanks a
  */
 const FOLLOW_UP_AFTER_QUESTION_MS = 6000;
 const FOLLOW_UP_AFTER_STATEMENT_MS = 3000;
+/** A follow-up voice scoring below this against every known profile is treated as someone else */
+const FOLLOW_UP_STRANGER_SCORE = 0.3;
 
 /** Did the reply end by asking the user something? */
 function replyAsksQuestion(text: string): boolean {
@@ -294,10 +296,13 @@ export const App: React.FC = () => {
     if (source === 'voice') {
       const heardId = speakerResult.reason === 'match' ? speakerResult.matchedProfile?.id ?? null : null;
       const convo = conversationSpeakerRef.current;
+      // Different person = voice ID matched someone else, or the voice is clearly unlike anyone
+      // known. A weak score (e.g. 0.47 on a different mic) is NOT enough: that's often the owner.
       const differentPerson =
         isFollowUp &&
         convo !== null &&
-        ((heardId !== null && heardId !== convo.id) || (speakerResult.reason === 'no-match' && speakerResult.speechSeconds >= 1));
+        ((heardId !== null && heardId !== convo.id) ||
+          (speakerResult.reason === 'no-match' && speakerResult.confidence < FOLLOW_UP_STRANGER_SCORE && speakerResult.speechSeconds >= 1.5));
       if (differentPerson) {
         logEvent('voice-id', `Follow-up ignored: ${speakerResult.name} isn't ${convo!.name}, who started this conversation ("${trimmedQuery.slice(0, 40)}")`);
         inConversationRef.current = false;
