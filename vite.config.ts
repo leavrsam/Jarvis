@@ -20,6 +20,16 @@ import imageSearchHandler from './api/image-search.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import calendarHandler from './api/calendar.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
+import feedHandler from './api/feed.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import newsHandler from './api/news.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import marketsHandler from './api/markets.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import sportsHandler from './api/sports.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import commuteHandler from './api/commute.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
 import pushHandler from './api/push.js';
 
 // https://vite.dev/config/
@@ -44,6 +54,14 @@ export default defineConfig(({ mode }) => {
     'JARVIS_WEBHOOK_SECRET',
     'JARVIS_MEDIA_URL',
     'JARVIS_CALENDAR_URL',
+    'JARVIS_FEEDS_URL',
+    'JARVIS_FEED_SHOPPING_URL',
+    'JARVIS_FEED_TASKS_URL',
+    'JARVIS_FEED_HOME_URL',
+    'JARVIS_FEED_DELIVERIES_URL',
+    'JARVIS_FEED_DOORBELL_URL',
+    'JARVIS_FEED_PHOTOS_URL',
+    'GOOGLE_MAPS_API_KEY',
     'JARVIS_ALLOWED_ORIGINS',
     'JARVIS_LOGIN_PASSWORD',
     'JARVIS_SESSION_SECRET',
@@ -101,6 +119,18 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use('/api/calendar', (req, res) => {
             void calendarHandler(req, res);
           });
+          // Widget data: n8n feeds, headlines, markets, sports, commute
+          for (const [path, h] of [
+            ['/api/feed', feedHandler],
+            ['/api/news', newsHandler],
+            ['/api/markets', marketsHandler],
+            ['/api/sports', sportsHandler],
+            ['/api/commute', commuteHandler],
+          ] as const) {
+            server.middlewares.use(path, (req, res) => {
+              void h(req, res);
+            });
+          }
           // Push notifications (HUD) and /api/notify (n8n), as on Vercel's rewrite
           server.middlewares.use('/api/push', (req, res) => {
             void pushHandler(req, res);

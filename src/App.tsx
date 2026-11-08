@@ -31,6 +31,18 @@ import {
   WeekAheadWidget,
   WorldClocksWidget,
 } from './components/hud/ExtraWidgets';
+import {
+  CommuteWidget,
+  DeliveriesWidget,
+  DoorbellWidget,
+  HeadlinesWidget,
+  MarketsWidget,
+  PhotoFrameWidget,
+  ShoppingWidget,
+  SmartHomeWidget,
+  SportsWidget,
+  TasksWidget,
+} from './components/hud/MoreWidgets';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { streamJarvisCommand, JarvisBackendError } from './services/jarvisBackend';
 import { ReplyStreamProcessor } from './services/replyStream';
@@ -1010,6 +1022,26 @@ export const App: React.FC = () => {
         return <NotesWidget />;
       case 'spectrum':
         return <SpectrumWidget state={audioState} isListening={isListening} />;
+      case 'shopping':
+        return <ShoppingWidget />;
+      case 'tasks':
+        return <TasksWidget />;
+      case 'smartHome':
+        return <SmartHomeWidget />;
+      case 'deliveries':
+        return <DeliveriesWidget />;
+      case 'doorbell':
+        return <DoorbellWidget />;
+      case 'photoFrame':
+        return <PhotoFrameWidget />;
+      case 'headlines':
+        return <HeadlinesWidget />;
+      case 'markets':
+        return <MarketsWidget />;
+      case 'sports':
+        return <SportsWidget />;
+      case 'commute':
+        return <CommuteWidget />;
       case 'system':
         return (
           <SystemCard

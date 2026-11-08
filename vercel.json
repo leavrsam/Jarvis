@@ -26,6 +26,21 @@
     },
     "api/push.js": {
       "maxDuration": 20
+    },
+    "api/feed.js": {
+      "maxDuration": 20
+    },
+    "api/news.js": {
+      "maxDuration": 20
+    },
+    "api/markets.js": {
+      "maxDuration": 15
+    },
+    "api/sports.js": {
+      "maxDuration": 15
+    },
+    "api/commute.js": {
+      "maxDuration": 20
     }
   },
   "rewrites": [

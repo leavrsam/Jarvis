@@ -14,7 +14,17 @@ export type ExtraWidgetId =
   | 'weekAhead'
   | 'countdown'
   | 'notes'
-  | 'spectrum';
+  | 'spectrum'
+  | 'shopping'
+  | 'tasks'
+  | 'smartHome'
+  | 'deliveries'
+  | 'doorbell'
+  | 'photoFrame'
+  | 'headlines'
+  | 'markets'
+  | 'sports'
+  | 'commute';
 export type WidgetId = CoreWidgetId | ExtraWidgetId;
 
 export interface Rect {
@@ -73,6 +83,16 @@ export const WIDGETS: WidgetInfo[] = [
   { id: 'countdown', label: 'Countdown', description: 'Days until a date you choose.', minW: 200, minH: 110, mobile: true, defaultOn: false, size: { w: 280, h: 160 } },
   { id: 'notes', label: 'Note', description: 'A sticky note, saved on this device.', minW: 200, minH: 120, mobile: true, defaultOn: false, size: { w: 300, h: 220 } },
   { id: 'spectrum', label: 'Audio', description: 'A live audio spectrum of the mic and Jarvis.', minW: 220, minH: 90, mobile: true, defaultOn: false, size: { w: 360, h: 150 } },
+  { id: 'shopping', label: 'Shopping list', description: 'Your household list from n8n; tick items off or add one.', minW: 220, minH: 150, mobile: true, defaultOn: false, size: { w: 300, h: 300 } },
+  { id: 'tasks', label: 'Reminders', description: 'To-dos and reminders from n8n (e.g. Google Tasks).', minW: 220, minH: 140, mobile: true, defaultOn: false, size: { w: 300, h: 280 } },
+  { id: 'smartHome', label: 'Smart home', description: 'Lights, plugs, locks and temperatures from n8n; tap to toggle.', minW: 240, minH: 140, mobile: true, defaultOn: false, size: { w: 340, h: 260 } },
+  { id: 'deliveries', label: 'Deliveries', description: 'Packages on the way, from n8n.', minW: 220, minH: 120, mobile: true, defaultOn: false, size: { w: 300, h: 220 } },
+  { id: 'doorbell', label: 'Doorbell log', description: 'Recent camera and doorbell events from n8n.', minW: 220, minH: 140, mobile: true, defaultOn: false, size: { w: 300, h: 280 } },
+  { id: 'photoFrame', label: 'Photo frame', description: 'A slideshow: free photos of a topic, or your album via n8n.', minW: 200, minH: 140, mobile: true, defaultOn: false, size: { w: 380, h: 260 } },
+  { id: 'headlines', label: 'Headlines', description: 'Top stories from news sources you pick.', minW: 240, minH: 160, mobile: true, defaultOn: false, size: { w: 340, h: 320 } },
+  { id: 'markets', label: 'Markets', description: 'Stocks, indexes and crypto.', minW: 220, minH: 130, mobile: true, defaultOn: false, size: { w: 300, h: 230 } },
+  { id: 'sports', label: 'Sports', description: 'Your teams: record, live score, next game.', minW: 240, minH: 130, mobile: true, defaultOn: false, size: { w: 340, h: 230 } },
+  { id: 'commute', label: 'Commute', description: 'Drive time to a place you choose.', minW: 220, minH: 120, mobile: true, defaultOn: false, size: { w: 300, h: 170 } },
 ];
 
 export const widgetInfo = (id: WidgetId) => WIDGETS.find((w) => w.id === id)!;

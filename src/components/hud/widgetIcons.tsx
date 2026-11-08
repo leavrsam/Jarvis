@@ -16,6 +16,16 @@ import {
   Sunrise,
   Wind,
   Zap,
+  ShoppingCart,
+  ListChecks,
+  Lightbulb,
+  Package,
+  BellRing,
+  Image,
+  Newspaper,
+  TrendingUp,
+  Trophy,
+  Car,
 } from 'lucide-react';
 import type { WidgetId } from '../../services/hudLayout';
 
@@ -35,6 +45,16 @@ const ICONS: Record<WidgetId, React.ComponentType<{ className?: string }>> = {
   countdown: Hourglass,
   notes: StickyNote,
   spectrum: Activity,
+  shopping: ShoppingCart,
+  tasks: ListChecks,
+  smartHome: Lightbulb,
+  deliveries: Package,
+  doorbell: BellRing,
+  photoFrame: Image,
+  headlines: Newspaper,
+  markets: TrendingUp,
+  sports: Trophy,
+  commute: Car,
 };
 
 export const WidgetIcon: React.FC<{ id: WidgetId; className?: string }> = ({ id, className }) => {

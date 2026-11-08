@@ -263,6 +263,42 @@ the widget):
 - **Countdown:** days until a date you pick.
 - **Note:** a sticky note saved on the device.
 - **Audio:** a live spectrum of the mic and Jarvis's voice.
+- **Headlines:** top stories from sources you tick: NPR, BBC, NY Times, Guardian, Ars Technica,
+  The Verge, Hacker News, ESPN and KSL. Feeds are fetched by `/api/news`, from that fixed list only.
+- **Markets:** stocks, indexes and crypto (`^GSPC`, `^IXIC`, `AAPL`, `BTC-USD`…) via
+  `/api/markets` (Yahoo Finance chart data, no key, may be delayed).
+- **Sports:** your teams' record, the live score or last result, and the next game (ESPN's
+  public data via `/api/sports`). Pick the league and team from lists.
+- **Commute:** drive time from the device's location to an address. `/api/commute` uses
+  OpenStreetMap (Nominatim + OSRM, no traffic) unless `GOOGLE_MAPS_API_KEY` is set (Google
+  Routes API, live traffic).
+- **Photo frame:** a cross-fading slideshow of free photos of a topic (Openverse), or your own
+  album from the n8n `photos` feed.
+- **Shopping list, Reminders, Smart home, Deliveries, Doorbell log:** your own data from n8n
+  (below).
+
+### Widget feeds (n8n)
+
+These widgets read from n8n through `/api/feed?name=<feed>`. That route needs a login, accepts
+same-origin requests only, and is limited to 60 reads and 30 actions a minute. The server adds
+`X-Jarvis-Key: JARVIS_WEBHOOK_SECRET`. Point it at **one** webhook with `JARVIS_FEEDS_URL`, which
+is called with `?feed=shopping|tasks|home|deliveries|doorbell|photos`, or set
+`JARVIS_FEED_<NAME>_URL` for each feed. A feed whose URL isn't set shows "Not connected yet".
+
+GET returns JSON (n8n item arrays work too):
+
+| Feed | Response | Actions the HUD POSTs |
+| --- | --- | --- |
+| `shopping` | `{ items: [{ id, name, qty?, checked? }] }` | `{action:"check", id, checked}`, `{action:"add", name}`, `{action:"remove", id}` |
+| `tasks` | `{ tasks: [{ id, title, due? (date or ISO), done?, list? }] }` | `{action:"complete", id}`, `{action:"add", title}` |
+| `home` | `{ devices: [{ id, name, type: light\|switch\|plug\|fan\|lock\|thermostat\|sensor\|cover\|scene\|media, state, value?, unit?, room?, controllable? }] }` | `{action:"toggle", id}`, `{action:"set", id, value}` |
+| `deliveries` | `{ packages: [{ id, title, carrier?, status, eta?, url? }] }` | — |
+| `doorbell` | `{ events: [{ id, time (ISO), camera?, label?, imageUrl? }] }` | — |
+| `photos` | `{ photos: [{ url, caption? }] }` | — |
+
+Unknown fields are dropped and only `https` links are kept. Actions are checked against the list
+above before they're forwarded. Sensors can't be toggled, and **unlocking a lock needs a second
+tap** within 4 seconds.
 
 By default on wide screens (TV, desktop) the middle stays clear for the reactor:
 - **Left, at a glance:** a large clock and date with a greeting; local weather (Open-Meteo, now

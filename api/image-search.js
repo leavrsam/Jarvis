@@ -119,6 +119,34 @@ export default async function handler(req, res) {
     sendJson(res, 400, { error: 'bad_query' });
     return;
   }
+  // ?count=N (2-12): several photos for a slideshow (the photo frame widget). The page skips
+  // any that fail to load, so they aren't checked one by one here.
+  let count = 1;
+  try {
+    count = Math.max(1, Math.min(12, Number(new URL(req.url, 'http://localhost').searchParams.get('count')) || 1));
+  } catch {}
+  if (count > 1) {
+    const listKey = `list:${count}:${q.toLowerCase()}`;
+    const listHit = cache.get(listKey);
+    if (listHit && Date.now() - listHit.at < CACHE_MS) return sendJson(res, 200, listHit.result);
+    let results = [];
+    for (const [name, search] of [
+      ['openverse', searchOpenverse],
+      ['wikimedia', searchWikimedia],
+    ]) {
+      try {
+        results = results.concat(await search(q));
+      } catch (err) {
+        console.warn(`[/api/image-search] ${name} failed:`, err?.message || err);
+      }
+      if (results.length >= count) break;
+    }
+    if (!results.length) return sendJson(res, 404, { error: 'no_image' });
+    const result = { results: results.slice(0, count) };
+    cache.set(listKey, { at: Date.now(), result });
+    return sendJson(res, 200, result);
+  }
+
   const key = q.toLowerCase();
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) {

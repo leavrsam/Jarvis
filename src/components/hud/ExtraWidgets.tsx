@@ -13,7 +13,7 @@ import type { JarvisAudioState } from '../../services/audioEngine';
 // ---------------------------------------------------------------------------- shared bits
 
 /** A setting kept on this device */
-function useWidgetSetting<T>(key: string, fallback: T): [T, (v: T) => void] {
+export function useWidgetSetting<T>(key: string, fallback: T): [T, (v: T) => void] {
   const storageKey = `jarvis_widget_${key}`;
   const [value, setValue] = useState<T>(() => {
     try {
@@ -32,7 +32,7 @@ function useWidgetSetting<T>(key: string, fallback: T): [T, (v: T) => void] {
   return [value, save];
 }
 
-function useNow(ms: number) {
+export function useNow(ms: number) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), ms);
@@ -41,7 +41,7 @@ function useNow(ms: number) {
   return now;
 }
 
-const Card: React.FC<{
+export const Card: React.FC<{
   title: string;
   right?: React.ReactNode;
   onSettings?: () => void;
@@ -70,7 +70,7 @@ const Card: React.FC<{
   </div>
 );
 
-const inputClass =
+export const inputClass =
   'w-full bg-black/40 border border-amber-900/60 focus:border-amber-500/70 rounded-lg px-2.5 py-1.5 text-[13px] text-amber-100 placeholder-amber-700 outline-none';
 
 // ---------------------------------------------------------------------------- Camera
