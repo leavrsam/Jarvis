@@ -2,8 +2,8 @@
 //
 //   GET /api/sports?teams=football/nfl/den,basketball/nba/uta
 //     -> { teams: [{ key, name, abbr, logo, color, record, game: { name, date, state, detail, competitors } }] }
-import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
-import { requireSession } from './_lib/session.js';
+import { createRateLimiter, guardRequest } from '../requestGuard.js';
+import { requireSession } from '../session.js';
 
 const limiter = createRateLimiter(30);
 const CACHE_MS = 3 * 60 * 1000;

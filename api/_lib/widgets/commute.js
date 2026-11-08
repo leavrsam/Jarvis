@@ -6,8 +6,8 @@
 // With GOOGLE_MAPS_API_KEY set (Routes API enabled), times include live traffic. Without it,
 // the address is looked up with OpenStreetMap (Nominatim) and the drive time comes from OSRM:
 // free, no key, but no traffic.
-import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
-import { requireSession } from './_lib/session.js';
+import { createRateLimiter, guardRequest } from '../requestGuard.js';
+import { requireSession } from '../session.js';
 
 const limiter = createRateLimiter(20);
 const ROUTE_CACHE_MS = 5 * 60 * 1000;

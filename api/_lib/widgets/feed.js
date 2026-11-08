@@ -7,8 +7,8 @@
 // Webhook per feed: JARVIS_FEED_<NAME>_URL (e.g. JARVIS_FEED_SHOPPING_URL), or one shared
 // JARVIS_FEEDS_URL called with ?feed=<name>. Both get the X-Jarvis-Key header
 // (JARVIS_WEBHOOK_SECRET), like the command, camera and calendar webhooks.
-import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
-import { requireSession } from './_lib/session.js';
+import { createRateLimiter, guardRequest } from '../requestGuard.js';
+import { requireSession } from '../session.js';
 
 const readLimiter = createRateLimiter(60);
 const writeLimiter = createRateLimiter(30);

@@ -2,8 +2,8 @@
 // no key). Symbols like AAPL, ^GSPC (S&P 500), ^IXIC (Nasdaq), BTC-USD, ETH-USD.
 //
 //   GET /api/markets?symbols=AAPL,^GSPC,BTC-USD -> { quotes: [{ symbol, name, price, changePct, currency, marketState }] }
-import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
-import { requireSession } from './_lib/session.js';
+import { createRateLimiter, guardRequest } from '../requestGuard.js';
+import { requireSession } from '../session.js';
 
 const limiter = createRateLimiter(30);
 const CACHE_MS = 2 * 60 * 1000;

@@ -20,15 +20,15 @@ import imageSearchHandler from './api/image-search.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import calendarHandler from './api/calendar.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
-import feedHandler from './api/feed.js';
+import feedHandler from './api/_lib/widgets/feed.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
-import newsHandler from './api/news.js';
+import newsHandler from './api/_lib/widgets/news.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
-import marketsHandler from './api/markets.js';
+import marketsHandler from './api/_lib/widgets/markets.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
-import sportsHandler from './api/sports.js';
+import sportsHandler from './api/_lib/widgets/sports.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
-import commuteHandler from './api/commute.js';
+import commuteHandler from './api/_lib/widgets/commute.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import pushHandler from './api/push.js';
 

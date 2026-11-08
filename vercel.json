@@ -27,19 +27,7 @@
     "api/push.js": {
       "maxDuration": 20
     },
-    "api/feed.js": {
-      "maxDuration": 20
-    },
-    "api/news.js": {
-      "maxDuration": 20
-    },
-    "api/markets.js": {
-      "maxDuration": 15
-    },
-    "api/sports.js": {
-      "maxDuration": 15
-    },
-    "api/commute.js": {
+    "api/widgets.js": {
       "maxDuration": 20
     }
   },
@@ -47,6 +35,26 @@
     {
       "source": "/api/notify",
       "destination": "/api/push"
+    },
+    {
+      "source": "/api/feed",
+      "destination": "/api/widgets?route=feed"
+    },
+    {
+      "source": "/api/news",
+      "destination": "/api/widgets?route=news"
+    },
+    {
+      "source": "/api/markets",
+      "destination": "/api/widgets?route=markets"
+    },
+    {
+      "source": "/api/sports",
+      "destination": "/api/widgets?route=sports"
+    },
+    {
+      "source": "/api/commute",
+      "destination": "/api/widgets?route=commute"
     }
   ],
   "headers": [

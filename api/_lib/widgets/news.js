@@ -3,8 +3,8 @@
 // can't be pointed at arbitrary addresses.
 //
 //   GET /api/news?sources=npr,bbc  ->  { items: [{ title, link, source, published }] }
-import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
-import { requireSession } from './_lib/session.js';
+import { createRateLimiter, guardRequest } from '../requestGuard.js';
+import { requireSession } from '../session.js';
 
 const limiter = createRateLimiter(30);
 const CACHE_MS = 10 * 60 * 1000;

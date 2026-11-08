@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { cleanAction, normalizeFeed } from '../api/feed.js';
-import { decode, parseFeed } from '../api/news.js';
-import { parseChart } from '../api/markets.js';
-import { parseTeam } from '../api/sports.js';
-import { parseLatLon } from '../api/commute.js';
+import { cleanAction, normalizeFeed } from '../api/_lib/widgets/feed.js';
+import { decode, parseFeed } from '../api/_lib/widgets/news.js';
+import { parseChart } from '../api/_lib/widgets/markets.js';
+import { parseTeam } from '../api/_lib/widgets/sports.js';
+import { parseLatLon } from '../api/_lib/widgets/commute.js';
+import { routeOf } from '../api/widgets.js';
 
 describe('n8n feeds', () => {
   it('normalises the shopping list, dropping junk and unknown fields', () => {
@@ -114,5 +115,15 @@ describe('commute', () => {
     expect(parseLatLon(' 40.52 , -111.86 ')).toEqual({ lat: 40.52, lon: -111.86 });
     expect(parseLatLon('123 Main St')).toBeNull();
     expect(parseLatLon('95,10')).toBeNull();
+  });
+});
+
+describe('widgets dispatcher', () => {
+  it('finds the route from the rewrite or the path', () => {
+    expect(routeOf('/api/widgets?route=news&sources=npr')).toBe('news');
+    expect(routeOf('/api/feed?name=shopping')).toBe('feed');
+    expect(routeOf('/api/markets?symbols=AAPL')).toBe('markets');
+    expect(routeOf('/api/widgets?route=evil')).toBeNull();
+    expect(routeOf('/api/widgets')).toBeNull();
   });
 });
