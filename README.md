@@ -228,9 +228,20 @@ Calendar credentials as the agent:
 2. Activate it and set `JARVIS_CALENDAR_URL` (the webhook's production URL) in Vercel → Settings →
    Environment Variables, then redeploy.
 
-`GET /api/calendar?from=&to=&tz=` (same-origin, login, 30/min) passes `timeMin`, `timeMax` and
-`tz` to the webhook with the `X-Jarvis-Key` header. It accepts Google Calendar event objects, n8n
-items, or simple `{ title, start, end, allDay, location }` objects, and caches for 2 minutes.
+**Several calendars:** the calendar button in the card header opens one switch per calendar,
+each with its colour dot, primary first. By default the calendars switched on in Google Calendar
+are shown. Your choices are remembered on that device and sent as `calendars`. Events are
+coloured by their calendar, and a small "Couldn't load: …" note lists calendars that failed.
+
+`/api/calendar` (same-origin, login, 30/min) adds the `X-Jarvis-Key` header and passes through:
+- `?mode=calendars` → `{ calendars: [{ id, name, color, primary, selectedInGoogle }] }`, cached
+  10 minutes.
+- `?timeMin=&timeMax=&calendars=<ids>&tz=` → `{ events, calendarErrors, calendarsShown }`, up to
+  a 62-day range, cached 2 minutes. Ids are checked and URL-encoded (some contain `#`).
+
+Events may be the webhook's own shape (`title`, `start`, `end`, `allDay`, `location`,
+`calendarId`, `calendarName`, `color`), Google Calendar event objects or n8n items. Colours must
+be hex values.
 
 Phones and narrow windows keep the compact layout (subtitles along the bottom).
 

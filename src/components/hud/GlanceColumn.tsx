@@ -221,10 +221,40 @@ interface CalendarEvent {
   end: string | null;
   allDay: boolean;
   location: string;
+  calendar: string;
+  calendarId: string;
+  color: string;
+}
+
+interface CalendarInfo {
+  id: string;
+  name: string;
+  color: string;
+  primary: boolean;
+  selectedInGoogle: boolean;
 }
 
 const CALENDAR_REFRESH_MS = 5 * 60 * 1000;
+const CALENDAR_LIST_REFRESH_MS = 30 * 60 * 1000;
+const CALENDAR_CHOICE_KEY = 'jarvis_hud_calendars';
+const DEFAULT_EVENT_COLOR = '#f59e0b';
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** Calendars chosen on this device (null: not chosen yet, use the Google defaults) */
+function readCalendarChoice(): string[] | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(CALENDAR_CHOICE_KEY) || 'null');
+    return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCalendarChoice(ids: string[]) {
+  try {
+    localStorage.setItem(CALENDAR_CHOICE_KEY, JSON.stringify(ids));
+  } catch {}
+}
 
 function untilText(ms: number) {
   const min = Math.round(ms / 60000);
@@ -235,23 +265,69 @@ function untilText(ms: number) {
   return `in ${h} h${m ? ` ${m} min` : ''}`;
 }
 
+const Dot: React.FC<{ color: string; className?: string }> = ({ color, className = '' }) => (
+  <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${className}`} style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}99` }} />
+);
+
 const CalendarCard: React.FC = () => {
   const now = useNow(30_000);
   const [events, setEvents] = useState<CalendarEvent[] | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
   const [status, setStatus] = useState<'loading' | 'ok' | 'not_configured' | 'error'>('loading');
+  const [calendars, setCalendars] = useState<CalendarInfo[] | null>(null);
+  const [choice, setChoice] = useState<string[] | null>(() => readCalendarChoice());
+  const [showPicker, setShowPicker] = useState(false);
+
+  // The calendar list (for the switches and colours)
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/calendar?mode=calendars', { cache: 'no-store' });
+        if (res.status === 401) return notifyAuthRequired();
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && Array.isArray(data.calendars)) setCalendars(data.calendars);
+      } catch {}
+    };
+    void load();
+    const t = setInterval(load, CALENDAR_LIST_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  // Which calendars to show: this device's choice (minus any that no longer exist), else the
+  // ones switched on in Google Calendar; before the list arrives, the saved choice or Google's
+  const selected: string[] | null = (() => {
+    if (calendars) {
+      const ids = new Set(calendars.map((c) => c.id));
+      if (choice) return choice.filter((id) => ids.has(id));
+      return calendars.filter((c) => c.selectedInGoogle).map((c) => c.id);
+    }
+    return choice;
+  })();
+  const selectedKey = selected ? selected.join(',') : '*';
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (selected && selected.length === 0) {
+        setEvents([]);
+        setErrors([]);
+        setStatus('ok');
+        return;
+      }
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const end = new Date(start);
       end.setDate(end.getDate() + 2); // today and tomorrow
       const params = new URLSearchParams({
-        from: start.toISOString(),
-        to: end.toISOString(),
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       });
+      if (selected) params.set('calendars', selected.join(','));
       try {
         const res = await fetch(`/api/calendar?${params}`, { cache: 'no-store' });
         if (res.status === 401) return notifyAuthRequired();
@@ -259,6 +335,7 @@ const CalendarCard: React.FC = () => {
         if (cancelled) return;
         if (res.ok && Array.isArray(data.events)) {
           setEvents(data.events);
+          setErrors(Array.isArray(data.calendarErrors) ? data.calendarErrors : []);
           setStatus('ok');
         } else {
           setStatus(data.error === 'not_configured' ? 'not_configured' : 'error');
@@ -273,7 +350,18 @@ const CalendarCard: React.FC = () => {
       cancelled = true;
       clearInterval(t);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
+
+  const toggle = (id: string) => {
+    const base = selected ?? [];
+    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    setChoice(next);
+    saveCalendarChoice(next);
+  };
+
+  const colorById = new Map((calendars || []).map((c) => [c.id, c.color]));
+  const colorOf = (e: CalendarEvent) => e.color || colorById.get(e.calendarId) || DEFAULT_EVENT_COLOR;
 
   const today = localDay(now);
   const tomorrowDate = new Date(now);
@@ -285,19 +373,68 @@ const CalendarCard: React.FC = () => {
   const list = events || [];
   const allDayToday = list.filter((e) => e.allDay && e.start.slice(0, 10) <= today && (!e.end || e.end.slice(0, 10) > today));
   const timedToday = list.filter((e) => !e.allDay && dayOf(e) === today);
-  const current = timedToday.find((e) => new Date(e.start).getTime() <= now.getTime() && endMs(e) > now.getTime());
+  const current = timedToday.filter((e) => new Date(e.start).getTime() <= now.getTime() && endMs(e) > now.getTime());
   const upcoming = timedToday.filter((e) => new Date(e.start).getTime() > now.getTime());
   const done = timedToday.filter((e) => endMs(e) <= now.getTime()).length;
-  const tomorrowEvents = list.filter((e) => dayOf(e) === tomorrow || (e.allDay && e.start.slice(0, 10) === tomorrow));
+  const tomorrowEvents = list.filter((e) => dayOf(e) === tomorrow);
 
   const timeOf = (e: CalendarEvent) => new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const nothingSelected = selected !== null && selected.length === 0;
 
   return (
     <div className="hud-panel px-5 py-4 flex flex-col min-h-[150px] flex-1">
       <div className="flex items-center justify-between">
         <span className="hud-label">Calendar</span>
-        <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
+        {status !== 'not_configured' && (
+          <button
+            onClick={() => setShowPicker((v) => !v)}
+            title="Choose calendars"
+            aria-expanded={showPicker}
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
+              showPicker ? 'border-amber-400/70 text-amber-200 bg-amber-950/50' : 'border-amber-800/60 text-amber-500 hover:text-amber-300'
+            }`}
+          >
+            <span className="flex -space-x-0.5">
+              {(calendars || [])
+                .filter((c) => selected?.includes(c.id))
+                .slice(0, 4)
+                .map((c) => (
+                  <Dot key={c.id} color={c.color || DEFAULT_EVENT_COLOR} className="ring-1 ring-black" />
+                ))}
+            </span>
+            <CalendarDays className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
+
+      {showPicker && (
+        <div className="mt-2.5 rounded-lg border border-amber-900/50 bg-black/40 p-2 max-h-[220px] overflow-y-auto hud-scroll">
+          {!calendars ? (
+            <div className="px-1 py-1.5 text-[12px] text-amber-500/80">Loading calendars…</div>
+          ) : calendars.length === 0 ? (
+            <div className="px-1 py-1.5 text-[12px] text-amber-500/80">No calendars found.</div>
+          ) : (
+            calendars.map((c) => {
+              const on = Boolean(selected?.includes(c.id));
+              return (
+                <label key={c.id} className="flex items-center gap-2.5 px-1.5 py-1.5 rounded hover:bg-amber-900/20 cursor-pointer">
+                  <Dot color={c.color || DEFAULT_EVENT_COLOR} />
+                  <span className={`flex-1 min-w-0 truncate text-[13px] ${on ? 'text-amber-100' : 'text-amber-600'}`}>
+                    {c.name}
+                    {c.primary && <span className="ml-1.5 text-[10px] text-amber-600">primary</span>}
+                  </span>
+                  <input type="checkbox" className="sr-only peer" checked={on} onChange={() => toggle(c.id)} />
+                  <span
+                    aria-hidden="true"
+                    className="relative w-8 h-[18px] rounded-full bg-zinc-700 transition-colors peer-checked:bg-amber-500 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-300 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-[14px] after:h-[14px] after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-[14px]"
+                  />
+                </label>
+              );
+            })
+          )}
+        </div>
+      )}
 
       {status === 'loading' && <div className="py-4 text-sm text-amber-500/70">Checking your calendar…</div>}
       {status === 'not_configured' && (
@@ -310,30 +447,44 @@ const CalendarCard: React.FC = () => {
 
       {status === 'ok' && (
         <div className="mt-2 flex-1 min-h-0 overflow-y-auto hud-scroll space-y-3">
+          {nothingSelected && <div className="text-[13px] text-amber-500/80">No calendars selected. Tap the calendar button to choose.</div>}
+
           {allDayToday.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {allDayToday.map((e, i) => (
-                <span key={i} className="px-2 py-0.5 rounded-full border border-amber-700/50 bg-amber-950/40 text-[11.5px] text-amber-200 truncate max-w-full">
+                <span
+                  key={i}
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border bg-black/30 text-[11.5px] text-amber-100 truncate max-w-full"
+                  style={{ borderColor: `${colorOf(e)}88` }}
+                  title={e.calendar || undefined}
+                >
+                  <Dot color={colorOf(e)} className="!w-1.5 !h-1.5" />
                   {e.title}
                 </span>
               ))}
             </div>
           )}
 
-          {current && (
-            <div className="rounded-lg border border-cyan-400/40 bg-cyan-950/30 px-3 py-2">
-              <div className="flex items-center justify-between text-[10.5px] uppercase tracking-[0.18em] text-cyan-300/90">
-                <span>Now</span>
-                {current.end && <span className="normal-case tracking-normal">until {new Date(current.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
+          {current.map((e, i) => (
+            <div
+              key={`now-${i}`}
+              className="rounded-lg border px-3 py-2"
+              style={{ borderColor: `${colorOf(e)}99`, background: `linear-gradient(90deg, ${colorOf(e)}22, transparent)` }}
+            >
+              <div className="flex items-center justify-between text-[10.5px] uppercase tracking-[0.18em] text-amber-200/90">
+                <span className="flex items-center gap-1.5">
+                  <Dot color={colorOf(e)} /> Now
+                </span>
+                {e.end && <span className="normal-case tracking-normal">until {clock(e.end)}</span>}
               </div>
-              <div className="text-[15px] text-cyan-50 truncate">{current.title}</div>
-              {current.location && (
-                <div className="flex items-center gap-1 text-[11px] text-cyan-200/70 truncate">
-                  <MapPin className="w-3 h-3 shrink-0" /> {current.location}
+              <div className="text-[15px] text-amber-50 truncate">{e.title}</div>
+              {e.location && (
+                <div className="flex items-center gap-1 text-[11px] text-amber-300/70 truncate">
+                  <MapPin className="w-3 h-3 shrink-0" /> {e.location}
                 </div>
               )}
             </div>
-          )}
+          ))}
 
           {upcoming.length > 0 ? (
             <div className="space-y-1.5">
@@ -341,8 +492,9 @@ const CalendarCard: React.FC = () => {
                 const startsIn = new Date(e.start).getTime() - now.getTime();
                 const soon = i === 0 && startsIn < 3 * 3600_000;
                 return (
-                  <div key={`${e.start}-${i}`} className={`flex items-baseline gap-3 ${soon ? '' : 'opacity-90'}`}>
-                    <span className="w-[62px] shrink-0 text-right text-[12px] tabular-nums text-amber-400">{timeOf(e)}</span>
+                  <div key={`${e.start}-${i}`} className="flex items-baseline gap-2.5" title={e.calendar || undefined}>
+                    <span className="w-[58px] shrink-0 text-right text-[12px] tabular-nums text-amber-400">{timeOf(e)}</span>
+                    <Dot color={colorOf(e)} className="self-center" />
                     <div className="min-w-0 flex-1">
                       <div className={`truncate ${soon ? 'text-[15px] text-amber-50' : 'text-[13.5px] text-amber-100/85'}`}>{e.title}</div>
                       {soon && (
@@ -357,7 +509,8 @@ const CalendarCard: React.FC = () => {
               })}
             </div>
           ) : (
-            !current && (
+            current.length === 0 &&
+            !nothingSelected && (
               <div className="text-[13.5px] text-amber-300/80">
                 {done > 0 ? 'Nothing else today.' : allDayToday.length ? 'No timed events today.' : 'Nothing on the calendar today.'}
               </div>
@@ -368,14 +521,17 @@ const CalendarCard: React.FC = () => {
             <div className="pt-2 border-t border-amber-900/40">
               <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600/90 mb-1">Tomorrow</div>
               {tomorrowEvents.slice(0, 4).map((e, i) => (
-                <div key={`t-${i}`} className="flex items-baseline gap-3 text-[12.5px]">
-                  <span className="w-[62px] shrink-0 text-right tabular-nums text-amber-600">{e.allDay ? 'All day' : timeOf(e)}</span>
+                <div key={`t-${i}`} className="flex items-baseline gap-2.5 text-[12.5px]">
+                  <span className="w-[58px] shrink-0 text-right tabular-nums text-amber-600">{e.allDay ? 'All day' : timeOf(e)}</span>
+                  <Dot color={colorOf(e)} className="self-center opacity-80" />
                   <span className="truncate text-amber-200/70">{e.title}</span>
                 </div>
               ))}
-              {tomorrowEvents.length > 4 && <div className="pl-[74px] text-[11px] text-amber-700">+{tomorrowEvents.length - 4} more</div>}
+              {tomorrowEvents.length > 4 && <div className="pl-[78px] text-[11px] text-amber-700">+{tomorrowEvents.length - 4} more</div>}
             </div>
           )}
+
+          {errors.length > 0 && <div className="text-[11px] text-red-300/80">Couldn’t load: {errors.join(', ')}</div>}
         </div>
       )}
     </div>

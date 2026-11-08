@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeEvents } from '../api/calendar.js';
+import { normalizeCalendarErrors, normalizeCalendars, normalizeEvents } from '../api/calendar.js';
 
 describe('calendar normalizeEvents', () => {
   it('reads Google Calendar events (timed and all-day), from n8n items too', () => {
@@ -36,9 +36,9 @@ describe('calendar normalizeEvents', () => {
       ],
     });
     expect(out).toEqual([
-      { title: 'Veterans Day', start: '2026-11-09', end: '2026-11-10', allDay: true, location: '', calendar: '' },
-      { title: 'Call with Alex', start: '2026-11-08T17:30:00.000Z', end: '2026-11-08T18:00:00.000Z', allDay: false, location: 'Zoom', calendar: '' },
-      { title: 'Dinner', start: '2026-11-09T01:00:00.000Z', end: '2026-11-09T03:00:00.000Z', allDay: false, location: 'Tsunami', calendar: '' },
+      { title: 'Veterans Day', start: '2026-11-09', end: '2026-11-10', allDay: true, location: '', calendar: '', calendarId: '', color: '' },
+      { title: 'Call with Alex', start: '2026-11-08T17:30:00.000Z', end: '2026-11-08T18:00:00.000Z', allDay: false, location: 'Zoom', calendar: '', calendarId: '', color: '' },
+      { title: 'Dinner', start: '2026-11-09T01:00:00.000Z', end: '2026-11-09T03:00:00.000Z', allDay: false, location: 'Tsunami', calendar: '', calendarId: '', color: '' },
     ]);
   });
 
@@ -46,5 +46,35 @@ describe('calendar normalizeEvents', () => {
     expect(normalizeEvents([null, 5, { summary: 'x' }, { start: { dateTime: 'not a date' } }])).toEqual([]);
     expect(normalizeEvents([{ start: '2026-11-09T16:00:00Z' }])[0].title).toBe('(No title)');
     expect(normalizeEvents([])).toEqual([]);
+  });
+
+  it('keeps each event’s calendar and a safe colour', () => {
+    const [e] = normalizeEvents({
+      events: [{ title: 'Soccer', start: '2026-11-08T17:00:00Z', calendarId: 'family#x@group.calendar.google.com', calendarName: 'Family', color: '#16A765' }],
+    });
+    expect(e).toMatchObject({ calendar: 'Family', calendarId: 'family#x@group.calendar.google.com', color: '#16A765' });
+    const [bad] = normalizeEvents({ events: [{ title: 'x', start: '2026-11-08T17:00:00Z', color: 'red;background:url(x)' }] });
+    expect(bad.color).toBe('');
+  });
+});
+
+describe('calendar list', () => {
+  it('normalises the mode=calendars response, primary first', () => {
+    const out = normalizeCalendars({
+      calendars: [
+        { id: 'en.usa#holiday@group.v.calendar.google.com', name: 'Holidays', color: '#16a765', primary: false, selectedInGoogle: false, accessRole: 'reader' },
+        { id: 'sam@example.com', name: 'Samuel', color: '#4986e7', primary: true, selectedInGoogle: true, accessRole: 'owner' },
+        { id: 'abc@group.calendar.google.com', name: 'Family', color: '#f83a22', primary: false, selectedInGoogle: true },
+        { id: 'bad id with spaces', name: 'Nope' },
+      ],
+    });
+    expect(out.map((c) => c.name)).toEqual(['Samuel', 'Family', 'Holidays']);
+    expect(out[0]).toEqual({ id: 'sam@example.com', name: 'Samuel', color: '#4986e7', primary: true, selectedInGoogle: true });
+    expect(out[2].selectedInGoogle).toBe(false);
+  });
+
+  it('turns calendarErrors into names', () => {
+    expect(normalizeCalendarErrors(['Work', { name: 'Family', error: 'x' }, { calendarId: 'abc@x' }, 7])).toEqual(['Work', 'Family', 'abc@x']);
+    expect(normalizeCalendarErrors(undefined)).toEqual([]);
   });
 });
