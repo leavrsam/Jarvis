@@ -153,6 +153,16 @@ class VoiceCapture {
     return Math.min(1, Math.sqrt(sum / last.data.length) * 6);
   }
 
+  /**
+   * Close the microphone but keep the recent buffer (voice ID may still read the last command).
+   * Used while Jarvis talks on Android, where an open mic forces call mode (audio on the phone).
+   */
+  release() {
+    const kept = this.chunks;
+    this.stop();
+    this.chunks = kept;
+  }
+
   stop() {
     try {
       this.node?.disconnect();

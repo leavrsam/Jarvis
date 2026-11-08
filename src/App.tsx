@@ -15,6 +15,8 @@ import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useBuiltInListening } from './hooks/useBuiltInListening';
 import { getListeningEngine, ListeningEngine, onListeningEngineChange } from './services/listeningEngine';
 import { useBatteryStatus } from './hooks/useBatteryStatus';
+import { voiceCapture } from './services/speaker/voiceCapture';
+import { getReleaseMicWhileSpeaking, onMicSettingsChange } from './services/micSettings';
 
 
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
@@ -631,6 +633,21 @@ export const App: React.FC = () => {
     void voiceBiometrics.activate(() => audioEngine.getJarvisIntervals());
     return () => voiceBiometrics.deactivate();
   }, [isAuthenticated]);
+
+  // Android call-mode workaround: close the mic while Jarvis answers so his voice plays through
+  // the normal output (the TV on DeX) instead of the phone's speaker; reopen it when he's done
+  const [releaseMic, setReleaseMic] = useState(() => getReleaseMicWhileSpeaking());
+  useEffect(() => onMicSettingsChange(() => setReleaseMic(getReleaseMicWhileSpeaking())), []);
+  const jarvisBusy = audioState === 'speaking' || audioState === 'processing' || isProcessing;
+  useEffect(() => {
+    if (!isAuthenticated || !releaseMic) return;
+    if (jarvisBusy) {
+      voiceCapture.release();
+      audioEngine.stopMicListening();
+    } else if (!voiceBiometrics.isMicPaused()) {
+      void voiceCapture.start();
+    }
+  }, [isAuthenticated, releaseMic, jarvisBusy]);
 
   // Session expired or revoked while running: back to the login screen
   useEffect(

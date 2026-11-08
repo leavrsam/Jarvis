@@ -9,6 +9,7 @@
 export type EchoCancelMode = 'auto' | 'on' | 'off';
 
 const KEY = 'jarvis_mic_echo_cancel';
+const RELEASE_KEY = 'jarvis_release_mic_while_speaking';
 const EVENT = 'jarvis:mic-settings';
 
 export function isAndroid(): boolean {
@@ -48,4 +49,26 @@ export function setEchoCancelMode(mode: EchoCancelMode) {
 export function onMicSettingsChange(handler: () => void): () => void {
   window.addEventListener(EVENT, handler);
   return () => window.removeEventListener(EVENT, handler);
+}
+
+/**
+ * Close the mic while Jarvis answers. Some Android phones (e.g. the S9 on DeX) go into call mode
+ * whenever any mic is open, raw or not, and play everything through the phone's own speaker.
+ * With the mic closed, Jarvis plays through the normal output (the TV). Cost: no voice
+ * interruptions mid-reply (tapping still works). Default: on for Android.
+ */
+export function getReleaseMicWhileSpeaking(): boolean {
+  try {
+    const v = localStorage.getItem(RELEASE_KEY);
+    if (v === 'on') return true;
+    if (v === 'off') return false;
+  } catch {}
+  return isAndroid();
+}
+
+export function setReleaseMicWhileSpeaking(on: boolean) {
+  try {
+    localStorage.setItem(RELEASE_KEY, on ? 'on' : 'off');
+  } catch {}
+  window.dispatchEvent(new Event(EVENT));
 }

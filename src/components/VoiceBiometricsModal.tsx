@@ -23,7 +23,7 @@ import { voiceCapture } from '../services/speaker/voiceCapture';
 import { audioEngine } from '../services/audioEngine';
 import { builtInStats, getEvents, ListeningEvent, recognizerStats } from '../services/eventLog';
 import { getListeningEngine, ListeningEngine, setListeningEngine } from '../services/listeningEngine';
-import { EchoCancelMode, getEchoCancelMode, isAndroid, setEchoCancelMode, wantsEchoCancellation } from '../services/micSettings';
+import { EchoCancelMode, getEchoCancelMode, getReleaseMicWhileSpeaking, isAndroid, setEchoCancelMode, setReleaseMicWhileSpeaking, wantsEchoCancellation } from '../services/micSettings';
 
 interface VoiceBiometricsModalProps {
   isOpen: boolean;
@@ -678,9 +678,28 @@ const ListenerStatus: React.FC<{ micPaused: boolean }> = ({ micPaused }) => {
 
 const EchoCancelSetting: React.FC = () => {
   const [mode, setMode] = useState<EchoCancelMode>(() => getEchoCancelMode());
+  const [release, setRelease] = useState(() => getReleaseMicWhileSpeaking());
   const active = wantsEchoCancellation();
   return (
     <div className="p-2 rounded border border-amber-900 text-[10px] space-y-1">
+      <label className="flex items-start gap-2 text-amber-300">
+        <input
+          type="checkbox"
+          checked={release}
+          onChange={(e) => {
+            setReleaseMicWhileSpeaking(e.target.checked);
+            setRelease(e.target.checked);
+          }}
+          className="mt-0.5 accent-amber-400"
+        />
+        <span>
+          <span className="text-amber-200 font-bold">Play Jarvis through the TV (close the mic while he talks)</span>
+          <span className="block text-amber-500">
+            Some Android phones play all sound through the phone while any mic is open. With this on, the mic closes while
+            Jarvis answers and reopens when he's done. You can't interrupt him by voice mid-reply (tap the orb instead).
+          </span>
+        </span>
+      </label>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-amber-200 font-bold">Mic echo cancellation</span>
         {(['auto', 'off', 'on'] as EchoCancelMode[]).map((m) => (
