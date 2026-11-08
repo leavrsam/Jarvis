@@ -289,12 +289,19 @@ GET returns JSON (n8n item arrays work too):
 
 | Feed | Response | Actions the HUD POSTs |
 | --- | --- | --- |
-| `shopping` | `{ items: [{ id, name, qty?, checked? }] }` | `{action:"check", id, checked}`, `{action:"add", name}`, `{action:"remove", id}` |
-| `tasks` | `{ tasks: [{ id, title, due? (date or ISO), done?, list? }] }` | `{action:"complete", id}`, `{action:"add", title}` |
+| `shopping` | `{ items: [{ id, name, qty?, checked?, addedBy?, addedByOwner? }] }` | `{action:"check", id, checked}`, `{action:"add", name}`, `{action:"remove", id}` |
+| `tasks` | `{ tasks: [{ id, title, due? (date or ISO), done?, list?, addedBy?, addedByOwner? }] }` | `{action:"complete", id}`, `{action:"add", title}` |
 | `home` | `{ devices: [{ id, name, type: light\|switch\|plug\|fan\|lock\|thermostat\|sensor\|cover\|scene\|media, state, value?, unit?, room?, controllable? }] }` | `{action:"toggle", id}`, `{action:"set", id, value}` |
 | `deliveries` | `{ packages: [{ id, title, carrier?, status, eta?, url? }] }` | — |
 | `doorbell` | `{ events: [{ id, time (ISO), camera?, label?, imageUrl? }] }` | — |
 | `photos` | `{ photos: [{ url, caption? }] }` | — |
+
+**Who added it:** shopping items and tasks may include `addedBy` (a name) and
+`addedByOwner` (true/false). Items added by someone other than the owner show in *italic
+blue*, with "Added by …" on hover and a small key under the list, instead of a note in the
+item's text. Older notes in the text, like "Eggs (added by guest)" or "Chips - added by Sarah",
+are stripped from the name and treated the same way. Without `addedByOwner`, the HUD compares
+`addedBy` with the owner's voice-ID name.
 
 Unknown fields are dropped and only `https` links are kept. Actions are checked against the list
 above before they're forwarded. Sensors can't be toggled, and **unlocking a lock needs a second

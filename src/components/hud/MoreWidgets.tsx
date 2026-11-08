@@ -10,6 +10,23 @@ import { applyScreenDirective } from '../../services/screenController';
 import { normalizeCameraName } from '../../services/directives';
 import { Card, inputClass, useNow, useWidgetSetting } from './ExtraWidgets';
 import { everyWhileVisible } from './GlanceColumn';
+import { voiceBiometrics } from '../../services/voiceBiometrics';
+
+/**
+ * Added by someone other than the owner? n8n's flag if it sent one (byGuest), otherwise compare
+ * who added it with the owner's name from voice ID.
+ */
+function isGuestAddition(item: { addedBy?: string; byGuest?: boolean | null }): boolean {
+  if (typeof item.byGuest === 'boolean') return item.byGuest;
+  const owner = voiceBiometrics.getOwnerProfile()?.name?.trim().toLowerCase();
+  return Boolean(item.addedBy && owner && item.addedBy.trim().toLowerCase() !== owner);
+}
+
+const GUEST_STYLE = 'italic text-sky-200/85';
+const addedTitle = (item: { addedBy?: string }, guest: boolean) => (guest ? `Added by ${item.addedBy || 'a guest'}` : item.addedBy ? `Added by ${item.addedBy}` : undefined);
+
+/** Shown under a list only when it has guest additions */
+const GuestKey: React.FC = () => <div className="pt-1 text-[10.5px] text-sky-300/70 italic">Italic blue: added by a guest</div>;
 
 // ---------------------------------------------------------------------------- data helpers
 
@@ -98,6 +115,8 @@ interface ShoppingItem {
   name: string;
   checked: boolean;
   qty: string;
+  addedBy?: string;
+  byGuest?: boolean | null;
 }
 
 export const ShoppingWidget: React.FC = () => {
@@ -118,17 +137,25 @@ export const ShoppingWidget: React.FC = () => {
         <FeedState status={status} feed="shopping" what="the shopping list" />
       ) : (
         <div className="space-y-1">
-          {[...open, ...done].map((i) => (
-            <button key={i.id} onClick={() => void toggle(i)} className="w-full flex items-center gap-2.5 py-1 text-left group">
-              <span
-                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${i.checked ? 'bg-amber-500/80 border-amber-400' : 'border-amber-600 group-hover:border-amber-300'}`}
-              >
-                {i.checked && <Check className="w-3 h-3 text-black" />}
-              </span>
-              <span className={`flex-1 truncate text-[14px] ${i.checked ? 'line-through text-amber-700' : 'text-amber-50'}`}>{i.name}</span>
-              {i.qty && <span className="text-[11.5px] text-amber-500">×{i.qty}</span>}
-            </button>
-          ))}
+          {[...open, ...done].map((i) => {
+            const guest = isGuestAddition(i);
+            return (
+              <button key={i.id} onClick={() => void toggle(i)} title={addedTitle(i, guest)} className="w-full flex items-center gap-2.5 py-1 text-left group">
+                <span
+                  className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                    i.checked ? 'bg-amber-500/80 border-amber-400' : guest ? 'border-sky-500/70 group-hover:border-sky-300' : 'border-amber-600 group-hover:border-amber-300'
+                  }`}
+                >
+                  {i.checked && <Check className="w-3 h-3 text-black" />}
+                </span>
+                <span className={`flex-1 truncate text-[14px] ${i.checked ? 'line-through text-amber-700' : guest ? GUEST_STYLE : 'text-amber-50'} ${i.checked && guest ? 'italic' : ''}`}>
+                  {i.name}
+                </span>
+                {i.qty && <span className="text-[11.5px] text-amber-500">×{i.qty}</span>}
+              </button>
+            );
+          })}
+          {open.some(isGuestAddition) && <GuestKey />}
           {items.length === 0 && <Muted>The list is empty.</Muted>}
           <form
             className="flex items-center gap-2 pt-1"
@@ -160,6 +187,8 @@ interface Task {
   due: string;
   done: boolean;
   list: string;
+  addedBy?: string;
+  byGuest?: boolean | null;
 }
 
 export const TasksWidget: React.FC = () => {
@@ -179,8 +208,9 @@ export const TasksWidget: React.FC = () => {
           {tasks.map((t) => {
             const dueDay = t.due.slice(0, 10);
             const overdue = t.due && dueDay < today;
+            const guest = isGuestAddition(t);
             return (
-              <div key={t.id} className="flex items-start gap-2.5">
+              <div key={t.id} className="flex items-start gap-2.5" title={addedTitle(t, guest)}>
                 <button
                   onClick={async () => {
                     setCompleted((s) => new Set(s).add(t.id));
@@ -192,7 +222,7 @@ export const TasksWidget: React.FC = () => {
                   title="Mark done"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14px] text-amber-50 leading-snug">{t.title}</div>
+                  <div className={`text-[14px] leading-snug ${guest ? GUEST_STYLE : 'text-amber-50'}`}>{t.title}</div>
                   {(t.due || t.list) && (
                     <div className={`text-[11px] ${overdue ? 'text-red-300' : 'text-amber-600'}`}>
                       {t.due ? (dueDay === today ? 'Today' : overdue ? `Overdue · ${new Date(t.due).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : new Date(t.due).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })) : ''}
@@ -204,6 +234,7 @@ export const TasksWidget: React.FC = () => {
               </div>
             );
           })}
+          {tasks.some(isGuestAddition) && <GuestKey />}
         </div>
       )}
     </Card>

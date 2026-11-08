@@ -55,6 +55,28 @@ function list(body, key) {
   return raw.map((r) => (r && typeof r === 'object' && r.json && typeof r.json === 'object' ? r.json : r)).filter((r) => r && typeof r === 'object');
 }
 
+// "Eggs (added by guest)", "Eggs - added by Sarah", "Eggs [guest]": the old way of marking who
+// added something, in the text itself. Stripped from the name; it marks the item as a guest's.
+const GUEST_NOTE_RE = /\s*(?:[([]\s*(?:added\s+by\s+)?(?:a\s+)?(?:guest|non[-\s]?owner|[^)\]]*?\bguest\b[^)\]]*)\s*[)\]]|[-–—,:]\s*added\s+by\s+(?:a\s+)?(?:guest|non[-\s]?owner|[\p{L}' -]{1,40}))\s*$/iu;
+
+/**
+ * Who added an item: the name (if known) and whether it was someone other than the owner.
+ * byGuest: true / false when n8n says (addedByOwner, or a guest note in the text); null when
+ * it doesn't (the HUD then compares addedBy with the owner's name).
+ */
+export function addedInfo(r, label) {
+  let name = label;
+  let byGuest = typeof r.addedByOwner === 'boolean' ? !r.addedByOwner : typeof r.byGuest === 'boolean' ? r.byGuest : null;
+  const m = GUEST_NOTE_RE.exec(label);
+  if (m && m.index > 0) {
+    name = label.slice(0, m.index).trim();
+    const who = /added\s+by\s+(?:a\s+)?([\p{L}' -]{1,40})/iu.exec(m[0])?.[1]?.trim();
+    if (byGuest === null) byGuest = true;
+    if (!r.addedBy && who && !/^(guest|non[-\s]?owner)$/i.test(who)) r = { ...r, addedBy: who };
+  }
+  return { name, addedBy: text(r.addedBy, 40), byGuest };
+}
+
 const HOME_TYPES = new Set(['light', 'switch', 'plug', 'fan', 'lock', 'thermostat', 'sensor', 'cover', 'scene', 'media']);
 
 /** Each feed's response in one safe shape (unknown fields dropped, URLs https only) */
@@ -63,14 +85,20 @@ export function normalizeFeed(name, body) {
     case 'shopping':
       return {
         items: list(body, 'items')
-          .map((r, i) => ({ id: id(r.id, i), name: text(r.name || r.title || r.item), checked: Boolean(r.checked || r.done), qty: text(r.qty || r.quantity, 20), addedBy: text(r.addedBy, 40) }))
+          .map((r, i) => {
+            const who = addedInfo(r, text(r.name || r.title || r.item));
+            return { id: id(r.id, i), name: who.name, checked: Boolean(r.checked || r.done), qty: text(r.qty || r.quantity, 20), addedBy: who.addedBy, byGuest: who.byGuest };
+          })
           .filter((r) => r.name)
           .slice(0, 100),
       };
     case 'tasks':
       return {
         tasks: list(body, 'tasks')
-          .map((r, i) => ({ id: id(r.id, i), title: text(r.title || r.name), due: time(r.due), done: Boolean(r.done || r.completed || r.status === 'completed'), list: text(r.list, 40) }))
+          .map((r, i) => {
+            const who = addedInfo(r, text(r.title || r.name));
+            return { id: id(r.id, i), title: who.name, due: time(r.due), done: Boolean(r.done || r.completed || r.status === 'completed'), list: text(r.list, 40), addedBy: who.addedBy, byGuest: who.byGuest };
+          })
           .filter((r) => r.title)
           .slice(0, 100),
       };

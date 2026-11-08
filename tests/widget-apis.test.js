@@ -10,9 +10,33 @@ describe('n8n feeds', () => {
   it('normalises the shopping list, dropping junk and unknown fields', () => {
     const out = normalizeFeed('shopping', { items: [{ id: 1, name: 'Gloves', qty: 2, checked: false, secret: 'x' }, { json: { name: 'Milk', done: true } }, { qty: 3 }] });
     expect(out.items).toEqual([
-      { id: '1', name: 'Gloves', checked: false, qty: '2', addedBy: '' },
-      { id: '1', name: 'Milk', checked: true, qty: '', addedBy: '' },
+      { id: '1', name: 'Gloves', checked: false, qty: '2', addedBy: '', byGuest: null },
+      { id: '1', name: 'Milk', checked: true, qty: '', addedBy: '', byGuest: null },
     ]);
+  });
+
+  it('marks guest additions instead of keeping a note in the text', () => {
+    const { items } = normalizeFeed('shopping', {
+      items: [
+        { id: 'a', name: 'Better gloves (added by guest)' },
+        { id: 'b', name: 'Chips - added by Sarah' },
+        { id: 'c', name: 'Salsa [guest]' },
+        { id: 'd', name: 'Eggs', addedBy: 'Samuel', addedByOwner: true },
+        { id: 'e', name: 'Soda', addedBy: 'Guest #2', addedByOwner: false },
+        { id: 'f', name: 'Bread', addedBy: 'Samuel' },
+        { id: 'g', name: 'Guest towels' },
+      ],
+    });
+    expect(items.map((i) => [i.name, i.addedBy, i.byGuest])).toEqual([
+      ['Better gloves', '', true],
+      ['Chips', 'Sarah', true],
+      ['Salsa', '', true],
+      ['Eggs', 'Samuel', false],
+      ['Soda', 'Guest #2', true],
+      ['Bread', 'Samuel', null],
+      ['Guest towels', '', null],
+    ]);
+    expect(normalizeFeed('tasks', { tasks: [{ id: 't', title: 'Fix the sink (added by guest)' }] }).tasks[0]).toMatchObject({ title: 'Fix the sink', byGuest: true });
   });
 
   it('normalises smart-home devices; sensors are never controllable', () => {
