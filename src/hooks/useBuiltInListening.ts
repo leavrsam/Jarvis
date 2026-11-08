@@ -148,6 +148,8 @@ type CaptureState = {
   /** Nearest-voice focus: frames below this level (dB) are turned down; null = off */
   gateDb: number | null;
   gateState: { hang: number };
+  /** Stopped by the user (Stop button / "stop"): whatever was heard is thrown away */
+  cancelled: boolean;
 };
 
 export function useBuiltInListening(opts: BuiltInListeningOptions) {
@@ -160,6 +162,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     onUnavailable,
     followUpTimeoutMs = 15000,
     isJarvisSpeaking = false,
+    isJarvisTalking,
     wakeWordEnabled = true,
     getEchoReference,
   } = opts;
@@ -169,8 +172,8 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
   const [interimTranscript, setInterimTranscript] = useState('');
 
   // Latest props for the audio callback (which outlives renders)
-  const live = useRef({ onFinalSubmit, onWakeWordDetected, onFollowUpTimeout, onBargeIn, onUnavailable, isJarvisSpeaking, wakeWordEnabled, getEchoReference, followUpTimeoutMs });
-  live.current = { onFinalSubmit, onWakeWordDetected, onFollowUpTimeout, onBargeIn, onUnavailable, isJarvisSpeaking, wakeWordEnabled, getEchoReference, followUpTimeoutMs };
+  const live = useRef({ onFinalSubmit, onWakeWordDetected, onFollowUpTimeout, onBargeIn, onUnavailable, isJarvisSpeaking, isJarvisTalking, wakeWordEnabled, getEchoReference, followUpTimeoutMs });
+  live.current = { onFinalSubmit, onWakeWordDetected, onFollowUpTimeout, onBargeIn, onUnavailable, isJarvisSpeaking, isJarvisTalking, wakeWordEnabled, getEchoReference, followUpTimeoutMs };
 
   const detectorRef = useRef<WakeWordDetector | null>(null);
   // Plain "Jarvis": second detector fed a recorded "hey" at the start of each utterance
@@ -187,6 +190,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
   // Quietest 10 ms frames of the last few seconds: lets the noise floor rise in a noisy room
   const recentDbRef = useRef<number[]>([]);
   const transcribingRef = useRef(false);
+  const uploadingCapRef = useRef<CaptureState | null>(null);
   const scoreDecayRef = useRef<{ score: number; at: number }>({ score: 0, at: 0 });
   const liveNoticeRef = useRef('');
 
@@ -214,6 +218,10 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
 
   /** Hand a transcript to the app (shared by live and upload paths). False if nothing usable. */
   const deliver = useCallback((cap: CaptureState, raw: string, via: string): boolean => {
+    if (cap.cancelled) {
+      logEvent('heard', `"${raw}" (discarded: stopped)`);
+      return false;
+    }
     if (cap.needsConfirm) {
       if (jarvisCheck(raw, true) !== 'yes') {
         logEvent('wake', `Not "Jarvis" ("${raw}"); ignored`);
@@ -259,6 +267,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       o += a.length;
     }
     transcribingRef.current = true;
+    uploadingCapRef.current = cap;
     setState('transcribing');
     if (!cap.needsConfirm) setInterimTranscript('…');
     try {
@@ -280,6 +289,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       logEvent('wake', `Transcription error: ${(err as Error).message}`);
     } finally {
       transcribingRef.current = false;
+      if (uploadingCapRef.current === cap) uploadingCapRef.current = null;
       toStandby();
     }
   }, [deliver, endCapture, toStandby]);
@@ -379,6 +389,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       needsConfirm: Boolean(confirm),
       gateDb,
       gateState,
+      cancelled: false,
     };
 
     if (getLiveTranscription() && !liveTranscriptionUnavailable()) {
@@ -621,7 +632,10 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       if (chunkHasSpeech) lastSpeechChunkAtRef.current = now;
       const eligible = () => {
         const c = captureRef.current;
-        return L.wakeWordEnabled && !L.isJarvisSpeaking && !transcribingRef.current && !c;
+        // While he's only thinking (silent), "Jarvis, stop" should work; while he's talking, his
+        // own sentence starts would keep waking this detector, so only "hey Jarvis" interrupts then
+        const talking = L.isJarvisTalking ?? L.isJarvisSpeaking;
+        return L.wakeWordEnabled && !talking && !transcribingRef.current && !c;
       };
       let feed: Float32Array | null = null;
       if (chunkHasSpeech && quietBefore > ONSET_QUIET_MS && eligible()) {
@@ -688,5 +702,14 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     else cancelCapture();
   }, [finishWithUpload, cancelCapture, toStandby]);
 
-  return { isListening, transcript, interimTranscript, startListening, stopListening };
+  /** Stop listening and throw away whatever was heard, including a transcription in flight */
+  const cancelListening = useCallback(() => {
+    const cap = captureRef.current;
+    if (cap) cap.cancelled = true;
+    if (uploadingCapRef.current) uploadingCapRef.current.cancelled = true;
+    cancelCapture();
+    setTranscript('');
+  }, [cancelCapture]);
+
+  return { isListening, transcript, interimTranscript, startListening, stopListening, cancelListening };
 }

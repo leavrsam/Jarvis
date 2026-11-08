@@ -68,6 +68,17 @@ A full-screen, futuristic sci-fi voice assistant web HUD inspired by Stark Indus
 - Prioritizes British voices: `en-GB-RyanNeural` (Microsoft Edge Natural Voice), `Google UK English Male`, `Daniel`, and `en-GB` variants.
 - Routes synthesized voice cadences into the Web Audio `AnalyserNode` to drive real-time visualizer oscillations during vocal playback.
 
+**Stop, at any step:** the red **Stop** button (under the reactor and in the conversation panel;
+on phones it replaces the type button) or **Esc** cancels whatever Jarvis is doing: listening
+(what was heard is thrown away, even mid-transcription), thinking (the n8n request is cancelled),
+talking (voice and queued sentences cut), a ringing timer and the follow-up window. No reply;
+the wake word still works. Saying **"stop"** does the same when it's the whole sentence ("stop",
+"Jarvis, stop", "cancel", "never mind", "be quiet", "enough"...): handled on the device, never
+sent to n8n. Longer requests like "stop the music" still go to n8n. While he's talking, start with
+"hey Jarvis" ("Hey Jarvis, stop"); while he's thinking, plain "Jarvis, stop" works. Music isn't
+stopped by Stop. On Android with "release mic while speaking" on, the mic is closed while he
+answers, so use the button there.
+
 **While thinking:** Jarvis no longer says "One moment, sir" (it had to finish before the real
 answer could start). If a reply isn't playing after 0.6 s, a soft low pulsing tone fades in and is
 cut the instant his first word plays, so it never delays the answer; quick replies skip it.

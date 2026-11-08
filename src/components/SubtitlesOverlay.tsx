@@ -4,8 +4,8 @@ import {
   MicOff, 
   Send, 
   Volume2, 
-  VolumeX, 
   Terminal, 
+  Square,
   Loader2, 
   MessageSquare, 
   RotateCcw, 
@@ -39,6 +39,8 @@ interface SubtitlesOverlayProps {
   onToggleListening: () => void;
   onSubmitText: (text: string) => void;
   onStopSpeaking: () => void;
+  /** Jarvis is listening, thinking, talking or a timer rings: show Stop */
+  canStop?: boolean;
   onReplayResponse?: (text: string) => void;
   onClearHistory?: () => void;
 }
@@ -58,6 +60,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
   onToggleListening,
   onSubmitText,
   onStopSpeaking,
+  canStop = false,
   onReplayResponse,
   onClearHistory,
 }) => {
@@ -275,7 +278,17 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             <span className="font-orbitron text-[10px] tracking-wider whitespace-nowrap"><span className="max-[379px]:hidden">LOGS </span>({history.length})</span>
           </button>
 
-          {/* Toggle Manual Command Input */}
+          {/* While Jarvis is busy: Stop. Otherwise: type a command instead of talking */}
+          {canStop ? (
+            <button
+              onClick={onStopSpeaking}
+              className="p-2.5 rounded-full border border-red-500/60 bg-red-950/40 text-red-200 hover:bg-red-900/50 hover:border-red-400 transition-all"
+              title="Stop"
+              aria-label="Stop"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          ) : (
           <button
             onClick={() => setShowInput((prev) => !prev)}
             className={`p-2.5 rounded-full border transition-all ${
@@ -287,6 +300,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
           >
             <Terminal className="w-4 h-4" />
           </button>
+          )}
 
           {/* Central Push-to-Talk Mic Button */}
           <button
@@ -312,16 +326,6 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             </span>
           </button>
 
-          {/* Stop Voice / Mute TTS Button */}
-          {state === 'speaking' && (
-            <button
-              onClick={onStopSpeaking}
-              className="p-2.5 rounded-full border border-red-500/60 bg-red-950/30 text-red-300 hover:bg-red-900/50 hover:border-red-400 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-pulse"
-              title="Silence Jarvis Voice"
-            >
-              <VolumeX className="w-4 h-4" />
-            </button>
-          )}
         </div>
       </footer>
 

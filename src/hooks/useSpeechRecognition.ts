@@ -52,6 +52,8 @@ export interface UseSpeechRecognitionOptions {
   silenceTimeoutMs?: number;
   followUpTimeoutMs?: number;
   isJarvisSpeaking?: boolean;
+  /** Jarvis's voice is actually playing (isJarvisSpeaking also covers silent thinking) */
+  isJarvisTalking?: boolean;
   currentJarvisSpeech?: string;
   wakeWordEnabled?: boolean;
 }
@@ -522,6 +524,24 @@ export function useSpeechRecognition({
     }
   }, [clearSilenceTimer, clearFollowUpTimer, restartRecognition, triggerSubmission]);
 
+  /** Stop listening and throw away whatever was heard (nothing is submitted) */
+  const cancelListening = useCallback(() => {
+    isListeningRef.current = false;
+    setIsListening(false);
+    clearSilenceTimer();
+    clearFollowUpTimer();
+    setTranscript('');
+    setInterimTranscript('');
+    activeTranscriptRef.current = '';
+    if (isStandbyRef.current) {
+      restartRecognition();
+    } else if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+    }
+  }, [clearSilenceTimer, clearFollowUpTimer, restartRecognition]);
+
   const toggleListening = useCallback(() => {
     if (isListening) {
       stopListening();
@@ -539,6 +559,7 @@ export function useSpeechRecognition({
     error,
     startListening,
     stopListening,
+    cancelListening,
     toggleListening,
     triggerSubmission,
     restartRecognition,

@@ -18,6 +18,7 @@ import { StateCaption } from './components/hud/StateCaption';
 import { parseDirective } from './services/directives';
 import { applyScreenDirective, subscribeScreen } from './services/screenController';
 import { addTimer, cancelTimers, dismissRinging, doneAnnouncement, fireDue, ringingTimers } from './services/timers';
+import { isStopCommand } from './services/stopCommand';
 import { TimerStack } from './components/hud/TimerStack';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { streamJarvisCommand, JarvisBackendError } from './services/jarvisBackend';
@@ -171,6 +172,9 @@ export const App: React.FC = () => {
   const requestAbortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
 
+  // "Stop everything" (Stop button, Esc, or saying "stop"). Set once the listening engines exist.
+  const stopEverythingRef = useRef<(why: string) => void>(() => {});
+
   // Cancel the reply in progress: abort the fetch, stop audio and drop queued sentences
   const interruptCurrentReply = useCallback(() => {
     requestIdRef.current++;
@@ -231,6 +235,8 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('jarvis:edit-layout', toggle);
   }, []);
   const stopEditingLayout = useCallback(() => setEditingLayout(false), []);
+  const editingLayoutRef = useRef(false);
+  editingLayoutRef.current = editingLayout;
   // Push notifications that arrive while Jarvis is open
   const [toast, setToast] = useState<PushNote | null>(null);
   const closeToast = useCallback(() => setToast(null), []);
@@ -298,6 +304,14 @@ export const App: React.FC = () => {
     setFollowUpWindow(null);
 
     const trimmedQuery = query.trim();
+
+    // "Stop" / "Jarvis, stop" / "cancel" / "never mind" as the whole command: just stop, no reply,
+    // nothing sent to n8n (also silences a ringing timer)
+    if (isStopCommand(trimmedQuery)) {
+      timerSilencedAtRef.current = 0;
+      stopEverythingRef.current(`said "${trimmedQuery}"`);
+      return;
+    }
 
     // "Hey Jarvis, stop" while a timer rings (or just after "hey Jarvis" silenced it): that's
     // for the timer, not a question for n8n
@@ -659,6 +673,8 @@ export const App: React.FC = () => {
     followUpTimeoutMs: FOLLOW_UP_AFTER_STATEMENT_MS, // per window: see resumeFollowUpListening
     // 'processing' also covers the gap between the first streamed text and the first audio
     isJarvisSpeaking: audioState === 'speaking' || audioState === 'processing' || isProcessing || !isAuthenticated,
+    // Only while his voice actually plays: while he's silently thinking, plain "Jarvis, stop" works
+    isJarvisTalking: audioState === 'speaking' || !isAuthenticated,
     currentJarvisSpeech: audioState === 'speaking' ? lastResponse : '',
     wakeWordEnabled: isWakeWordActive,
     getEchoReference: (tailMs?: number) => audioEngine.getEchoReference(tailMs),
@@ -673,9 +689,35 @@ export const App: React.FC = () => {
       setBuiltInUnavailable(true);
     },
   });
-  const { isListening, transcript, interimTranscript, startListening, stopListening } = builtInEnabled
+  const { isListening, transcript, interimTranscript, startListening, stopListening, cancelListening } = builtInEnabled
     ? builtInListening
     : browserListening;
+
+  /**
+   * Stop whatever Jarvis is doing, at any step: listening (what was heard is thrown away),
+   * thinking (the n8n request is cancelled), talking (voice and queued sentences cut), a ringing
+   * timer, the follow-up window. No reply; back to standby (the wake word still works). Music
+   * isn't touched: "stop the music" is a request like any other.
+   */
+  const stopEverything = useCallback(
+    (why: string) => {
+      followUpOpenRef.current = false;
+      setFollowUpWindow(null);
+      inConversationRef.current = false;
+      interruptCurrentReply(); // n8n request, voice, queued sentences, thinking tone
+      const timers = dismissRinging();
+      cancelListening();
+      audioEngine.stopMicListening();
+      audioEngine.setState('idle');
+      setAudioState('idle');
+      setIsProcessing(false);
+      logEvent('command', `Stopped (${why})${timers ? `; ${timers} timer${timers > 1 ? 's' : ''} silenced` : ''}`);
+    },
+    [interruptCurrentReply, cancelListening]
+  );
+  stopEverythingRef.current = stopEverything;
+  /** Anything to stop right now (shows the Stop button) */
+  const jarvisActive = isListening || audioState !== 'idle' || isProcessing || ringingTimers().length > 0;
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -721,6 +763,11 @@ export const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      // Esc: stop everything (the layout editor uses Esc itself)
+      if (e.key === 'Escape' && !editingLayoutRef.current) {
+        stopEverythingRef.current('Esc');
+        return;
+      }
       if (isInput) return;
 
       // 1. Plain Spacebar push-to-talk / toggle
@@ -835,11 +882,7 @@ export const App: React.FC = () => {
     );
   }, []);
 
-  const handleStopSpeaking = useCallback(() => {
-    inConversationRef.current = false;
-    interruptCurrentReply();
-    setAudioState('idle');
-  }, [interruptCurrentReply]);
+  const handleStopSpeaking = useCallback(() => stopEverything('Stop button'), [stopEverything]);
 
   // Lock Console action: ends the server session on this device
   const handleLockConsole = useCallback(() => {
@@ -972,6 +1015,7 @@ export const App: React.FC = () => {
             onToggleListening={handleToggleListening}
             onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
             onStopSpeaking={handleStopSpeaking}
+            canStop={jarvisActive}
             onReplayResponse={handleReplay}
             onClearHistory={() => setHistory([])}
           />
@@ -1021,7 +1065,13 @@ export const App: React.FC = () => {
         >
           <ArcReactorVisualizer state={audioState} onReactorClick={handleToggleListening} />
           {!screenActive && (
-            <StateCaption state={audioState} isListening={isListening} isProcessing={isProcessing} wakeActive={isWakeWordActive} />
+            <StateCaption
+              state={audioState}
+              isListening={isListening}
+              isProcessing={isProcessing}
+              wakeActive={isWakeWordActive}
+              onStop={jarvisActive && !editingLayout ? handleStopSpeaking : undefined}
+            />
           )}
         </section>
 
@@ -1077,6 +1127,7 @@ export const App: React.FC = () => {
           onToggleListening={handleToggleListening}
           onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
           onStopSpeaking={handleStopSpeaking}
+            canStop={jarvisActive}
           onReplayResponse={handleReplay}
           onClearHistory={() => setHistory([])}
         />

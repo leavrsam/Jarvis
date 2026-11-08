@@ -23,6 +23,8 @@ interface ConversationPanelProps {
   onToggleListening: () => void;
   onSubmitText: (text: string) => void;
   onStopSpeaking: () => void;
+  /** Jarvis is listening, thinking, talking or a timer rings: show Stop */
+  canStop?: boolean;
   onReplayResponse?: (text: string) => void;
   onClearHistory?: () => void;
 }
@@ -140,7 +142,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = (p) => {
             </div>
             {reply && (
               <div className="mt-3 flex items-center gap-2">
-                {p.state === 'speaking' ? (
+                {p.canStop ? (
                   <button
                     onClick={p.onStopSpeaking}
                     className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-red-500/50 text-red-200 text-[12px] hover:bg-red-950/40"
@@ -207,6 +209,17 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = (p) => {
         >
           <Mic className="w-4 h-4" />
         </button>
+        {p.canStop && (
+          <button
+            type="button"
+            onClick={p.onStopSpeaking}
+            title="Stop (Esc)"
+            aria-label="Stop"
+            className="w-10 h-10 rounded-full flex items-center justify-center border border-red-500/60 bg-red-950/40 text-red-200 hover:bg-red-900/50 hover:border-red-400 shrink-0"
+          >
+            <Square className="w-3.5 h-3.5 fill-current" />
+          </button>
+        )}
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
