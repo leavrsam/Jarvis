@@ -62,6 +62,23 @@ export const JARVIS_NEURAL_VOICES: JarvisNeuralVoicePreset[] = [
     hudDsp: true,
   },
   {
+    // Same designed voice and style on the faster, cheaper model, for comparing by ear
+    id: 'gemini-jarvis-designed-lite',
+    name: 'J.A.R.V.I.S. Mk-VII Lite (Gemini 3.8 Flash-Lite • Custom Voice Design)',
+    shortLabel: 'Gemini 3.8 Jarvis Lite',
+    provider: 'gemini',
+    model: 'gemini-3.8-flash-lite-tts',
+    voice: 'AUTO_DESIGN_JARVIS',
+    edgeVoice: 'en-GB-ThomasNeural',
+    accent: 'en-GB • Custom Designed AI Butler',
+    description:
+      'Your designed Jarvis voice on Gemini 3.8 Flash-Lite TTS: built for low latency; may be slightly less nuanced than Flash.',
+    style: 'calm, precise, dryly understated',
+    rate: '+0%',
+    pitch: '-2Hz',
+    hudDsp: true,
+  },
+  {
     id: 'edge-ryan-mk7',
     name: 'Edge Neural Backup (Ryan Neural • Free Fallback)',
     shortLabel: 'Ryan Neural (Edge)',
@@ -250,6 +267,7 @@ class JarvisAudioEngine {
 
   public setVoicePreset(presetId: string): JarvisNeuralVoicePreset {
     const found = JARVIS_NEURAL_VOICES.find((p) => p.id === presetId) || JARVIS_NEURAL_VOICES[0];
+    if (found.model !== this.selectedPreset.model) this.ackBuffers.clear(); // acks are per model
     this.selectedPreset = found;
     try {
       localStorage.setItem('jarvis_neural_voice_id', found.id);
@@ -1270,7 +1288,7 @@ class JarvisAudioEngine {
   }
 
   private ackStorageKey(phrase: string): string {
-    return `jarvis_ack::${this.customDesignedVoiceId}::${this.getEffectiveStyle()}::${phrase}`;
+    return `jarvis_ack::${this.selectedPreset.model}::${this.customDesignedVoiceId}::${this.getEffectiveStyle()}::${phrase}`;
   }
 
   /**
