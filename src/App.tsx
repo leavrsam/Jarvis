@@ -6,6 +6,9 @@ import { checkSession, logout, onAuthRequired } from './services/auth';
 import { logEvent } from './services/eventLog';
 import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
+import { ScreenPanel } from './components/ScreenPanel';
+import { parseDirective } from './services/directives';
+import { applyScreenDirective, subscribeScreen } from './services/screenController';
 import { audioEngine, JarvisAudioState, JarvisNeuralVoicePreset } from './services/audioEngine';
 import { streamJarvisCommand, JarvisBackendError } from './services/jarvisBackend';
 import { ReplyStreamProcessor } from './services/replyStream';
@@ -137,6 +140,10 @@ export const App: React.FC = () => {
     audioEngine.stopSpeaking();
     setIsProcessing(false);
   }, []);
+
+  // HUD screen up: the reactor moves aside on wide displays
+  const [screenActive, setScreenActive] = useState(false);
+  useEffect(() => subscribeScreen((st) => setScreenActive(Boolean(st.content))), []);
 
   // Sync speaking state & handle intelligent YouTube audio ducking
   useEffect(() => {
@@ -287,8 +294,17 @@ export const App: React.FC = () => {
 
     let gotText = false;
     const reply = new ReplyStreamProcessor({
-      // Playback directives (PLAY_YOUTUBE: <id>, SET_VOLUME: 40, ...) are executed, never spoken
+      // Directives (PLAY_YOUTUBE: <id>, SHOW_IMAGE: <url>, CLEAR_SCREEN, ...) are executed, never spoken
       onDirective: (directive) => {
+        const parsed = parseDirective(directive);
+        if (parsed && applyScreenDirective(parsed)) {
+          logEvent('command', `Screen: ${directive.slice(0, 80)}`);
+          return;
+        }
+        if (!parsed && /^SHOW_(?:IMAGE|VIDEO|CAMERA)/i.test(directive.trim())) {
+          logEvent('command', `Ignored screen directive (needs an https URL / valid camera name): ${directive.slice(0, 80)}`);
+          return;
+        }
         handleJarvisResponse(directive);
       },
       onSentence: (sentence) => speech.enqueue(sentence),
@@ -701,13 +717,21 @@ export const App: React.FC = () => {
         onToggleWakeWordMode={handleToggleWakeWordMode}
         onToggleWakeWordScope={handleToggleWakeWordScope}
         onSelectVoicePreset={handleSelectVoicePreset}
+        screenActive={screenActive}
       />
 
       {/* Futuristic Sci-Fi YouTube Audio Controller Widget */}
       <YouTubeMediaHUD />
 
-      {/* Center Holographic Arc-Reactor Three.js Visualizer */}
-      <section className="relative w-full h-full flex items-center justify-center z-10">
+      {/* Jarvis's screen (SHOW_IMAGE / SHOW_VIDEO / SHOW_CAMERA) */}
+      <ScreenPanel />
+
+      {/* Center Holographic Arc-Reactor Three.js Visualizer (moves right while the screen is up) */}
+      <section
+        className={`relative h-full flex items-center justify-center z-10 transition-all duration-700 ${
+          screenActive ? 'w-full lg:w-[34%] lg:ml-auto' : 'w-full'
+        }`}
+      >
         <ArcReactorVisualizer
           state={audioState}
           onReactorClick={handleToggleListening}

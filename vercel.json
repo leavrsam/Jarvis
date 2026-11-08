@@ -11,6 +11,9 @@
     },
     "api/transcribe.js": {
       "maxDuration": 30
+    },
+    "api/camera.js": {
+      "maxDuration": 30
     }
   }
 }

@@ -1,11 +1,13 @@
 /**
  * Turns a reply that arrives in pieces into:
- *  - leading playback directives (PLAY_YOUTUBE: <id>, PAUSE_YOUTUBE, SET_VOLUME: 40, ...)
+ *  - leading directives (PLAY_YOUTUBE: <id>, SET_VOLUME: 40, SHOW_IMAGE: <url>, ... see directives.ts)
  *  - complete sentences, released as soon as each one ends, for sentence-level TTS
  *  - a clean display string for the on-screen transcript
  *
  * Pure logic with no DOM or audio dependencies.
  */
+
+import { ANY_DIRECTIVE_RE, ARG_KEYWORDS, DIRECTIVE_KEYWORDS, LEADING_DIRECTIVE_RE } from './directives';
 
 export interface ReplyStreamHandlers {
   /** A directive to execute, e.g. "PLAY_YOUTUBE: dQw4w9WgXcQ". */
@@ -16,33 +18,12 @@ export interface ReplyStreamHandlers {
   onDisplay?: (text: string) => void;
 }
 
-const DIRECTIVE_KEYWORDS = [
-  'PLAY_YOUTUBE_PLAYLIST',
-  'PLAY_YOUTUBE',
-  'PAUSE_YOUTUBE',
-  'RESUME_YOUTUBE',
-  'STOP_YOUTUBE',
-  'NEXT_YOUTUBE',
-  'YOUTUBE_NEXT',
-  'PREV_YOUTUBE',
-  'PREVIOUS_YOUTUBE',
-  'YOUTUBE_PREV',
-  'SET_VOLUME',
-];
-const ARG_KEYWORDS = new Set(['PLAY_YOUTUBE_PLAYLIST', 'PLAY_YOUTUBE', 'SET_VOLUME']);
-
-// A complete directive at the very start of the text
-const LEADING_DIRECTIVE_RE =
-  /^(?:PLAY_YOUTUBE_PLAYLIST:\s*\[?[A-Za-z0-9_-]+\]?|PLAY_YOUTUBE:\s*\[?[A-Za-z0-9_-]+\]?|SET_VOLUME:\s*\d{1,3}|PAUSE_YOUTUBE|RESUME_YOUTUBE|STOP_YOUTUBE|NEXT_YOUTUBE|YOUTUBE_NEXT|PREV_YOUTUBE|PREVIOUS_YOUTUBE|YOUTUBE_PREV)/i;
-
-// The same directives anywhere in the text (used for stripping and for late directives)
-const ANY_DIRECTIVE_RE =
-  /PLAY_YOUTUBE_PLAYLIST:\s*\[?[A-Za-z0-9_-]+\]?|PLAY_YOUTUBE:\s*\[?[A-Za-z0-9_-]+\]?|SET_VOLUME:\s*\d{1,3}|\b(?:PAUSE_YOUTUBE|RESUME_YOUTUBE|STOP_YOUTUBE|NEXT_YOUTUBE|YOUTUBE_NEXT|PREV_YOUTUBE|PREVIOUS_YOUTUBE|YOUTUBE_PREV)\b/gi;
-
 export const PAUSE_TAG_RE = /<\s*(?:short|medium|long)?\s*pause\s*>/gi;
 
 /** Never hold the reply back longer than this while deciding whether it starts with a directive. */
 const MAX_DIRECTIVE_HOLD = 80;
+/** SHOW_IMAGE / SHOW_VIDEO lines carry URLs, which can be long */
+const MAX_URL_DIRECTIVE_HOLD = 2048;
 
 // Words that end in "." without ending a sentence
 const ABBREVIATIONS = new Set([
@@ -73,6 +54,8 @@ export function checkLeadingDirective(text: string, final: boolean): DirectiveCh
   const match = LEADING_DIRECTIVE_RE.exec(text);
   if (match) {
     const end = match[0].length;
+    // A camera name runs to the end of its line, which may not have arrived yet
+    if (!final && /^SHOW_CAMERA/i.test(match[0]) && !text.slice(end).includes('\n')) return { kind: 'pending' };
     // The id/number may still be arriving unless something follows it (or the stream is over)
     const next = text[end];
     if (next === undefined && !final) return { kind: 'pending' };
@@ -90,6 +73,7 @@ export function checkLeadingDirective(text: string, final: boolean): DirectiveCh
     // Keyword complete, argument still arriving
     const rest = text.slice(word.length);
     if (/^:?\s*\[?[A-Za-z0-9_-]*$/.test(rest)) return { kind: 'pending' };
+    if (word.startsWith('SHOW_') && /^:[ \t]*\S*$/.test(rest)) return { kind: 'pending' };
   }
   return { kind: 'none' };
 }
@@ -164,7 +148,8 @@ export class ReplyStreamProcessor {
         if (!text && !final) return;
 
         let check = checkLeadingDirective(text, final);
-        if (check.kind === 'pending' && text.length > MAX_DIRECTIVE_HOLD) check = { kind: 'none' };
+        const hold = /^SHOW_/i.test(text) ? MAX_URL_DIRECTIVE_HOLD : MAX_DIRECTIVE_HOLD;
+        if (check.kind === 'pending' && text.length > hold) check = { kind: 'none' };
         if (check.kind === 'pending') return;
         if (check.kind === 'directive') {
           this.handlers.onDirective?.(text.slice(0, check.length));

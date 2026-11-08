@@ -376,7 +376,31 @@ export function toggleMute() {
  * Lowers music volume to ~20% while Jarvis is vocalizing or listening for commands,
  * then smoothly restores it back to the original level.
  */
+// Other media (the HUD screen's videos) follows the same "Jarvis is talking/listening" signal
+let duckRequested = false;
+const duckListeners = new Set<(ducked: boolean) => void>();
+
+function setDuckRequested(ducked: boolean) {
+  if (duckRequested === ducked) return;
+  duckRequested = ducked;
+  duckListeners.forEach((l) => {
+    try {
+      l(ducked);
+    } catch {}
+  });
+}
+
+/** Called with true while Jarvis is speaking, listening or thinking, false when he's idle again */
+export function subscribeDuck(listener: (ducked: boolean) => void): () => void {
+  duckListeners.add(listener);
+  listener(duckRequested);
+  return () => {
+    duckListeners.delete(listener);
+  };
+}
+
 export function duckVolume(targetPercent = 20) {
+  setDuckRequested(true);
   if (!isPlaying || isDucked) return;
   isDucked = true;
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
@@ -389,6 +413,7 @@ export function duckVolume(targetPercent = 20) {
 }
 
 export function restoreVolume() {
+  setDuckRequested(false);
   if (!isDucked) return;
   isDucked = false;
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {

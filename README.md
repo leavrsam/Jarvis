@@ -178,15 +178,48 @@ meter (trigger at 0.8), detections, transcriptions and errors. If the models can
 
 ---
 
+## 🖥️ Jarvis's Screen (images, video, cameras)
+
+Jarvis can put things on a screen in the HUD. Like the YouTube directives, these go at the start
+of a reply, one per line. They are carried out and never spoken or shown in the subtitles:
+
+| Directive | What it does |
+| --- | --- |
+| `SHOW_IMAGE: <https url>` | Shows the image, fading in. Stays until `CLEAR_SCREEN`, another `SHOW_*`, the ✕ button, or 3 minutes. |
+| `SHOW_VIDEO: <https url>` | Plays a direct video file (mp4/webm) with controls. It is muted while Jarvis talks or listens, like YouTube's volume ducking. Close it with ✕. |
+| `SHOW_CAMERA: <camera name>` | Shows a snapshot from `/api/camera`, with its caption ("Live" or "Last motion 2:39 PM"), a refresh button, and an automatic refresh every 60 s. Closes after 3 minutes. |
+| `CLEAR_SCREEN` | Hides the screen. |
+
+Example reply: `SHOW_CAMERA: front door` on the first line, then `Here's the front door, sir.`
+
+- Only `https://` URLs are loaded. Anything else is ignored.
+- A camera name may contain letters, digits, spaces and `_ - .`, up to 64 characters.
+- If an image, video or camera snapshot fails to load, the screen shows "Couldn't load that …".
+- On wide displays (the kiosk/TV), the screen fills the left side, the reactor moves to the right,
+  and the subtitles stay at the bottom.
+
+**Camera proxy:** `GET /api/camera?camera=<name>` calls `JARVIS_MEDIA_URL?camera=<name>` with the
+`X-Jarvis-Key: JARVIS_WEBHOOK_SECRET` header (the same secret as the command proxy). It returns
+the image plus its `X-Image-Source` header. Requests need a login session, come from the same
+origin only, and are limited to 30/min. Set
+`JARVIS_MEDIA_URL=https://n8n.wolfcubventures.com/webhook/jarvis-media` in Vercel → Settings →
+Environment Variables (server-side, no `VITE_`). The n8n webhook must answer with an image
+(`image/jpeg` or `image/png`; SVG is refused).
+
+The directive parser lives in `src/services/directives.ts` and its tests in
+`src/services/directives.test.ts`. Run them with `npm test`.
+
+---
+
 ## 🔒 Server Route Protection
 
-All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`) share `api/_lib/requestGuard.js`:
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/camera`) share `api/_lib/requestGuard.js`:
 
 - **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
   `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
   No CORS headers are sent, so other sites' pages can't call these routes. Add extra origins with
   `JARVIS_ALLOWED_ORIGINS` (comma-separated) if you ever need to.
-- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min
+- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/camera` 30/min
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
 - All of them also require a logged-in session (see **Server-Side Login**).

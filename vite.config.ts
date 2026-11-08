@@ -11,6 +11,8 @@ import jarvisCommandHandler from './api/jarvis-command.js';
 import authHandler from './api/auth.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import transcribeHandler from './api/transcribe.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import cameraHandler from './api/camera.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -32,6 +34,7 @@ export default defineConfig(({ mode }) => {
     'VOICE_LAB_GOOGLE_VOICES',
     'JARVIS_WEBHOOK_URL',
     'JARVIS_WEBHOOK_SECRET',
+    'JARVIS_MEDIA_URL',
     'JARVIS_ALLOWED_ORIGINS',
     'JARVIS_LOGIN_PASSWORD',
     'JARVIS_SESSION_SECRET',
@@ -58,6 +61,10 @@ export default defineConfig(({ mode }) => {
           // Speech-to-text for the built-in listener
           server.middlewares.use('/api/transcribe', (req, res) => {
             void transcribeHandler(req, res);
+          });
+          // Camera snapshots for the HUD screen
+          server.middlewares.use('/api/camera', (req, res) => {
+            void cameraHandler(req, res);
           });
         },
       },

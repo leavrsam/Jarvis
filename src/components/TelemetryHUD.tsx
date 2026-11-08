@@ -52,6 +52,8 @@ interface TelemetryHUDProps {
   onToggleWakeWordMode?: () => void;
   onToggleWakeWordScope?: () => void;
   onSelectVoicePreset?: (preset: JarvisNeuralVoicePreset) => void;
+  /** Jarvis's screen is up: the right-hand cards make way for the reactor */
+  screenActive?: boolean;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
@@ -72,6 +74,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   onToggleWakeWordMode,
   onToggleWakeWordScope,
   onSelectVoicePreset,
+  screenActive = false,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>(() => new Date().toTimeString().split(' ')[0]);
   const coreFreq = 4.80;
@@ -429,7 +432,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
       </aside>
 
       {/* RIGHT SCI-FI TELEMETRY PANEL (DESKTOP) */}
-      <aside className="absolute top-20 right-6 bottom-28 w-64 z-20 hidden lg:flex flex-col justify-between pointer-events-none">
+      <aside className={`absolute top-20 right-6 bottom-28 w-64 z-20 hidden ${screenActive ? '' : 'lg:flex'} flex-col justify-between pointer-events-none`}>
         {/* Subsystems Matrix */}
         <div className="p-3.5 rounded-lg border border-amber-900/50 bg-black/60 backdrop-blur-md pointer-events-auto space-y-2 shadow-[0_0_20px_rgba(0,0,0,0.8)]">
           <div className="flex items-center justify-between text-xs font-orbitron text-amber-400">
