@@ -85,10 +85,25 @@ function secretMatches(given) {
 
 // ---------------------------------------------------------------------------- device store (Redis REST)
 
-function storeConfig() {
-  const url = (process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '').trim().replace(/\/+$/, '');
-  const token = (process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '').trim();
-  return url && token ? { url, token } : null;
+/**
+ * Upstash Redis REST credentials. Vercel's Upstash integration sets KV_REST_API_URL / _TOKEN or
+ * UPSTASH_REDIS_REST_URL / _TOKEN, optionally with a custom prefix ("STORAGE_KV_REST_API_URL"),
+ * so any prefix is accepted. (Not the read-only token: we write.)
+ */
+export function storeConfig(env = process.env) {
+  for (const [urlSuffix, tokenSuffix] of [
+    ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'],
+    ['KV_REST_API_URL', 'KV_REST_API_TOKEN'],
+  ]) {
+    const urlKeys = Object.keys(env).filter((k) => k.endsWith(urlSuffix) && env[k]).sort((a, b) => a.length - b.length);
+    for (const urlKey of urlKeys) {
+      const prefix = urlKey.slice(0, urlKey.length - urlSuffix.length);
+      const url = String(env[urlKey]).trim().replace(/\/+$/, '');
+      const token = String(env[prefix + tokenSuffix] || '').trim();
+      if (/^https:\/\//.test(url) && token) return { url, token };
+    }
+  }
+  return null;
 }
 
 async function redis(command) {
@@ -218,7 +233,7 @@ async function sendToAll(note, onlyEndpoint) {
 function missingConfig() {
   const missing = [];
   if (!vapid()) missing.push('VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY');
-  if (!storeConfig()) missing.push('UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');
+  if (!storeConfig()) missing.push('Upstash Redis (KV_REST_API_URL / KV_REST_API_TOKEN)');
   return missing;
 }
 

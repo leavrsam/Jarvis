@@ -313,9 +313,9 @@ automatically.
 1. Keys: run `npx web-push generate-vapid-keys` and set `VAPID_PUBLIC_KEY` and
    `VAPID_PRIVATE_KEY` in Vercel → Settings → Environment Variables. Optional: `VAPID_SUBJECT`
    (`mailto:you@example.com`).
-2. A small store for the device list: Vercel → Storage → add **Upstash Redis** (free tier) and
+2. A small store for the device list: Vercel → Storage → **Upstash** → **Upstash for Redis** (free tier; not the separate "Redis" entry, which is a different service) and
    connect it to the project. It sets `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or set
-   `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` yourself).
+   `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` yourself). A custom prefix on these names is fine.
 3. `JARVIS_NOTIFY_SECRET`: a long random string for n8n's requests (falls back to
    `JARVIS_WEBHOOK_SECRET`).
 4. Redeploy, then turn notifications on in Settings on each device and press **Send test**.

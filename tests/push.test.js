@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNotification } from '../api/push.js';
+import { parseNotification, storeConfig } from '../api/push.js';
 
 const noHeaders = () => '';
 const headers = (h) => (...names) => {
@@ -30,5 +30,19 @@ describe('parseNotification', () => {
     expect(parseNotification('{}', 'application/json', noHeaders)).toBeNull();
     expect(parseNotification('{not json', 'application/json', noHeaders)).toBeNull();
     expect(parseNotification('[1,2]', 'application/json', noHeaders)).toBeNull();
+  });
+});
+
+describe('storeConfig', () => {
+  const url = 'https://example.upstash.io';
+  it('reads the names Vercel sets, with or without a custom prefix', () => {
+    expect(storeConfig({ KV_REST_API_URL: url, KV_REST_API_TOKEN: 't' })).toEqual({ url, token: 't' });
+    expect(storeConfig({ UPSTASH_REDIS_REST_URL: url, UPSTASH_REDIS_REST_TOKEN: 't' })).toEqual({ url, token: 't' });
+    expect(storeConfig({ STORAGE_KV_REST_API_URL: url + '/', STORAGE_KV_REST_API_TOKEN: 't' })).toEqual({ url, token: 't' });
+  });
+  it('needs a matching token and an https URL; ignores the read-only token', () => {
+    expect(storeConfig({ KV_REST_API_URL: url, KV_REST_API_READ_ONLY_TOKEN: 'r' })).toBeNull();
+    expect(storeConfig({ KV_URL: 'rediss://x', REDIS_URL: 'redis://y' })).toBeNull();
+    expect(storeConfig({ A_KV_REST_API_URL: url, B_KV_REST_API_TOKEN: 't' })).toBeNull();
   });
 });
