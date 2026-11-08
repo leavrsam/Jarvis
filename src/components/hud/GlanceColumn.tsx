@@ -1,5 +1,5 @@
-// Left column of the wide (kiosk / desktop) HUD: things worth seeing at a glance.
-// Clock and greeting, local weather, what's playing, and how Jarvis is doing.
+// The HUD's "at a glance" cards: clock and greeting, local weather, calendar, what's playing,
+// and how Jarvis is doing. Placed by WidgetBoard (movable on wide screens, stacked on phones).
 import React, { useEffect, useState } from 'react';
 import {
   Cloud,
@@ -87,7 +87,7 @@ function greeting(hour: number) {
 
 // ---------------------------------------------------------------------------- Clock
 
-const ClockCard: React.FC<{ name?: string }> = ({ name }) => {
+export const ClockCard: React.FC<{ name?: string }> = ({ name }) => {
   const now = useNow(1000);
   const h = now.getHours();
   const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '');
@@ -132,7 +132,7 @@ function WeatherIcon({ code, isDay = true, className = '' }: { code: number; isD
 const fmtHour = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s/g, '').toLowerCase();
 const fmtTime = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-const WeatherCard: React.FC = () => {
+export const WeatherCard: React.FC = () => {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState('');
   const [precise, setPrecise] = useState(true);
@@ -306,7 +306,7 @@ const Dot: React.FC<{ color: string; className?: string }> = ({ color, className
   <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${className}`} style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}99` }} />
 );
 
-const CalendarCard: React.FC = () => {
+export const CalendarCard: React.FC = () => {
   const now = useNow(30_000);
   const [events, setEvents] = useState<CalendarEvent[] | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
@@ -575,10 +575,18 @@ const CalendarCard: React.FC = () => {
 
 // ---------------------------------------------------------------------------- Now playing
 
-const NowPlayingCard: React.FC = () => {
+/** Hidden when nothing is playing, unless `showIdle` (layout mode shows where it will appear) */
+export const NowPlayingCard: React.FC<{ showIdle?: boolean }> = ({ showIdle }) => {
   const [yt, setYt] = useState<YouTubePlaybackState | null>(null);
   useEffect(() => subscribeYouTubeState(setYt), []);
-  if (!yt || (!yt.videoId && !yt.playlistId && !yt.isPlaying && !yt.isPaused)) return null;
+  if (!yt || (!yt.videoId && !yt.playlistId && !yt.isPlaying && !yt.isPaused)) {
+    return showIdle ? (
+      <div className="hud-panel px-5 py-3.5">
+        <span className="hud-label">Now playing</span>
+        <p className="mt-1.5 text-[12px] text-amber-500/80">Shows here while music is playing.</p>
+      </div>
+    ) : null;
+  }
   const title = yt.title && !/^(Track|Playlist): /.test(yt.title) ? yt.title : yt.playlistId ? 'YouTube playlist' : 'YouTube';
   return (
     <div className="hud-panel px-5 py-3.5">
@@ -652,7 +660,7 @@ const Row: React.FC<{ tone: Tone; label: string; value: React.ReactNode; onClick
 
 const secs = (ms: number) => (ms ? `${(ms / 1000).toFixed(1)} s` : '—');
 
-interface SystemCardProps {
+export interface SystemCardProps {
   audioState: JarvisAudioState;
   isListening: boolean;
   isProcessing: boolean;
@@ -666,7 +674,7 @@ interface SystemCardProps {
   onOpenVoiceId?: () => void;
 }
 
-const SystemCard: React.FC<SystemCardProps> = (p) => {
+export const SystemCard: React.FC<SystemCardProps> = (p) => {
   useNow(1000); // refresh the live figures
   const liveOn = p.engine === 'builtin' && getLiveTranscription() && !liveTranscriptionUnavailable();
   const wakeReady = p.engine === 'browser' || builtInStats.modelStatus === 'ready';
@@ -748,19 +756,3 @@ const SystemCard: React.FC<SystemCardProps> = (p) => {
     </div>
   );
 };
-
-// ---------------------------------------------------------------------------- Column
-
-export interface GlanceColumnProps extends SystemCardProps {
-  ownerName?: string;
-}
-
-export const GlanceColumn: React.FC<GlanceColumnProps> = ({ ownerName, ...system }) => (
-  <aside className="absolute z-20 top-[72px] bottom-6 left-6 w-[330px] hidden lg:flex flex-col gap-4 overflow-y-auto hud-scroll pb-1">
-    <ClockCard name={ownerName} />
-    <WeatherCard />
-    <CalendarCard />
-    <NowPlayingCard />
-    <SystemCard {...system} />
-  </aside>
-);

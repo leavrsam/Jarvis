@@ -179,3 +179,25 @@
   scrollbar-width: thin;
   scrollbar-color: rgba(245, 158, 11, 0.35) transparent;
 }
+
+/* Widgets placed by WidgetBoard: the card fills its frame and scrolls if it's too small */
+.hud-widget-body > .hud-panel {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Short screens (phones in landscape) */
+@custom-variant short (@media (max-height: 500px));
+
+/* Phone/tablet widget stack: cards in the same row line up */
+.hud-widget-stack > div > .hud-panel {
+  height: 100%;
+}
+.hud-widget-stack {
+  display: flex;
+  flex-direction: column;
+}
+.hud-widget-stack > div:last-child {
+  flex: 1;
+}

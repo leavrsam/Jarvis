@@ -200,9 +200,24 @@ meter (trigger at 0.8), detections, transcriptions and errors. If the models can
 
 ---
 
-## 🧭 HUD Layout (wide screens / kiosk)
+## 🧭 HUD Layout
 
-On wide screens (TV, desktop) the middle stays clear for the reactor:
+**Widgets you can arrange.** The clock, weather, calendar, now playing, System and conversation
+cards are widgets. Tap **Layout** (grid icon) in the top bar to arrange them; **Done** or Esc
+finishes. The layout is saved on that device (browser storage), so a kiosk TV and a laptop can
+each have their own.
+- **Wide screens (1024 px and up):** drag a widget to move it, drag its bottom-right corner to
+  resize it (both snap to an 8 px grid and stay on screen), or focus it and use the arrow keys
+  (Shift + arrows resize). The eye button hides a widget; hidden widgets appear as **+ Name**
+  buttons in the toolbar. **Reset** restores the default layout. If the window size changes,
+  widgets on the right stay anchored to the right edge and positions and heights scale with the
+  height, so columns stay in order. Widgets may overlap; the last one you moved is on top.
+- **Phones and tablets (under 1024 px):** the first screen is the voice view (reactor,
+  subtitles, tap to talk). Scroll down for the widgets (**At a glance**). In layout mode each one
+  gets up / down / hide buttons. The conversation lives in the subtitles and **Logs** here, so it
+  isn't in the stack.
+
+By default on wide screens (TV, desktop) the middle stays clear for the reactor:
 - **Left, at a glance:** a large clock and date with a greeting; local weather (Open-Meteo, now
   plus the next 6 hours, no key); now playing, when music is on; and **System**, which shows real
   status: whether Jarvis is listening, the wake-word mode (tap to change), how your words are
@@ -216,6 +231,7 @@ On wide screens (TV, desktop) the middle stays clear for the reactor:
   for non-commercial use.
 - **Centre:** the reactor, with a one-line status under it (Standing by / Listening / Thinking /
   Speaking). When Jarvis's screen is up, it takes the centre and the reactor shrinks below it.
+  On shorter screens (under about 950 px tall) System sits under the conversation instead.
 - **Right, conversation:** the live transcript while you talk, the follow-up countdown, the
   current question and reply in large text with Repeat / Stop, earlier exchanges below, and
   talk / type controls.

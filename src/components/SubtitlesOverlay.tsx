@@ -129,7 +129,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
         <div className="flex flex-col items-center justify-center space-y-1 py-1">
           <div className="flex items-center space-x-2 text-amber-300 font-orbitron tracking-widest text-xs animate-pulse">
             <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
-            <span>LISTENING FOR INSTRUCTIONS... [SPEAK NOW OR HIT SPACE]</span>
+            <span>LISTENING... SPEAK NOW</span>
           </div>
         </div>
       );
@@ -154,7 +154,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
                     J.A.R.V.I.S. VOCAL TRANSMISSION [LIVE]
                   </span>
                   <span className="hidden md:inline-block text-[9px] font-mono-tech text-amber-400/60 px-1.5 py-0.5 rounded bg-black/40 border border-amber-950">
-                    SAY "STOP", "WAIT", OR PRESS SPACE TO INTERRUPT
+                    SAY "STOP" OR "WAIT" TO INTERRUPT
                   </span>
                 </div>
               ) : (
@@ -195,7 +195,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
           </div>
 
           {/* Jarvis Spoken Words */}
-          <p className="text-amber-100 font-sans text-base md:text-lg leading-relaxed text-center font-medium max-w-4xl mx-auto text-glow-amber px-2 max-h-36 overflow-y-auto">
+          <p className="text-amber-100 font-sans text-base md:text-lg short:text-sm leading-relaxed text-center font-medium max-w-4xl mx-auto text-glow-amber px-2 max-h-36 short:max-h-12 overflow-y-auto">
             "{formatVisualSubtitle(lastResponse)}"
           </p>
         </div>
@@ -206,7 +206,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
     return (
       <div className="text-center py-1">
         <span className="text-xs md:text-sm font-orbitron tracking-[0.25em] text-amber-400/60 uppercase">
-          AWAITING VOCAL INGEST // PRESS [SPACEBAR] OR SAY "HEY JARVIS"
+          SAY "HEY JARVIS" OR TAP TO TALK
         </span>
       </div>
     );
@@ -214,10 +214,10 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
   return (
     <>
-      <footer className="absolute bottom-0 left-0 right-0 z-30 flex flex-col items-center pb-5 px-6 pointer-events-none">
+      <footer className="absolute bottom-0 left-0 right-0 z-30 flex flex-col items-center pb-5 px-6 pointer-events-none short:pb-2 short:px-3">
         {/* Main Live Subtitle & Transcript Card */}
-        <div className="w-full max-w-4xl pointer-events-auto mb-3">
-          <div className="relative rounded-2xl border border-amber-500/40 bg-black/85 backdrop-blur-xl px-6 py-4 shadow-[0_0_35px_rgba(245,158,11,0.18)] transition-all">
+        <div className="w-full max-w-4xl pointer-events-auto mb-3 short:mb-1.5">
+          <div className="relative rounded-2xl border border-amber-500/40 bg-black/85 backdrop-blur-xl px-6 py-4 short:px-4 short:py-2 shadow-[0_0_35px_rgba(245,158,11,0.18)] transition-all">
             {/* Sci-fi Corner Brackets */}
             <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-amber-400" />
             <div className="absolute top-0 right-0 w-3.5 h-3.5 border-t-2 border-r-2 border-amber-400" />
@@ -260,7 +260,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
         )}
 
         {/* Action Controls & Push-to-Talk HUD bar */}
-        <div className="flex items-center space-x-3.5 pointer-events-auto">
+        <div className="flex items-center space-x-2 min-[380px]:space-x-3.5 pointer-events-auto">
           {/* Toggle Conversation Transcript Drawer */}
           <button
             onClick={() => setShowHistoryDrawer(!showHistoryDrawer)}
@@ -272,7 +272,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             title="Open Dialogue Transcript Log"
           >
             <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
-            <span className="font-orbitron text-[10px] tracking-wider">LOGS ({history.length})</span>
+            <span className="font-orbitron text-[10px] tracking-wider whitespace-nowrap"><span className="max-[379px]:hidden">LOGS </span>({history.length})</span>
           </button>
 
           {/* Toggle Manual Command Input */}
@@ -291,7 +291,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
           {/* Central Push-to-Talk Mic Button */}
           <button
             onClick={onToggleListening}
-            className={`group relative flex items-center space-x-3 px-6 py-2.5 rounded-full border transition-all duration-300 ${
+            className={`group relative flex items-center space-x-3 px-4 sm:px-6 py-2.5 rounded-full border transition-all duration-300 ${
               isListening
                 ? 'border-amber-400 bg-amber-500/25 text-white shadow-[0_0_25px_rgba(245,158,11,0.6)]'
                 : 'border-amber-700/60 bg-black/70 hover:bg-amber-950/40 text-amber-300 hover:border-amber-400 shadow-[0_0_15px_rgba(0,0,0,0.8)]'
@@ -307,8 +307,8 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
             ) : (
               <MicOff className="w-4 h-4 text-amber-500 group-hover:text-amber-300" />
             )}
-            <span className="font-orbitron font-semibold text-xs tracking-widest uppercase">
-              {isListening ? 'LISTENING... [SPACE TO STOP]' : 'PUSH-TO-TALK [SPACE]'}
+            <span className="font-orbitron font-semibold text-xs tracking-wider sm:tracking-widest uppercase whitespace-nowrap">
+              {isListening ? 'TAP TO STOP' : 'TAP TO TALK'}
             </span>
           </button>
 
@@ -327,7 +327,7 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
 
       {/* FULL CONVERSATION TRANSCRIPT SLIDE-OVER DRAWER */}
       {showHistoryDrawer && (
-        <aside className="fixed top-20 right-6 bottom-24 w-full max-w-md z-40 bg-black/95 border border-amber-500/60 rounded-2xl shadow-[0_0_50px_rgba(245,158,11,0.25)] flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in slide-in-from-right-4 duration-200">
+        <aside className="fixed top-20 left-3 right-3 bottom-24 sm:left-auto sm:right-6 sm:w-full max-w-md z-40 bg-black/95 border border-amber-500/60 rounded-2xl shadow-[0_0_50px_rgba(245,158,11,0.25)] flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in slide-in-from-right-4 duration-200">
           {/* Drawer Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-amber-950/90 bg-amber-950/30">
             <div className="flex items-center space-x-2">

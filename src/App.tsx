@@ -8,7 +8,9 @@ import { SecurityGate } from './components/SecurityGate';
 import { YouTubeMediaHUD } from './components/YouTubeMediaHUD';
 import { ScreenPanel } from './components/ScreenPanel';
 import { FollowUpCountdown } from './components/FollowUpCountdown';
-import { GlanceColumn } from './components/hud/GlanceColumn';
+import { CalendarCard, ClockCard, NowPlayingCard, SystemCard, WeatherCard } from './components/hud/GlanceColumn';
+import { WidgetBoard, useIsWide } from './components/hud/WidgetBoard';
+import type { WidgetId } from './services/hudLayout';
 import { ConversationPanel } from './components/hud/ConversationPanel';
 import { StateCaption } from './components/hud/StateCaption';
 import { parseDirective } from './services/directives';
@@ -173,6 +175,15 @@ export const App: React.FC = () => {
 
   // HUD screen up: the reactor moves aside on wide displays
   const [screenActive, setScreenActive] = useState(false);
+  // Widget layout: wide screens place widgets freely, phones stack them under the voice screen
+  const isWide = useIsWide();
+  const [editingLayout, setEditingLayout] = useState(false);
+  useEffect(() => {
+    const toggle = () => setEditingLayout((v) => !v);
+    window.addEventListener('jarvis:edit-layout', toggle);
+    return () => window.removeEventListener('jarvis:edit-layout', toggle);
+  }, []);
+  const stopEditingLayout = useCallback(() => setEditingLayout(false), []);
   useEffect(() => subscribeScreen((st) => setScreenActive(Boolean(st.content))), []);
 
   // Sync speaking state & handle intelligent YouTube audio ducking
@@ -805,95 +816,130 @@ export const App: React.FC = () => {
     return <SecurityGate onUnlock={() => setIsAuthenticated(true)} serverConfigured={authConfigured} />;
   }
 
-  return (
-    <main className="relative w-full h-[100dvh] overflow-hidden bg-[#02040a] hud-grid">
-      {/* Cinematic CRT Scanlines and Radial Vignette */}
-      <div className="absolute inset-0 hud-scanline z-10 pointer-events-none" />
-      <div className="absolute inset-0 hud-vignette z-10 pointer-events-none" />
+  const renderWidget = (id: WidgetId, editing: boolean) => {
+    switch (id) {
+      case 'clock':
+        return <ClockCard name={voiceBiometrics.getOwnerProfile()?.name} />;
+      case 'weather':
+        return <WeatherCard />;
+      case 'calendar':
+        return <CalendarCard />;
+      case 'nowPlaying':
+        return <NowPlayingCard showIdle={editing} />;
+      case 'system':
+        return (
+          <SystemCard
+            audioState={audioState}
+            isListening={isListening}
+            isProcessing={isProcessing}
+            engine={builtInEnabled ? 'builtin' : 'browser'}
+            wakeWordMode={wakeWordMode}
+            isWakeWordActive={isWakeWordActive}
+            onToggleWakeWordMode={handleToggleWakeWordMode}
+            battery={battery}
+            voiceName={voicePreset.shortLabel}
+            onOpenVoice={() => window.dispatchEvent(new Event('jarvis:open-voice'))}
+            onOpenVoiceId={() => window.dispatchEvent(new Event('jarvis:open-voice-id'))}
+          />
+        );
+      case 'conversation':
+        return (
+          <ConversationPanel
+            state={audioState}
+            isListening={isListening}
+            isProcessing={isProcessing}
+            transcript={transcript}
+            interimTranscript={interimTranscript}
+            lastQuery={lastQuery}
+            lastResponse={lastResponse}
+            lastSpeaker={lastSpeaker}
+            speakerConfidence={speakerConfidence}
+            isOwner={isOwner}
+            history={history}
+            followUpWindow={followUpWindow}
+            onToggleListening={handleToggleListening}
+            onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
+            onStopSpeaking={handleStopSpeaking}
+            onReplayResponse={handleReplay}
+            onClearHistory={() => setHistory([])}
+          />
+        );
+    }
+  };
 
-      {/* Top bar: name, voice / voice ID / settings / lock */}
-      <TelemetryHUD
-        state={audioState}
-        isListening={isListening}
-        isWakeWordActive={isWakeWordActive}
-        wakeWordMode={wakeWordMode}
-        wakeWordScope={wakeWordScope}
-        battery={battery}
-        voiceName={voicePreset.shortLabel}
-        activeVoicePresetId={voicePreset.id}
-        activeSpeakerName={lastSpeaker}
-        onTestVoice={handleVoiceTest}
-        onPreviewVoice={handleVoicePreview}
-        onLockConsole={handleLockConsole}
-        onToggleWakeWordMode={handleToggleWakeWordMode}
-        onToggleWakeWordScope={handleToggleWakeWordScope}
-        onSelectVoicePreset={handleSelectVoicePreset}
-      />
+  const topBar = (
+    <TelemetryHUD
+      state={audioState}
+      isListening={isListening}
+      isWakeWordActive={isWakeWordActive}
+      wakeWordMode={wakeWordMode}
+      wakeWordScope={wakeWordScope}
+      battery={battery}
+      voiceName={voicePreset.shortLabel}
+      activeVoicePresetId={voicePreset.id}
+      activeSpeakerName={lastSpeaker}
+      onTestVoice={handleVoiceTest}
+      onPreviewVoice={handleVoicePreview}
+      onLockConsole={handleLockConsole}
+      onToggleWakeWordMode={handleToggleWakeWordMode}
+      onToggleWakeWordScope={handleToggleWakeWordScope}
+      onSelectVoicePreset={handleSelectVoicePreset}
+    />
+  );
 
-      {/* Wide screens: "at a glance" column on the left */}
-      <GlanceColumn
-        ownerName={voiceBiometrics.getOwnerProfile()?.name}
-        audioState={audioState}
-        isListening={isListening}
-        isProcessing={isProcessing}
-        engine={builtInEnabled ? 'builtin' : 'browser'}
-        wakeWordMode={wakeWordMode}
-        isWakeWordActive={isWakeWordActive}
-        onToggleWakeWordMode={handleToggleWakeWordMode}
-        battery={battery}
-        voiceName={voicePreset.shortLabel}
-        onOpenVoice={() => window.dispatchEvent(new Event('jarvis:open-voice'))}
-        onOpenVoiceId={() => window.dispatchEvent(new Event('jarvis:open-voice-id'))}
-      />
+  // Wide screens (TV, desktop): reactor in the middle, widgets placed freely around it
+  if (isWide) {
+    return (
+      <main className="relative w-full h-[100dvh] overflow-hidden bg-[#02040a] hud-grid">
+        {/* Cinematic CRT Scanlines and Radial Vignette */}
+        <div className="absolute inset-0 hud-scanline z-10 pointer-events-none" />
+        <div className="absolute inset-0 hud-vignette z-10 pointer-events-none" />
 
-      {/* Small screens: floating music widget (wide screens show it in the left column) */}
-      <div className="lg:hidden">
-        <YouTubeMediaHUD />
-      </div>
+        {topBar}
 
-      {/* Jarvis's screen (SHOW_IMAGE / SHOW_IMAGE_SEARCH / SHOW_VIDEO / SHOW_CAMERA) */}
-      <ScreenPanel />
+        {/* Jarvis's screen (SHOW_IMAGE / SHOW_IMAGE_SEARCH / SHOW_VIDEO / SHOW_CAMERA) */}
+        <ScreenPanel />
 
-      {/* Arc reactor. Wide screens: centred between the two columns; with the screen up it
-          shrinks into the space below it. */}
-      <section
-        className={`absolute z-10 flex items-center justify-center transition-all duration-700 inset-0 ${
-          screenActive
-            ? 'lg:inset-auto lg:left-[372px] lg:right-[482px] lg:bottom-0 lg:h-[230px]'
-            : 'lg:left-[360px] lg:right-[470px] lg:top-[56px]'
-        }`}
-      >
-        <ArcReactorVisualizer state={audioState} onReactorClick={handleToggleListening} />
-        {!screenActive && (
-          <div className="hidden lg:block">
+        {/* Arc reactor, centred between the default widget columns; with the screen up it
+            shrinks into the space below it. */}
+        <section
+          className={`absolute z-10 flex items-center justify-center transition-all duration-700 ${
+            screenActive ? 'left-[372px] right-[482px] bottom-0 h-[230px]' : 'left-[360px] right-[470px] top-[56px] bottom-0'
+          }`}
+        >
+          <ArcReactorVisualizer state={audioState} onReactorClick={handleToggleListening} />
+          {!screenActive && (
             <StateCaption state={audioState} isListening={isListening} isProcessing={isProcessing} wakeActive={isWakeWordActive} />
-          </div>
-        )}
-      </section>
+          )}
+        </section>
 
-      {/* Wide screens: the conversation on the right */}
-      <ConversationPanel
-        state={audioState}
-        isListening={isListening}
-        isProcessing={isProcessing}
-        transcript={transcript}
-        interimTranscript={interimTranscript}
-        lastQuery={lastQuery}
-        lastResponse={lastResponse}
-        lastSpeaker={lastSpeaker}
-        speakerConfidence={speakerConfidence}
-        isOwner={isOwner}
-        history={history}
-        followUpWindow={followUpWindow}
-        onToggleListening={handleToggleListening}
-        onSubmitText={(text: string) => handleCommandSubmit(text, 'typed')}
-        onStopSpeaking={handleStopSpeaking}
-        onReplayResponse={handleReplay}
-        onClearHistory={() => setHistory([])}
-      />
+        <WidgetBoard wide editing={editingLayout} onDoneEditing={stopEditingLayout} render={renderWidget} />
+      </main>
+    );
+  }
 
-      {/* Small screens: follow-up countdown + subtitles along the bottom */}
-      <div className="lg:hidden">
+  // Phones / tablets: the voice screen first, widgets below it (scroll down)
+  return (
+    <main className="relative w-full h-[100dvh] overflow-y-auto overflow-x-hidden overscroll-contain bg-[#02040a] hud-grid">
+      <div className="fixed inset-0 hud-scanline z-10 pointer-events-none" />
+      <div className="fixed inset-0 hud-vignette z-10 pointer-events-none" />
+
+      {/* First screen; a sliver of the widgets peeks out below it */}
+      <div className="relative w-full h-[calc(100dvh-40px)] min-h-[340px]">
+        {topBar}
+
+        {/* Floating music controls */}
+        <YouTubeMediaHUD />
+
+        {/* Jarvis's screen (SHOW_IMAGE / SHOW_IMAGE_SEARCH / SHOW_VIDEO / SHOW_CAMERA) */}
+        <ScreenPanel />
+
+        {/* Kept above the subtitles card so the reactor stays visible */}
+        <section className="absolute inset-x-0 top-12 bottom-[200px] short:top-10 short:bottom-[96px] z-10 flex items-center justify-center">
+          <ArcReactorVisualizer state={audioState} onReactorClick={handleToggleListening} />
+        </section>
+
+        {/* Follow-up countdown + subtitles along the bottom */}
         {followUpWindow && isListening && !transcript && !interimTranscript && (
           <FollowUpCountdown endsAt={followUpWindow.endsAt} totalMs={followUpWindow.totalMs} />
         )}
@@ -916,6 +962,8 @@ export const App: React.FC = () => {
           onClearHistory={() => setHistory([])}
         />
       </div>
+
+      <WidgetBoard wide={false} editing={editingLayout} onDoneEditing={stopEditingLayout} render={renderWidget} />
     </main>
   );
 };

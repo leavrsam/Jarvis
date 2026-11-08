@@ -1,4 +1,4 @@
-// Right column of the wide (kiosk / desktop) HUD: the conversation.
+// Conversation widget of the wide (kiosk / desktop) HUD.
 // Live transcript while you talk, the current exchange (big and readable from across the room),
 // earlier exchanges below, and talk / type controls at the bottom.
 import React, { useEffect, useRef, useState } from 'react';
@@ -83,7 +83,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = (p) => {
   };
 
   return (
-    <aside className="absolute z-30 top-[72px] bottom-6 right-6 w-[440px] hidden lg:flex flex-col hud-panel overflow-hidden">
+    <aside className="w-full h-full flex flex-col hud-panel overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-amber-900/40">
         <span className="hud-label">Conversation</span>
