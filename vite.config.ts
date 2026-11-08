@@ -17,6 +17,8 @@ import cameraHandler from './api/camera.js';
 import sttTokenHandler from './api/stt-token.js';
 // @ts-expect-error - Vercel serverless handler is plain ESM JS
 import imageSearchHandler from './api/image-search.js';
+// @ts-expect-error - Vercel serverless handler is plain ESM JS
+import calendarHandler from './api/calendar.js';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -39,6 +41,7 @@ export default defineConfig(({ mode }) => {
     'JARVIS_WEBHOOK_URL',
     'JARVIS_WEBHOOK_SECRET',
     'JARVIS_MEDIA_URL',
+    'JARVIS_CALENDAR_URL',
     'JARVIS_ALLOWED_ORIGINS',
     'JARVIS_LOGIN_PASSWORD',
     'JARVIS_SESSION_SECRET',
@@ -83,6 +86,10 @@ export default defineConfig(({ mode }) => {
           // Image search for SHOW_IMAGE_SEARCH
           server.middlewares.use('/api/image-search', (req, res) => {
             void imageSearchHandler(req, res);
+          });
+          // Calendar events for the HUD
+          server.middlewares.use('/api/calendar', (req, res) => {
+            void calendarHandler(req, res);
           });
         },
       },

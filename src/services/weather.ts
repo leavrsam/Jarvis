@@ -94,8 +94,10 @@ export async function getLocation(): Promise<HudLocation> {
   if (cached) return cached;
   try {
     const perm = await navigator.permissions?.query({ name: 'geolocation' as PermissionName });
-    if (perm?.state === "granted") return await requestPreciseLocation();
-  } catch {}
+    if (perm?.state === 'granted') return await requestPreciseLocation();
+  } catch {
+    // Allowed but no position (no GPS / Wi-Fi fix, timeout): use the approximate location
+  }
   const approx = await placeName();
   const loc = { ...approx, precise: false, at: Date.now() };
   saveLocation(loc);

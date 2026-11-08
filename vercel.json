@@ -20,6 +20,9 @@
     },
     "api/image-search.js": {
       "maxDuration": 20
+    },
+    "api/calendar.js": {
+      "maxDuration": 20
     }
   }
 }

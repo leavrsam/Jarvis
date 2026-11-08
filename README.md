@@ -216,6 +216,22 @@ On wide screens (TV, desktop) the middle stays clear for the reactor:
   current question and reply in large text with Repeat / Stop, earlier exchanges below, and
   talk / type controls.
 
+**Calendar card:** shows today's all-day events as chips, what's on **now** (until when, where),
+the next event with a countdown ("in 25 min · Zoom"), the rest of today, and tomorrow. It
+refreshes every 5 minutes. The data comes from an n8n webhook, which can use the same Google
+Calendar credentials as the agent:
+1. In n8n, create a workflow with: **Webhook** (GET, path `jarvis-calendar`, Header Auth
+   `X-Jarvis-Key` = the same secret as the command webhook) → **Google Calendar: Get Many**
+   (Return All on, *Single Events* on so repeating events are expanded, *After* =
+   `{{ $json.query.timeMin }}`, *Before* = `{{ $json.query.timeMax }}`; add a node per calendar
+   if you want several) → **Respond to Webhook** (respond with all incoming items as JSON).
+2. Activate it and set `JARVIS_CALENDAR_URL` (the webhook's production URL) in Vercel → Settings →
+   Environment Variables, then redeploy.
+
+`GET /api/calendar?from=&to=&tz=` (same-origin, login, 30/min) passes `timeMin`, `timeMax` and
+`tz` to the webhook with the `X-Jarvis-Key` header. It accepts Google Calendar event objects, n8n
+items, or simple `{ title, start, end, allDay, location }` objects, and caches for 2 minutes.
+
 Phones and narrow windows keep the compact layout (subtitles along the bottom).
 
 ---
@@ -260,13 +276,13 @@ The directive parser lives in `src/services/directives.ts` and its tests in
 
 ## 🔒 Server Route Protection
 
-All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/image-search`, `/api/camera`) share `api/_lib/requestGuard.js`:
+All server routes (`/api/tts`, `/api/jarvis-command`, `/api/voice-lab`, `/api/transcribe`, `/api/stt-token`, `/api/image-search`, `/api/calendar`, `/api/camera`) share `api/_lib/requestGuard.js`:
 
 - **Same-origin only.** Requests must come from the app's own pages (matching `Origin`, or
   `Sec-Fetch-Site: same-origin`). Other websites, and scripts that don't send browser headers, get 403.
   No CORS headers are sent, so other sites' pages can't call these routes. Add extra origins with
   `JARVIS_ALLOWED_ORIGINS` (comma-separated) if you ever need to.
-- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/stt-token` 60/min, `/api/image-search` 20/min, `/api/camera` 30/min
+- **Per-IP rate limits:** `/api/jarvis-command` 30/min, `/api/tts` 60/min, `/api/voice-lab` 60/min, `/api/transcribe` 40/min, `/api/stt-token` 60/min, `/api/image-search` 20/min, `/api/calendar` 30/min, `/api/camera` 30/min
   (429 with `Retry-After`). Counted in memory on each server instance, so they stop runaway loops
   and casual abuse rather than acting as one global limit.
 - All of them also require a logged-in session (see **Server-Side Login**).

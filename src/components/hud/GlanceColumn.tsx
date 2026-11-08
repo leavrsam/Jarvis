@@ -20,7 +20,10 @@ import {
   Sunset,
   Wind,
   Music,
+  CalendarDays,
+  MapPin,
 } from 'lucide-react';
+import { notifyAuthRequired } from '../../services/auth';
 import { describeWeather, fetchWeather, getLocation, requestPreciseLocation, Weather } from '../../services/weather';
 import {
   nextTrack,
@@ -121,14 +124,18 @@ const WeatherCard: React.FC = () => {
           setError('');
         }
       } catch (err) {
-        if (!cancelled) setError((err as Error).message || 'unavailable');
+        if (cancelled) return;
+        setError((err as Error).message || 'unavailable');
+        retry = setTimeout(load, 60_000); // try again soon rather than in 15 minutes
       }
     };
+    let retry: ReturnType<typeof setTimeout> | undefined;
     void load();
     const t = setInterval(load, WEATHER_REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(t);
+      clearTimeout(retry);
     };
   }, [reload]);
 
@@ -201,6 +208,175 @@ const WeatherCard: React.FC = () => {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------- Calendar
+
+interface CalendarEvent {
+  title: string;
+  start: string; // ISO, or YYYY-MM-DD for all-day
+  end: string | null;
+  allDay: boolean;
+  location: string;
+}
+
+const CALENDAR_REFRESH_MS = 5 * 60 * 1000;
+const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function untilText(ms: number) {
+  const min = Math.round(ms / 60000);
+  if (min < 1) return 'now';
+  if (min < 60) return `in ${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `in ${h} h${m ? ` ${m} min` : ''}`;
+}
+
+const CalendarCard: React.FC = () => {
+  const now = useNow(30_000);
+  const [events, setEvents] = useState<CalendarEvent[] | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ok' | 'not_configured' | 'error'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 2); // today and tomorrow
+      const params = new URLSearchParams({
+        from: start.toISOString(),
+        to: end.toISOString(),
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      });
+      try {
+        const res = await fetch(`/api/calendar?${params}`, { cache: 'no-store' });
+        if (res.status === 401) return notifyAuthRequired();
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (res.ok && Array.isArray(data.events)) {
+          setEvents(data.events);
+          setStatus('ok');
+        } else {
+          setStatus(data.error === 'not_configured' ? 'not_configured' : 'error');
+        }
+      } catch {
+        if (!cancelled) setStatus('error');
+      }
+    };
+    void load();
+    const t = setInterval(load, CALENDAR_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const today = localDay(now);
+  const tomorrowDate = new Date(now);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = localDay(tomorrowDate);
+  const dayOf = (e: CalendarEvent) => (e.allDay ? e.start.slice(0, 10) : localDay(new Date(e.start)));
+  const endMs = (e: CalendarEvent) => (e.end ? new Date(e.end).getTime() : new Date(e.start).getTime() + 30 * 60000);
+
+  const list = events || [];
+  const allDayToday = list.filter((e) => e.allDay && e.start.slice(0, 10) <= today && (!e.end || e.end.slice(0, 10) > today));
+  const timedToday = list.filter((e) => !e.allDay && dayOf(e) === today);
+  const current = timedToday.find((e) => new Date(e.start).getTime() <= now.getTime() && endMs(e) > now.getTime());
+  const upcoming = timedToday.filter((e) => new Date(e.start).getTime() > now.getTime());
+  const done = timedToday.filter((e) => endMs(e) <= now.getTime()).length;
+  const tomorrowEvents = list.filter((e) => dayOf(e) === tomorrow || (e.allDay && e.start.slice(0, 10) === tomorrow));
+
+  const timeOf = (e: CalendarEvent) => new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  return (
+    <div className="hud-panel px-5 py-4 flex flex-col min-h-[150px] flex-1">
+      <div className="flex items-center justify-between">
+        <span className="hud-label">Calendar</span>
+        <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
+      </div>
+
+      {status === 'loading' && <div className="py-4 text-sm text-amber-500/70">Checking your calendar…</div>}
+      {status === 'not_configured' && (
+        <div className="py-3 text-[12.5px] text-amber-500/80 leading-snug">
+          Not connected yet. Add the n8n calendar webhook as <span className="font-mono-tech text-amber-300">JARVIS_CALENDAR_URL</span> in
+          Vercel (see README).
+        </div>
+      )}
+      {status === 'error' && <div className="py-4 text-sm text-amber-500/70">Calendar unavailable right now.</div>}
+
+      {status === 'ok' && (
+        <div className="mt-2 flex-1 min-h-0 overflow-y-auto hud-scroll space-y-3">
+          {allDayToday.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {allDayToday.map((e, i) => (
+                <span key={i} className="px-2 py-0.5 rounded-full border border-amber-700/50 bg-amber-950/40 text-[11.5px] text-amber-200 truncate max-w-full">
+                  {e.title}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {current && (
+            <div className="rounded-lg border border-cyan-400/40 bg-cyan-950/30 px-3 py-2">
+              <div className="flex items-center justify-between text-[10.5px] uppercase tracking-[0.18em] text-cyan-300/90">
+                <span>Now</span>
+                {current.end && <span className="normal-case tracking-normal">until {new Date(current.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
+              </div>
+              <div className="text-[15px] text-cyan-50 truncate">{current.title}</div>
+              {current.location && (
+                <div className="flex items-center gap-1 text-[11px] text-cyan-200/70 truncate">
+                  <MapPin className="w-3 h-3 shrink-0" /> {current.location}
+                </div>
+              )}
+            </div>
+          )}
+
+          {upcoming.length > 0 ? (
+            <div className="space-y-1.5">
+              {upcoming.map((e, i) => {
+                const startsIn = new Date(e.start).getTime() - now.getTime();
+                const soon = i === 0 && startsIn < 3 * 3600_000;
+                return (
+                  <div key={`${e.start}-${i}`} className={`flex items-baseline gap-3 ${soon ? '' : 'opacity-90'}`}>
+                    <span className="w-[62px] shrink-0 text-right text-[12px] tabular-nums text-amber-400">{timeOf(e)}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className={`truncate ${soon ? 'text-[15px] text-amber-50' : 'text-[13.5px] text-amber-100/85'}`}>{e.title}</div>
+                      {soon && (
+                        <div className="text-[11px] text-amber-500/90 truncate">
+                          {untilText(startsIn)}
+                          {e.location ? ` · ${e.location}` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            !current && (
+              <div className="text-[13.5px] text-amber-300/80">
+                {done > 0 ? 'Nothing else today.' : allDayToday.length ? 'No timed events today.' : 'Nothing on the calendar today.'}
+              </div>
+            )
+          )}
+
+          {tomorrowEvents.length > 0 && (
+            <div className="pt-2 border-t border-amber-900/40">
+              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600/90 mb-1">Tomorrow</div>
+              {tomorrowEvents.slice(0, 4).map((e, i) => (
+                <div key={`t-${i}`} className="flex items-baseline gap-3 text-[12.5px]">
+                  <span className="w-[62px] shrink-0 text-right tabular-nums text-amber-600">{e.allDay ? 'All day' : timeOf(e)}</span>
+                  <span className="truncate text-amber-200/70">{e.title}</span>
+                </div>
+              ))}
+              {tomorrowEvents.length > 4 && <div className="pl-[74px] text-[11px] text-amber-700">+{tomorrowEvents.length - 4} more</div>}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -392,8 +568,8 @@ export const GlanceColumn: React.FC<GlanceColumnProps> = ({ ownerName, ...system
   <aside className="absolute z-20 top-[72px] bottom-6 left-6 w-[330px] hidden lg:flex flex-col gap-4 overflow-y-auto hud-scroll pb-1">
     <ClockCard name={ownerName} />
     <WeatherCard />
+    <CalendarCard />
     <NowPlayingCard />
-    <div className="flex-1" />
     <SystemCard {...system} />
   </aside>
 );
