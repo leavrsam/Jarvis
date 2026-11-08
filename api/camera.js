@@ -107,8 +107,9 @@ export default async function handler(req, res) {
   const mediaUrl = (process.env.JARVIS_MEDIA_URL || '').trim();
   const secret = (process.env.JARVIS_WEBHOOK_SECRET || '').trim();
   if (!mediaUrl || !secret) {
-    console.error('[/api/camera] JARVIS_MEDIA_URL or JARVIS_WEBHOOK_SECRET is not set');
-    sendJson(res, 503, { error: 'not_configured', detail: 'JARVIS_MEDIA_URL (or JARVIS_WEBHOOK_SECRET) is not set in Vercel' });
+    const missing = !mediaUrl ? 'JARVIS_MEDIA_URL is not set' : 'JARVIS_WEBHOOK_SECRET is not set';
+    console.error(`[/api/camera] ${missing}`);
+    sendJson(res, 503, { error: 'not_configured', detail: `${missing} in this deployment` });
     return;
   }
 
@@ -124,7 +125,7 @@ export default async function handler(req, res) {
     target.searchParams.set('camera', camera);
   } catch {
     console.error('[/api/camera] JARVIS_MEDIA_URL is not a valid URL');
-    sendJson(res, 503, { error: 'not_configured' });
+    sendJson(res, 503, { error: 'not_configured', detail: 'JARVIS_MEDIA_URL is set but is not a valid URL (it should start with https://)' });
     return;
   }
 
