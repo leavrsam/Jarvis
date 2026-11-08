@@ -1,12 +1,13 @@
 // Short-lived Deepgram token for live (streaming) transcription in the browser.
 //
 // The browser can't hold DEEPGRAM_API_KEY, so it asks here for a temporary token (Deepgram's
-// /v1/auth/grant, valid ~30 s) and uses it only to open one streaming connection. An open
+// /v1/auth/grant, 10 minutes when allowed) and uses it to open streaming connections. An open
 // connection keeps working after the token expires.
 import { createRateLimiter, guardRequest } from './_lib/requestGuard.js';
 import { requireSession } from './_lib/session.js';
 
-const limiter = createRateLimiter(60); // one per wake word / follow-up window
+const limiter = createRateLimiter(60);
+const TOKEN_TTL_SECONDS = 600;
 
 function sendJson(res, status, obj) {
   res.statusCode = status;
@@ -29,13 +30,23 @@ export default async function handler(req, res) {
     return;
   }
 
-  try {
-    const upstream = await fetch('https://api.deepgram.com/v1/auth/grant', {
+  const grant = (body) =>
+    fetch('https://api.deepgram.com/v1/auth/grant', {
       method: 'POST',
-      // No body: Deepgram's default lifetime (30 s) is what we want
-      headers: { Authorization: `Token ${key}` },
+      headers: body ? { Authorization: `Token ${key}`, 'Content-Type': 'application/json' } : { Authorization: `Token ${key}` },
+      body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(8000),
     });
+
+  try {
+    // Ask for a 10-minute token so the browser can keep one ready (connecting needs a valid
+    // token, so a fresh fetch at "hey Jarvis" time costs ~1 s). If this account doesn't allow a
+    // custom lifetime, fall back to the default (30 s).
+    let upstream = await grant({ ttl_seconds: TOKEN_TTL_SECONDS });
+    if (upstream.status === 400) {
+      const detail = await upstream.clone().json().then((d) => String(d?.err_msg || '')).catch(() => '');
+      if (!/credential/i.test(detail)) upstream = await grant(null);
+    }
     if (!upstream.ok) {
       // 400 "Invalid credentials" = bad key; 403 = the key's role is below Member (temporary
       // tokens need Member or higher). Either way the browser stops trying and uploads instead.

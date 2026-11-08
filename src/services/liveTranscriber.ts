@@ -17,10 +17,12 @@ const FLUX_URL =
 const PACKET_SAMPLES = 1280;
 /** Audio held while the connection opens (more than this and something is wrong) */
 const MAX_QUEUED_SAMPLES = 16000 * 20;
-const TOKEN_REUSE_MS = 20_000; // tokens last 30 s; they only need to be valid when connecting
+/** Stop using a token this long before it expires */
+const TOKEN_SAFETY_MS = 20_000;
 
-let cachedToken: { token: string; at: number } | null = null;
+let cachedToken: { token: string; expiresAt: number } | null = null;
 let tokenRequest: Promise<string> | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 /** Set when the server can't issue tokens (no key, key lacks permission): don't keep trying */
 let unavailableReason = '';
 
@@ -28,7 +30,7 @@ export function liveTranscriptionUnavailable(): string {
   return unavailableReason;
 }
 
-async function fetchToken(): Promise<string> {
+async function fetchToken(): Promise<{ token: string; expiresIn: number }> {
   const res = await fetch('/api/stt-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   if (res.status === 401) {
     notifyAuthRequired();
@@ -44,17 +46,33 @@ async function fetchToken(): Promise<string> {
     }
     throw new Error(data.error || `HTTP ${res.status}`);
   }
-  return data.token as string;
+  return { token: data.token as string, expiresIn: Number(data.expiresIn) || 30 };
 }
 
-/** Get a token (reusing a fresh one). Call early, e.g. when Jarvis starts talking, to save time. */
+function tokenUsable(): boolean {
+  return Boolean(cachedToken && Date.now() < cachedToken.expiresAt - TOKEN_SAFETY_MS);
+}
+
+/**
+ * Get a token, reusing a valid one. Long-lived tokens (10 min) are kept ready and renewed in
+ * the background, so "hey Jarvis" connects without waiting for one.
+ */
 export function prefetchLiveToken(): Promise<string> {
   if (unavailableReason) return Promise.reject(new Error(unavailableReason));
-  if (cachedToken && Date.now() - cachedToken.at < TOKEN_REUSE_MS) return Promise.resolve(cachedToken.token);
+  if (tokenUsable()) return Promise.resolve(cachedToken!.token);
   if (!tokenRequest) {
     tokenRequest = fetchToken()
-      .then((token) => {
-        cachedToken = { token, at: Date.now() };
+      .then(({ token, expiresIn }) => {
+        cachedToken = { token, expiresAt: Date.now() + expiresIn * 1000 };
+        if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = null;
+        // Only worth renewing ahead of time when tokens last a while (not the 30 s default)
+        if (expiresIn >= 120) {
+          refreshTimer = setTimeout(() => {
+            refreshTimer = null;
+            if (document.visibilityState === 'visible' || document.hasFocus()) void prefetchLiveToken().catch(() => {});
+          }, expiresIn * 1000 - TOKEN_SAFETY_MS - 10_000);
+        }
         return token;
       })
       .finally(() => {
@@ -64,10 +82,15 @@ export function prefetchLiveToken(): Promise<string> {
   return tokenRequest;
 }
 
+/** A token was refused when connecting: drop it so the next connection gets a fresh one */
+function invalidateToken(token: string) {
+  if (cachedToken?.token === token) cachedToken = null;
+}
+
 function takeToken(): Promise<string> {
-  // Use each token for one connection, then fetch the next in the background
   return prefetchLiveToken().then((token) => {
-    if (cachedToken?.token === token) cachedToken = null;
+    // Short-lived (default) tokens: one connection each; long-lived ones are shared
+    if (cachedToken?.token === token && cachedToken.expiresAt - Date.now() < 60_000) cachedToken = null;
     return token;
   });
 }
@@ -89,6 +112,8 @@ export class LiveTurn {
   private pending: number[] = [];
   private closed = false;
   private failed = false;
+  private everOpened = false;
+  private token = '';
   readonly startedAt = Date.now();
 
   constructor(private readonly handlers: LiveTurnHandlers) {
@@ -106,6 +131,8 @@ export class LiveTurn {
   private fail(reason: string) {
     if (this.failed || this.closed) return;
     this.failed = true;
+    // Never connected: the token may be the problem; the next connection fetches a new one
+    if (!this.everOpened && this.token) invalidateToken(this.token);
     this.handlers.onError(reason);
     this.close();
   }
@@ -114,6 +141,7 @@ export class LiveTurn {
     let token: string;
     try {
       token = await takeToken();
+      this.token = token;
     } catch (err) {
       this.fail(`token: ${(err as Error).message}`);
       return;
@@ -129,6 +157,7 @@ export class LiveTurn {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     ws.onopen = () => {
+      this.everOpened = true;
       for (const packet of this.queue) ws.send(packet.buffer);
       this.queue = [];
       this.queued = 0;
