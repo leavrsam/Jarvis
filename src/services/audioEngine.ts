@@ -2,6 +2,7 @@
 import { voiceBiometrics } from './voiceBiometrics';
 import { voiceCapture } from './speaker/voiceCapture';
 import { micConstraints } from './micSettings';
+import { logEvent } from './eventLog';
 import { stripPauseTags } from './replyStream';
 import { notifyAuthRequired } from './auth';
 
@@ -1084,8 +1085,10 @@ class JarvisAudioEngine {
     signal.addEventListener('abort', notify);
     const changed = () => new Promise<void>((resolve) => state.listeners.add(resolve));
 
+    const queuedAt = performance.now();
     const download = this.withGeminiSlot(async () => {
       const t0 = performance.now();
+      const waitedMs = t0 - queuedAt;
       const result = await this.requestTts(
         {
           text,
@@ -1114,7 +1117,7 @@ class JarvisAudioEngine {
         state.sampleRate = buffer.sampleRate;
         state.chunks.push(buffer.getChannelData(0).slice());
         notify();
-        return { engine, firstMs: performance.now() - t0, totalMs: performance.now() - t0 };
+        return { engine, firstMs: performance.now() - t0, totalMs: performance.now() - t0, waitedMs };
       }
 
       state.sampleRate = Number(response.headers.get('X-TTS-Sample-Rate')) || 24000;
@@ -1143,9 +1146,14 @@ class JarvisAudioEngine {
         if (!firstMs) firstMs = performance.now() - t0;
         notify();
       }
-      return { engine, firstMs, totalMs: performance.now() - t0 };
+      return { engine, firstMs, totalMs: performance.now() - t0, waitedMs };
     }).then(
-      ({ engine, firstMs, totalMs }) => {
+      ({ engine, firstMs, totalMs, waitedMs }) => {
+        // Where the voice time goes: waiting for a free request slot, then Gemini's first sound
+        logEvent(
+          'command',
+          `Voice: "${label}" first sound ${Math.round(firstMs)} ms after asking Gemini${waitedMs > 50 ? ` (+${Math.round(waitedMs)} ms queued)` : ''}, done in ${Math.round(totalMs)} ms · ${engine}`
+        );
         state.done = true;
         notify();
         // Keep the whole clip for instant replays

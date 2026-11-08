@@ -44,7 +44,13 @@ export default defineConfig(({ mode }) => {
     if (env[name] && !process.env[name]) process.env[name] = env[name];
   }
 
+  // Short build id (the deployed commit on Vercel), shown in the VOICE ID panel
+  const buildId = (process.env.VERCEL_GIT_COMMIT_SHA || 'dev').slice(0, 7);
+
   return {
+    define: {
+      __BUILD_ID__: JSON.stringify(buildId),
+    },
     plugins: [
       react(),
       tailwindcss(),

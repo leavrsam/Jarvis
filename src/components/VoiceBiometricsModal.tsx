@@ -189,7 +189,7 @@ export const VoiceBiometricsModal: React.FC<VoiceBiometricsModalProps> = ({ isOp
             <div>
               <h2 className="font-orbitron font-bold text-sm tracking-widest text-amber-200">VOICE ID</h2>
               <p className="text-[10px] font-mono-tech text-amber-400/70">
-                Neural voiceprints ({SPEAKER_MODEL.name}), computed on this device
+                Neural voiceprints ({SPEAKER_MODEL.name}), computed on this device · build {__BUILD_ID__}
               </p>
             </div>
           </div>

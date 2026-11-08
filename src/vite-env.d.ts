@@ -83,3 +83,6 @@ interface Window {
   };
   onYouTubeIframeAPIReady?: () => void;
 }
+
+/** Deployed commit (short), or 'dev' */
+declare const __BUILD_ID__: string;

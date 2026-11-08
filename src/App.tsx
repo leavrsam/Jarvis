@@ -26,7 +26,9 @@ import { getReleaseMicWhileSpeaking, onMicSettingsChange } from './services/micS
 // Sign-off phrases that gracefully end a multi-turn conversation after Jarvis replies
 // How long to wait for the n8n agent before playing a spoken "One moment, sir." n8n usually
 // answers in under a second now, so this only covers genuinely slow requests (tool calls).
-const ACK_DELAY_MS = 1500;
+/** If Jarvis hasn't started TALKING by now (text may have arrived; the voice takes a moment), a short
+ *  "One moment, sir" covers the silence */
+const ACK_DELAY_MS = 2000;
 
 // Spoken when the n8n run fails. "partial" = the connection dropped after part of the reply.
 function failureMessage(partial: boolean, kind?: string): string {
@@ -148,7 +150,7 @@ export const App: React.FC = () => {
   /** A follow-up window is open: the next command may come without "hey Jarvis" */
   const followUpOpenRef = useRef(false);
   /** Who started this conversation (voice ID profile); follow-ups are only taken from them */
-  const conversationSpeakerRef = useRef<{ id: string; name: string } | null>(null);
+  const conversationSpeakerRef = useRef<{ id: string; name: string; isOwner: boolean; confidence: number } | null>(null);
   /** For the on-screen countdown while the follow-up window is open */
   const [followUpWindow, setFollowUpWindow] = useState<{ endsAt: number; totalMs: number } | null>(null);
   // In-flight n8n request, so a new command can cancel it
@@ -269,8 +271,15 @@ export const App: React.FC = () => {
     requestAbortRef.current = controller;
     const t0 = performance.now();
 
-    const speakerResult = await speakerPromise;
+    let speakerResult = await speakerPromise;
     const voiceIdMs = Math.round(performance.now() - t0);
+    // A follow-up too short for voice ID ("What?", "Thanks") continues the conversation of
+    // whoever started it, instead of showing as "Unverified"
+    const convoSpeaker = conversationSpeakerRef.current;
+    if (isFollowUp && convoSpeaker && speakerResult.reason === 'too-short') {
+      logEvent('voice-id', `Too short to check (${speakerResult.speechSeconds}s); continuing ${convoSpeaker.name}'s conversation`);
+      speakerResult = { ...speakerResult, name: convoSpeaker.name, isOwner: convoSpeaker.isOwner, confidence: convoSpeaker.confidence };
+    }
     if (!isCurrent()) return;
     setLastSpeaker(speakerResult.name);
     setSpeakerConfidence(speakerResult.confidence);
@@ -314,7 +323,9 @@ export const App: React.FC = () => {
       }
       // A new conversation (wake word) records who started it
       if (!isFollowUp) {
-        conversationSpeakerRef.current = heardId ? { id: heardId, name: speakerResult.name } : null;
+        conversationSpeakerRef.current = heardId
+          ? { id: heardId, name: speakerResult.name, isOwner: speakerResult.isOwner, confidence: speakerResult.confidence }
+          : null;
       }
     }
 
@@ -346,6 +357,7 @@ export const App: React.FC = () => {
     const speech = audioEngine.createSpeechQueue(
       () => {
         if (!isCurrent()) return;
+        clearTimeout(ackTimer);
         firstAudioMs = Math.round(performance.now() - t0);
         console.info(`[Jarvis] first audio after ${firstAudioMs}ms`);
         logEvent('command', `Timing: voice ID ${voiceIdMs} ms · first text ${firstTextMs ?? '?'} ms · first audio ${firstAudioMs} ms (from your command)`);
@@ -404,7 +416,6 @@ export const App: React.FC = () => {
           onText: (delta) => {
             if (!isCurrent()) return;
             if (firstTextMs === null) firstTextMs = Math.round(performance.now() - t0);
-            clearTimeout(ackTimer);
             reply.push(delta);
           },
         }
@@ -422,12 +433,15 @@ export const App: React.FC = () => {
     } finally {
       if (requestAbortRef.current === controller) requestAbortRef.current = null;
     }
-    clearTimeout(ackTimer);
-    if (!isCurrent()) return;
+    if (!isCurrent()) {
+      clearTimeout(ackTimer);
+      return;
+    }
 
     // Flush whatever is left of the reply (the last sentence may have no trailing space)
     reply.end();
     const finalText = reply.displayText;
+    if (!finalText) clearTimeout(ackTimer); // nothing to say (e.g. only a screen directive)
     lastReplyRef.current = finalText;
     if (firstAudioMs === null && firstTextMs !== null) logEvent('command', `Timing: voice ID ${voiceIdMs} ms · first text ${firstTextMs} ms (from your command)`);
 
