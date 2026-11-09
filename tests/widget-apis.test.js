@@ -46,9 +46,10 @@ describe('n8n feeds', () => {
           updatedAt: '2026-11-09T15:00:00Z',
           totalGainPct: '12.345',
           cashPct: 4.2,
+          dayChangePct: '-0.456',
           totalValue: 123456,
           positions: [
-            { id: 'p1', symbol: 'aapl', name: 'Apple', weightPct: 10, gainPct: -3.5, marketValue: 5000 },
+            { id: 'p1', symbol: 'aapl', name: 'Apple', weightPct: 10, gainPct: -3.5, dayChangePct: 1.2, marketValue: 5000 },
             { id: 'p2', symbol: 'VTI', name: 'Total Market', weightPct: 40.5, gainPct: 22 },
             { name: '', symbol: '' },
           ],
@@ -59,9 +60,10 @@ describe('n8n feeds', () => {
       updatedAt: '2026-11-09T15:00:00.000Z',
       totalGainPct: 12.35,
       cashPct: 4.2,
+      dayChangePct: -0.46,
       positions: [
-        { id: 'p2', symbol: 'VTI', name: 'Total Market', weightPct: 40.5, gainPct: 22 },
-        { id: 'p1', symbol: 'AAPL', name: 'Apple', weightPct: 10, gainPct: -3.5 },
+        { id: 'p2', symbol: 'VTI', name: 'Total Market', weightPct: 40.5, gainPct: 22, dayChangePct: null },
+        { id: 'p1', symbol: 'AAPL', name: 'Apple', weightPct: 10, gainPct: -3.5, dayChangePct: 1.2 },
       ],
     });
     expect(JSON.stringify(out)).not.toMatch(/marketValue|totalValue|5000|123456/);

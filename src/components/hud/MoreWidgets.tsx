@@ -664,7 +664,12 @@ interface Position {
   name: string;
   weightPct: number | null;
   gainPct: number | null;
+  dayChangePct: number | null;
 }
+
+/** Today's change, two decimals like a brokerage app: "+1.24%" / "−0.37%" */
+const dayPct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}%`;
+const TODAY_TITLE = "Today's change (crypto: last 24 hours)";
 
 /** "+12.4%" / "−3.1%" */
 const signedPct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(Math.abs(v) >= 100 ? 0 : 1)}%`;
@@ -672,7 +677,7 @@ const gainClass = (v: number) => (v > 0 ? 'text-emerald-300' : v < 0 ? 'text-red
 
 /** Read-only: total gain since purchase, cash share and the biggest holdings. Percentages only. */
 export const PortfolioWidget: React.FC = () => {
-  const { data, status } = usePolled<{ updatedAt: string; totalGainPct: number | null; cashPct: number | null; positions: Position[] }>(
+  const { data, status } = usePolled<{ updatedAt: string; totalGainPct: number | null; cashPct: number | null; dayChangePct: number | null; positions: Position[] }>(
     '/api/feed?name=portfolio',
     15 * 60_000
   );
@@ -685,12 +690,17 @@ export const PortfolioWidget: React.FC = () => {
         <FeedState status={status} feed="portfolio" what="the portfolio" />
       ) : (
         <div className="space-y-3">
-          <div className="flex items-end gap-5">
+          <div className="flex items-start gap-5">
             <div>
               <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600" title="Gain on the positions you hold now; excludes sold positions and dividends">Unrealized <span className="normal-case tracking-normal">(current holdings)</span></div>
               <div className={`text-[26px] leading-none font-semibold tabular-nums ${data?.totalGainPct != null ? gainClass(data.totalGainPct) : 'text-amber-700'}`}>
                 {data?.totalGainPct != null ? signedPct(data.totalGainPct) : '—'}
               </div>
+              {data?.dayChangePct != null && (
+                <div className={`mt-1 text-[12.5px] tabular-nums ${gainClass(data.dayChangePct)}`} title={TODAY_TITLE}>
+                  {data.dayChangePct > 0 ? '▲' : data.dayChangePct < 0 ? '▼' : ''} {dayPct(data.dayChangePct)} <span className="text-amber-500">Today</span>
+                </div>
+              )}
             </div>
             <div>
               <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600">Cash</div>
@@ -706,6 +716,11 @@ export const PortfolioWidget: React.FC = () => {
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="flex items-baseline gap-2 min-w-0">
                       <span className="text-[13.5px] text-amber-100 font-mono-tech">{p.symbol || p.name}</span>
+                      {p.dayChangePct != null && (
+                        <span className={`text-[11px] tabular-nums shrink-0 ${gainClass(p.dayChangePct)}`} title={TODAY_TITLE}>
+                          {dayPct(p.dayChangePct)}
+                        </span>
+                      )}
                       {p.symbol && p.name && <span className="text-[11px] text-amber-600 truncate">{p.name}</span>}
                     </span>
                     <span className="flex items-baseline gap-2 tabular-nums shrink-0">
@@ -720,7 +735,7 @@ export const PortfolioWidget: React.FC = () => {
                   </div>
                 </div>
               ))}
-              <div className="pt-1 text-[10px] text-amber-700">Weight · gain since purchase</div>
+              <div className="pt-1 text-[10px] text-amber-700">Today next to each symbol · weight · gain since purchase</div>
             </div>
           )}
         </div>

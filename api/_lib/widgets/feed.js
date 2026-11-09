@@ -151,8 +151,9 @@ export function normalizeFeed(name, body) {
         updatedAt: time(root.updatedAt),
         totalGainPct: pct(root.totalGainPct),
         cashPct: pct(root.cashPct),
+        dayChangePct: pct(root.dayChangePct),
         positions: list(root, 'positions')
-          .map((r, i) => ({ id: id(r.id ?? r.symbol, i), symbol: text(r.symbol, 15).toUpperCase(), name: text(r.name, 80), weightPct: pct(r.weightPct), gainPct: pct(r.gainPct) }))
+          .map((r, i) => ({ id: id(r.id ?? r.symbol, i), symbol: text(r.symbol, 15).toUpperCase(), name: text(r.name, 80), weightPct: pct(r.weightPct), gainPct: pct(r.gainPct), dayChangePct: pct(r.dayChangePct) }))
           .filter((r) => r.symbol || r.name)
           .sort((a, b) => (b.weightPct ?? -1) - (a.weightPct ?? -1))
           .slice(0, 50),

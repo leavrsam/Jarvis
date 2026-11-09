@@ -277,7 +277,8 @@ the widget):
 - **Shopping list, Reminders, Smart home, Deliveries, Doorbell log, Portfolio:** your own data
   from n8n (below). Portfolio is read-only and shows percentages only: total gain since
   purchase, cash share, and the top holdings by weight with their gain. `totalGainPct` is labelled
-  "Unrealized (current holdings)": it excludes sold positions and dividends.
+  "Unrealized (current holdings)": it excludes sold positions and dividends. Today's change
+  (`dayChangePct`) shows under it and next to each symbol, green or red.
 
 ### Widget feeds (n8n)
 
@@ -297,7 +298,7 @@ GET returns JSON (n8n item arrays work too):
 | `deliveries` | `{ packages: [{ id, title, carrier?, status, eta?, url? }] }` | — |
 | `doorbell` | `{ events: [{ id, time (ISO), camera?, label?, imageUrl? }] }` | — |
 | `photos` | `{ photos: [{ url, caption? }] }` | — |
-| `portfolio` | `{ updatedAt (ISO), totalGainPct, cashPct, positions: [{ id, symbol, name, weightPct, gainPct }] }` (gain since purchase; no dollar amounts, and any extra fields are dropped) | — |
+| `portfolio` | `{ updatedAt (ISO), totalGainPct, cashPct, dayChangePct?, positions: [{ id, symbol, name, weightPct, gainPct, dayChangePct? }] }` (gainPct = since purchase, dayChangePct = today, crypto last 24 h; no dollar amounts, and any extra fields are dropped) | — |
 
 **Who added it:** shopping items and tasks may include `addedBy` (a name) and
 `addedByOwner` (true/false). Items added by someone other than the owner show in *italic
