@@ -437,7 +437,7 @@ of a reply, one per line. They are carried out and never spoken or shown in the 
 | `SHOW_IMAGE: <https url>` | Shows the image, fading in. Stays until `CLEAR_SCREEN`, another `SHOW_*`, the ✕ button, or 3 minutes. |
 | `SHOW_VIDEO: <https url>` | Plays a direct video file (mp4/webm) with controls. It is muted while Jarvis talks or listens, like YouTube's volume ducking. Close it with ✕. |
 | `SHOW_CAMERA: <camera name>` | Shows a snapshot from `/api/camera`, with its caption ("Live" or "Last motion 2:39 PM"), a refresh button, and an automatic refresh every 60 s. Closes after 3 minutes. |
-| `SHOW_CAMERA: front door, garage` / `SHOW_CAMERA: all` | Several cameras as a grid (up to 8), each tile labelled with its name and caption. Tap a tile to show that camera on its own. `all` shows every image the media webhook returns for `camera=all`. Refreshes every minute. |
+| `SHOW_CAMERA: front door, garage` / `SHOW_CAMERA: all` | Several cameras (up to 8), labelled with their names and captions. The layout picks the arrangement that makes each feed largest for the space and the feeds' shape: in the normal panel, two wide feeds stack one above the other. Tap a feed to enlarge it, with thumbnails to switch cameras; **Back to all cameras** or Esc returns to the grid. `all` shows every image the media webhook returns for `camera=all`. Refreshes every minute. |
 | `CLEAR_SCREEN` | Hides the screen. |
 
 Example reply: `SHOW_CAMERA: front door` on the first line, then `Here's the front door, sir.`
@@ -447,6 +447,8 @@ Example reply: `SHOW_CAMERA: front door` on the first line, then `Here's the fro
 - If an image, video or camera snapshot fails to load, the screen shows "Couldn't load that …".
 - On wide displays (the kiosk/TV), the screen fills the left side, the reactor moves to the right,
   and the subtitles stay at the bottom.
+- The ⛶ button in the screen's top bar (wide displays) makes it fill the whole HUD, over the
+  widgets; press it again or Esc to return.
 
 **Image search:** `GET /api/image-search?q=<what>` (same-origin, login, 20/min) searches Openverse
 (photographs first), falls back to Wikimedia Commons, and returns the first of the top results

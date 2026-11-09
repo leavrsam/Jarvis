@@ -1,9 +1,10 @@
 // The HUD "screen": shows what Jarvis puts up with SHOW_IMAGE / SHOW_VIDEO / SHOW_CAMERA.
 // On a wide (kiosk) display it takes the left of the HUD while the reactor moves to the right
 // and the subtitles stay along the bottom.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, X } from 'lucide-react';
-import { applyScreenDirective, clearScreen, SCREEN_IDLE_MS, ScreenContent, subscribeScreen } from '../services/screenController';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { LayoutGrid, Maximize, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react';
+import { bestColumns } from '../services/cameraGrid';
+import { clearScreen, SCREEN_IDLE_MS, ScreenContent, subscribeScreen } from '../services/screenController';
 import { subscribeDuck } from '../services/youtubeController';
 import { notifyAuthRequired } from '../services/auth';
 import { cameraErrorText, readCameraError } from '../services/cameraErrors';
@@ -19,15 +20,31 @@ export const ScreenPanel: React.FC = () => {
       subscribeScreen((s) => {
         setContent(s.content);
         setVersion(s.version);
+        if (!s.content) setFull(false);
       }),
     []
   );
+  // Full screen (wide displays): the screen covers the side widgets too. Esc returns.
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFull(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [full]);
 
   if (!content) return null;
   return (
+    <FullScreenContext.Provider value={{ full, toggle: () => setFull((f) => !f) }}>
     <section
       aria-label="Jarvis screen"
-      className="absolute z-[25] left-3 right-3 top-16 h-[42vh] lg:h-auto lg:left-[372px] lg:right-[482px] lg:top-[72px] lg:bottom-[230px] pointer-events-auto"
+      className={
+        full
+          ? 'fixed z-[45] inset-x-3 top-14 bottom-3 pointer-events-auto'
+          : 'absolute z-[25] left-3 right-3 top-16 h-[42vh] lg:h-auto lg:left-[372px] lg:right-[482px] lg:top-[72px] lg:bottom-[230px] pointer-events-auto'
+      }
     >
       <div key={version} className="relative w-full h-full rounded-xl border border-amber-500/50 bg-black/80 backdrop-blur-md shadow-[0_0_40px_rgba(245,158,11,0.18)] overflow-hidden animate-in fade-in duration-700">
         <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-amber-400 z-10 hidden lg:block" />
@@ -45,6 +62,7 @@ export const ScreenPanel: React.FC = () => {
           ))}
       </div>
     </section>
+    </FullScreenContext.Provider>
   );
 };
 
@@ -64,6 +82,22 @@ function useIdleClose(active = true) {
   }, [active, restart]);
   return restart;
 }
+
+const FullScreenContext = createContext<{ full: boolean; toggle: () => void }>({ full: false, toggle: () => {} });
+
+const FullScreenButton: React.FC = () => {
+  const { full, toggle } = useContext(FullScreenContext);
+  return (
+    <button
+      onClick={toggle}
+      aria-label={full ? 'Exit full screen' : 'Full screen'}
+      title={full ? 'Exit full screen (Esc)' : 'Full screen'}
+      className="hidden lg:inline-flex p-1.5 rounded border border-amber-700/70 text-amber-300 hover:bg-amber-900/40"
+    >
+      {full ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+    </button>
+  );
+};
 
 const TopBar: React.FC<{ label: string; caption?: string; onRefresh?: () => void; refreshing?: boolean }> = ({
   label,
@@ -90,6 +124,7 @@ const TopBar: React.FC<{ label: string; caption?: string; onRefresh?: () => void
         <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
       </button>
     )}
+    <FullScreenButton />
     <button
       onClick={() => clearScreen()}
       aria-label="Close screen"
@@ -242,8 +277,6 @@ interface GridImage {
   error: string;
 }
 
-/** Grid columns for n tiles: 1, 2, 2x2, 3x2, 3x3 */
-const gridCols = (n: number) => (n <= 1 ? 'grid-cols-1' : n <= 4 ? 'grid-cols-2' : 'grid-cols-3');
 
 /**
  * Several cameras at once: "all" (every snapshot n8n returns for camera=all) or a list of names
@@ -256,6 +289,30 @@ const CameraGrid: React.FC<{ cameras: string[] }> = ({ cameras }) => {
   const [loading, setLoading] = useState(false);
   const restartIdle = useIdleClose();
   const listKey = cameras.join('|');
+  // Enlarged camera (null: the grid), the grid's size and the feeds' shape, for the layout
+  const [focused, setFocused] = useState<string | null>(null);
+  const [aspect, setAspect] = useState(16 / 9);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setBox({ w: entry.contentRect.width, h: entry.contentRect.height }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  // Esc: back from an enlarged camera to the grid
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setFocused(null);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [focused]);
 
   const fetchMulti = useCallback(async (name: string, signal: AbortSignal) => {
     const res = await fetch(`/api/camera?camera=${encodeURIComponent(name)}&multi=1`, { cache: 'no-store', signal });
@@ -316,10 +373,13 @@ const CameraGrid: React.FC<{ cameras: string[] }> = ({ cameras }) => {
     };
   }, [load, reload]);
 
+  const columns = bestColumns(tiles.length, box.w, box.h, aspect);
+  const focusedTile = focused ? tiles.find((t) => t.key === focused) || null : null;
+
   return (
     <>
       <TopBar
-        label={all ? 'CAMERAS · ALL' : `CAMERAS · ${cameras.length}`}
+        label={focusedTile ? `CAMERAS · ${focusedTile.camera.toUpperCase()}` : all ? 'CAMERAS · ALL' : `CAMERAS · ${cameras.length}`}
         refreshing={loading}
         onRefresh={() => {
           restartIdle();
@@ -330,28 +390,50 @@ const CameraGrid: React.FC<{ cameras: string[] }> = ({ cameras }) => {
         <LoadError what="cameras" text={allError} />
       ) : !tiles.length ? (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-amber-500 font-mono-tech">Connecting to cameras…</div>
+      ) : focusedTile ? (
+        // One camera enlarged, the others as thumbnails to switch to
+        <div className="absolute inset-x-2 bottom-2 top-12 flex flex-col gap-2">
+          <div className="relative flex-1 min-h-0 rounded-lg overflow-hidden border border-amber-700/60 bg-black">
+            <CameraTileContent tile={focusedTile} big onAspect={setAspect} />
+            <button
+              onClick={() => setFocused(null)}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-black/75 border border-amber-500/70 text-[12px] font-semibold text-amber-100 hover:bg-amber-950/80"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" /> Back to all cameras
+            </button>
+          </div>
+          <div className="flex gap-2 h-[84px] shrink-0 overflow-x-auto hud-scroll">
+            {tiles.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setFocused(t.key)}
+                className={`relative h-full aspect-video shrink-0 rounded-md overflow-hidden border bg-black ${t.key === focusedTile.key ? 'border-amber-300' : 'border-amber-900/60 opacity-75 hover:opacity-100'}`}
+                title={t.camera}
+              >
+                <CameraTileContent tile={t} thumb />
+              </button>
+            ))}
+          </div>
+        </div>
       ) : (
-        <div className={`absolute inset-x-2 bottom-2 top-12 grid ${gridCols(tiles.length)} auto-rows-fr gap-2`}>
+        <div
+          ref={gridRef}
+          className="absolute inset-x-2 bottom-2 top-12 grid auto-rows-fr gap-2"
+          style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+        >
           {tiles.map((t) => (
             <button
               key={t.key}
-              onClick={() => t.camera && t.src && applyScreenDirective({ type: 'show-camera', camera: t.camera })}
-              className="relative rounded-lg overflow-hidden border border-amber-900/60 bg-black min-h-0 text-left group"
-              title={t.src ? `Show ${t.camera} on its own` : undefined}
+              onClick={() => t.src && setFocused(t.key)}
+              className="relative rounded-lg overflow-hidden border border-amber-900/60 bg-black min-h-0 text-left group hover:border-amber-500/70"
+              title={t.src ? `Enlarge ${t.camera}` : undefined}
             >
-              {t.src ? (
-                <img src={t.src} alt={`${t.camera} camera`} className="absolute inset-0 w-full h-full object-contain" />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center p-3 text-center text-[12px] text-amber-400/90 font-mono-tech">
-                  {t.error || 'Connecting…'}
-                </div>
+              <CameraTileContent tile={t} onAspect={setAspect} />
+              {t.src && (
+                <span className="absolute bottom-2 right-2 p-1.5 rounded-md bg-black/70 border border-amber-700/60 text-amber-200 opacity-60 group-hover:opacity-100">
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </span>
               )}
-              <div className="absolute top-0 inset-x-0 flex items-center gap-2 px-2 py-1 bg-gradient-to-b from-black/80 to-transparent">
-                <span className="font-orbitron text-[10px] tracking-[0.18em] text-amber-200 uppercase truncate">{t.camera}</span>
-                {t.caption && (
-                  <span className="px-1.5 rounded border border-amber-600/60 bg-black/60 text-[10px] font-mono-tech text-amber-200 whitespace-nowrap">{t.caption}</span>
-                )}
-              </div>
             </button>
           ))}
         </div>
@@ -359,6 +441,33 @@ const CameraGrid: React.FC<{ cameras: string[] }> = ({ cameras }) => {
     </>
   );
 };
+
+/** A camera tile's picture (or error) and its name / caption overlay */
+const CameraTileContent: React.FC<{ tile: GridImage; big?: boolean; thumb?: boolean; onAspect?: (a: number) => void }> = ({ tile, big, thumb, onAspect }) => (
+  <>
+    {tile.src ? (
+      <img
+        src={tile.src}
+        alt={`${tile.camera} camera`}
+        className="absolute inset-0 w-full h-full object-contain"
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          if (img.naturalWidth && img.naturalHeight) onAspect?.(img.naturalWidth / img.naturalHeight);
+        }}
+      />
+    ) : (
+      <div className="absolute inset-0 flex items-center justify-center p-2 text-center text-[12px] text-amber-400/90 font-mono-tech">{tile.error || 'Connecting…'}</div>
+    )}
+    <div className={`absolute top-0 inset-x-0 flex items-center gap-2 bg-gradient-to-b from-black/80 to-transparent ${big ? 'px-3 py-2' : 'px-2 py-1'}`}>
+      <span className={`font-orbitron tracking-[0.18em] text-amber-200 uppercase truncate ${big ? 'text-[12px]' : 'text-[10px]'}`}>{tile.camera}</span>
+      {tile.caption && !thumb && (
+        <span className={`px-1.5 rounded border border-amber-600/60 bg-black/60 font-mono-tech text-amber-200 whitespace-nowrap ${big ? 'text-[11px]' : 'text-[10px]'}`}>
+          {tile.caption}
+        </span>
+      )}
+    </div>
+  </>
+);
 
 const CameraView: React.FC<{ camera: string }> = ({ camera }) => {
   const [src, setSrc] = useState<string | null>(null);
