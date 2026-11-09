@@ -687,7 +687,7 @@ export const PortfolioWidget: React.FC = () => {
         <div className="space-y-3">
           <div className="flex items-end gap-5">
             <div>
-              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600">Total gain</div>
+              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600" title="Gain on the positions you hold now; excludes sold positions and dividends">Unrealized <span className="normal-case tracking-normal">(current holdings)</span></div>
               <div className={`text-[26px] leading-none font-semibold tabular-nums ${data?.totalGainPct != null ? gainClass(data.totalGainPct) : 'text-amber-700'}`}>
                 {data?.totalGainPct != null ? signedPct(data.totalGainPct) : '—'}
               </div>

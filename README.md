@@ -276,7 +276,8 @@ the widget):
   album from the n8n `photos` feed.
 - **Shopping list, Reminders, Smart home, Deliveries, Doorbell log, Portfolio:** your own data
   from n8n (below). Portfolio is read-only and shows percentages only: total gain since
-  purchase, cash share, and the top holdings by weight with their gain.
+  purchase, cash share, and the top holdings by weight with their gain. `totalGainPct` is labelled
+  "Unrealized (current holdings)": it excludes sold positions and dividends.
 
 ### Widget feeds (n8n)
 
