@@ -221,11 +221,6 @@ export const SubtitlesOverlay: React.FC<SubtitlesOverlayProps> = ({
         {/* Main Live Subtitle & Transcript Card */}
         <div className="w-full max-w-4xl pointer-events-auto mb-3 short:mb-1.5">
           <div className="relative rounded-2xl border border-amber-500/40 bg-black/85 backdrop-blur-xl px-6 py-4 short:px-4 short:py-2 shadow-[0_0_35px_rgba(245,158,11,0.18)] transition-all">
-            {/* Sci-fi Corner Brackets */}
-            <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-amber-400" />
-            <div className="absolute top-0 right-0 w-3.5 h-3.5 border-t-2 border-r-2 border-amber-400" />
-            <div className="absolute bottom-0 left-0 w-3.5 h-3.5 border-b-2 border-l-2 border-amber-400" />
-            <div className="absolute bottom-0 right-0 w-3.5 h-3.5 border-b-2 border-r-2 border-amber-400" />
 
             {/* Subtitle Content */}
             <div className="min-h-[52px] flex items-center justify-center">

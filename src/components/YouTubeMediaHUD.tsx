@@ -85,11 +85,6 @@ export const YouTubeMediaHUD: React.FC = () => {
   return (
     <div className="fixed top-16 right-3 sm:right-6 z-40 max-w-[320px] sm:max-w-sm w-full animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-auto">
       <div className="relative rounded-xl border border-amber-500/60 bg-black/90 backdrop-blur-xl p-3.5 shadow-[0_0_25px_rgba(245,158,11,0.22)] font-mono-tech space-y-2.5">
-        {/* Sci-Fi Corner Accents */}
-        <div className="absolute top-0 left-0 w-2.5 h-2.5 border-t-2 border-l-2 border-amber-400" />
-        <div className="absolute top-0 right-0 w-2.5 h-2.5 border-t-2 border-r-2 border-amber-400" />
-        <div className="absolute bottom-0 left-0 w-2.5 h-2.5 border-b-2 border-l-2 border-amber-400" />
-        <div className="absolute bottom-0 right-0 w-2.5 h-2.5 border-b-2 border-r-2 border-amber-400" />
 
         {/* Header Bar */}
         <div className="flex items-center justify-between border-b border-amber-950 pb-2">

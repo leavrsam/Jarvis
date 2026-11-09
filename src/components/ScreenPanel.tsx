@@ -30,10 +30,10 @@ export const ScreenPanel: React.FC = () => {
       className="absolute z-[25] left-3 right-3 top-16 h-[42vh] lg:h-auto lg:left-[372px] lg:right-[482px] lg:top-[72px] lg:bottom-[230px] pointer-events-auto"
     >
       <div key={version} className="relative w-full h-full rounded-xl border border-amber-500/50 bg-black/80 backdrop-blur-md shadow-[0_0_40px_rgba(245,158,11,0.18)] overflow-hidden animate-in fade-in duration-700">
-        <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-amber-400 z-10" />
-        <div className="absolute top-0 right-0 w-3.5 h-3.5 border-t-2 border-r-2 border-amber-400 z-10" />
-        <div className="absolute bottom-0 left-0 w-3.5 h-3.5 border-b-2 border-l-2 border-amber-400 z-10" />
-        <div className="absolute bottom-0 right-0 w-3.5 h-3.5 border-b-2 border-r-2 border-amber-400 z-10" />
+        <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-amber-400 z-10 hidden lg:block" />
+        <div className="absolute top-0 right-0 w-3.5 h-3.5 border-t-2 border-r-2 border-amber-400 z-10 hidden lg:block" />
+        <div className="absolute bottom-0 left-0 w-3.5 h-3.5 border-b-2 border-l-2 border-amber-400 z-10 hidden lg:block" />
+        <div className="absolute bottom-0 right-0 w-3.5 h-3.5 border-b-2 border-r-2 border-amber-400 z-10 hidden lg:block" />
         {content.kind === 'image' && <ImageView url={content.url} />}
         {content.kind === 'image-search' && <ImageSearchView query={content.query} />}
         {content.kind === 'video' && <VideoView url={content.url} />}
