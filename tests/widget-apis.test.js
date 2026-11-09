@@ -47,6 +47,7 @@ describe('n8n feeds', () => {
           totalGainPct: '12.345',
           cashPct: 4.2,
           dayChangePct: '-0.456',
+          cryptoDayChangePct: 2.5,
           totalValue: 123456,
           positions: [
             { id: 'p1', symbol: 'aapl', name: 'Apple', weightPct: 10, gainPct: -3.5, dayChangePct: 1.2, marketValue: 5000 },
@@ -61,6 +62,7 @@ describe('n8n feeds', () => {
       totalGainPct: 12.35,
       cashPct: 4.2,
       dayChangePct: -0.46,
+      cryptoDayChangePct: 2.5,
       positions: [
         { id: 'p2', symbol: 'VTI', name: 'Total Market', weightPct: 40.5, gainPct: 22, dayChangePct: null },
         { id: 'p1', symbol: 'AAPL', name: 'Apple', weightPct: 10, gainPct: -3.5, dayChangePct: 1.2 },

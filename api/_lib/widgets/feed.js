@@ -152,6 +152,7 @@ export function normalizeFeed(name, body) {
         totalGainPct: pct(root.totalGainPct),
         cashPct: pct(root.cashPct),
         dayChangePct: pct(root.dayChangePct),
+        cryptoDayChangePct: pct(root.cryptoDayChangePct),
         positions: list(root, 'positions')
           .map((r, i) => ({ id: id(r.id ?? r.symbol, i), symbol: text(r.symbol, 15).toUpperCase(), name: text(r.name, 80), weightPct: pct(r.weightPct), gainPct: pct(r.gainPct), dayChangePct: pct(r.dayChangePct) }))
           .filter((r) => r.symbol || r.name)

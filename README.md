@@ -298,7 +298,7 @@ GET returns JSON (n8n item arrays work too):
 | `deliveries` | `{ packages: [{ id, title, carrier?, status, eta?, url? }] }` | — |
 | `doorbell` | `{ events: [{ id, time (ISO), camera?, label?, imageUrl? }] }` | — |
 | `photos` | `{ photos: [{ url, caption? }] }` | — |
-| `portfolio` | `{ updatedAt (ISO), totalGainPct, cashPct, dayChangePct?, positions: [{ id, symbol, name, weightPct, gainPct, dayChangePct? }] }` (gainPct = since purchase, dayChangePct = today, crypto last 24 h; no dollar amounts, and any extra fields are dropped) | — |
+| `portfolio` | `{ updatedAt (ISO), totalGainPct, cashPct, dayChangePct?, cryptoDayChangePct?, positions: [{ id, symbol, name, weightPct, gainPct, dayChangePct? }] }` (gainPct = since purchase; dayChangePct = today, overall for stocks/ETFs and per holding, crypto holdings over 24 h; cryptoDayChangePct = crypto over 24 h, shown as a smaller line; no dollar amounts, and any extra fields are dropped) | — |
 
 **Who added it:** shopping items and tasks may include `addedBy` (a name) and
 `addedByOwner` (true/false). Items added by someone other than the owner show in *italic

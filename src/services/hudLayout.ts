@@ -92,7 +92,7 @@ export const WIDGETS: WidgetInfo[] = [
   { id: 'photoFrame', label: 'Photo frame', description: 'A slideshow: free photos of a topic, or your album via n8n.', minW: 200, minH: 140, mobile: true, defaultOn: false, size: { w: 380, h: 260 } },
   { id: 'headlines', label: 'Headlines', description: 'Top stories from news sources you pick.', minW: 240, minH: 160, mobile: true, defaultOn: false, size: { w: 340, h: 320 } },
   { id: 'markets', label: 'Markets', description: 'Stocks, indexes and crypto.', minW: 220, minH: 130, mobile: true, defaultOn: false, size: { w: 300, h: 230 } },
-  { id: 'portfolio', label: 'Portfolio', description: 'Your holdings from n8n: gain since purchase, cash and top positions (percentages only).', minW: 220, minH: 150, mobile: true, defaultOn: false, size: { w: 300, h: 340 } },
+  { id: 'portfolio', label: 'Portfolio', description: 'Your holdings from n8n: gain since purchase, cash and top positions (percentages only).', minW: 220, minH: 150, mobile: true, defaultOn: false, size: { w: 300, h: 370 } },
   { id: 'sports', label: 'Sports', description: 'Your teams: record, live score, next game.', minW: 240, minH: 130, mobile: true, defaultOn: false, size: { w: 340, h: 230 } },
   { id: 'commute', label: 'Commute', description: 'Drive time to a place you choose.', minW: 220, minH: 120, mobile: true, defaultOn: false, size: { w: 300, h: 170 } },
 ];

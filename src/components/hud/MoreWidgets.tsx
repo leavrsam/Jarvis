@@ -670,6 +670,8 @@ interface Position {
 /** Today's change, two decimals like a brokerage app: "+1.24%" / "−0.37%" */
 const dayPct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}%`;
 const TODAY_TITLE = "Today's change (crypto: last 24 hours)";
+const STOCKS_TODAY_TITLE = "Today's change for stocks and ETFs";
+const CRYPTO_TITLE = 'Crypto holdings, change over the last 24 hours';
 
 /** "+12.4%" / "−3.1%" */
 const signedPct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(Math.abs(v) >= 100 ? 0 : 1)}%`;
@@ -677,7 +679,7 @@ const gainClass = (v: number) => (v > 0 ? 'text-emerald-300' : v < 0 ? 'text-red
 
 /** Read-only: total gain since purchase, cash share and the biggest holdings. Percentages only. */
 export const PortfolioWidget: React.FC = () => {
-  const { data, status } = usePolled<{ updatedAt: string; totalGainPct: number | null; cashPct: number | null; dayChangePct: number | null; positions: Position[] }>(
+  const { data, status } = usePolled<{ updatedAt: string; totalGainPct: number | null; cashPct: number | null; dayChangePct: number | null; cryptoDayChangePct: number | null; positions: Position[] }>(
     '/api/feed?name=portfolio',
     15 * 60_000
   );
@@ -697,8 +699,13 @@ export const PortfolioWidget: React.FC = () => {
                 {data?.totalGainPct != null ? signedPct(data.totalGainPct) : '—'}
               </div>
               {data?.dayChangePct != null && (
-                <div className={`mt-1 text-[12.5px] tabular-nums ${gainClass(data.dayChangePct)}`} title={TODAY_TITLE}>
+                <div className={`mt-1 text-[12.5px] tabular-nums ${gainClass(data.dayChangePct)}`} title={STOCKS_TODAY_TITLE}>
                   {data.dayChangePct > 0 ? '▲' : data.dayChangePct < 0 ? '▼' : ''} {dayPct(data.dayChangePct)} <span className="text-amber-500">Today</span>
+                </div>
+              )}
+              {data?.cryptoDayChangePct != null && (
+                <div className={`mt-0.5 text-[11px] tabular-nums ${gainClass(data.cryptoDayChangePct)}`} title={CRYPTO_TITLE}>
+                  {dayPct(data.cryptoDayChangePct)} <span className="text-amber-600">Crypto · 24h</span>
                 </div>
               )}
             </div>
