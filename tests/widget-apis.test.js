@@ -39,6 +39,34 @@ describe('n8n feeds', () => {
     expect(normalizeFeed('tasks', { tasks: [{ id: 't', title: 'Fix the sink (added by guest)' }] }).tasks[0]).toMatchObject({ title: 'Fix the sink', byGuest: true });
   });
 
+  it('normalises the portfolio: percentages only, biggest holdings first, dollar fields dropped', () => {
+    const out = normalizeFeed('portfolio', [
+      {
+        json: {
+          updatedAt: '2026-11-09T15:00:00Z',
+          totalGainPct: '12.345',
+          cashPct: 4.2,
+          totalValue: 123456,
+          positions: [
+            { id: 'p1', symbol: 'aapl', name: 'Apple', weightPct: 10, gainPct: -3.5, marketValue: 5000 },
+            { id: 'p2', symbol: 'VTI', name: 'Total Market', weightPct: 40.5, gainPct: 22 },
+            { name: '', symbol: '' },
+          ],
+        },
+      },
+    ]);
+    expect(out).toEqual({
+      updatedAt: '2026-11-09T15:00:00.000Z',
+      totalGainPct: 12.35,
+      cashPct: 4.2,
+      positions: [
+        { id: 'p2', symbol: 'VTI', name: 'Total Market', weightPct: 40.5, gainPct: 22 },
+        { id: 'p1', symbol: 'AAPL', name: 'Apple', weightPct: 10, gainPct: -3.5 },
+      ],
+    });
+    expect(JSON.stringify(out)).not.toMatch(/marketValue|totalValue|5000|123456/);
+  });
+
   it('normalises smart-home devices; sensors are never controllable', () => {
     const { devices } = normalizeFeed('home', {
       devices: [

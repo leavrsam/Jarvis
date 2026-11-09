@@ -274,15 +274,16 @@ the widget):
   Routes API, live traffic).
 - **Photo frame:** a cross-fading slideshow of free photos of a topic (Openverse), or your own
   album from the n8n `photos` feed.
-- **Shopping list, Reminders, Smart home, Deliveries, Doorbell log:** your own data from n8n
-  (below).
+- **Shopping list, Reminders, Smart home, Deliveries, Doorbell log, Portfolio:** your own data
+  from n8n (below). Portfolio is read-only and shows percentages only: total gain since
+  purchase, cash share, and the top holdings by weight with their gain.
 
 ### Widget feeds (n8n)
 
 These widgets read from n8n through `/api/feed?name=<feed>`. That route needs a login, accepts
 same-origin requests only, and is limited to 60 reads and 30 actions a minute. The server adds
 `X-Jarvis-Key: JARVIS_WEBHOOK_SECRET`. Point it at **one** webhook with `JARVIS_FEEDS_URL`, which
-is called with `?feed=shopping|tasks|home|deliveries|doorbell|photos`, or set
+is called with `?feed=shopping|tasks|home|deliveries|doorbell|photos|portfolio`, or set
 `JARVIS_FEED_<NAME>_URL` for each feed. A feed whose URL isn't set shows "Not connected yet".
 
 GET returns JSON (n8n item arrays work too):
@@ -295,6 +296,7 @@ GET returns JSON (n8n item arrays work too):
 | `deliveries` | `{ packages: [{ id, title, carrier?, status, eta?, url? }] }` | — |
 | `doorbell` | `{ events: [{ id, time (ISO), camera?, label?, imageUrl? }] }` | — |
 | `photos` | `{ photos: [{ url, caption? }] }` | — |
+| `portfolio` | `{ updatedAt (ISO), totalGainPct, cashPct, positions: [{ id, symbol, name, weightPct, gainPct }] }` (gain since purchase; no dollar amounts, and any extra fields are dropped) | — |
 
 **Who added it:** shopping items and tasks may include `addedBy` (a name) and
 `addedByOwner` (true/false). Items added by someone other than the owner show in *italic

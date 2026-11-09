@@ -2,6 +2,7 @@
 import React from 'react';
 import {
   Activity,
+  PieChart,
   CalendarDays,
   CalendarRange,
   Camera,
@@ -53,6 +54,7 @@ const ICONS: Record<WidgetId, React.ComponentType<{ className?: string }>> = {
   photoFrame: Image,
   headlines: Newspaper,
   markets: TrendingUp,
+  portfolio: PieChart,
   sports: Trophy,
   commute: Car,
 };

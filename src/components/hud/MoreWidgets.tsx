@@ -1,6 +1,6 @@
 // More library widgets.
 //   From n8n (your data, via /api/feed): Shopping list, Reminders, Smart home, Deliveries,
-//     Doorbell log, and Photo frame (album mode).
+//     Doorbell log, Portfolio, and Photo frame (album mode).
 //   From public sources (no setup): Headlines, Markets, Sports, Commute, Photo frame (topic mode).
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, ExternalLink, Lock, LockOpen, Plus, Power, Thermometer, Trash2, Video } from 'lucide-react';
@@ -650,6 +650,79 @@ export const MarketsWidget: React.FC = () => {
           })}
           {data?.failed?.length ? <div className="text-[11px] text-amber-700">Not found: {data.failed.join(', ')}</div> : null}
           <div className="pt-1 text-[10px] text-amber-700">Prices may be delayed.</div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------- Portfolio
+
+interface Position {
+  id: string;
+  symbol: string;
+  name: string;
+  weightPct: number | null;
+  gainPct: number | null;
+}
+
+/** "+12.4%" / "−3.1%" */
+const signedPct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(Math.abs(v) >= 100 ? 0 : 1)}%`;
+const gainClass = (v: number) => (v > 0 ? 'text-emerald-300' : v < 0 ? 'text-red-300' : 'text-amber-200');
+
+/** Read-only: total gain since purchase, cash share and the biggest holdings. Percentages only. */
+export const PortfolioWidget: React.FC = () => {
+  const { data, status } = usePolled<{ updatedAt: string; totalGainPct: number | null; cashPct: number | null; positions: Position[] }>(
+    '/api/feed?name=portfolio',
+    15 * 60_000
+  );
+  const now = useNow(30_000);
+  const positions = (data?.positions || []).slice(0, 10);
+  const maxWeight = Math.max(1, ...positions.map((p) => p.weightPct ?? 0));
+  return (
+    <Card title="Portfolio" right={status === 'ok' && data?.updatedAt ? <span className="text-[10.5px] text-amber-600">updated {ago(data.updatedAt, now)}</span> : null}>
+      {status !== 'ok' ? (
+        <FeedState status={status} feed="portfolio" what="the portfolio" />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-end gap-5">
+            <div>
+              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600">Total gain</div>
+              <div className={`text-[26px] leading-none font-semibold tabular-nums ${data?.totalGainPct != null ? gainClass(data.totalGainPct) : 'text-amber-700'}`}>
+                {data?.totalGainPct != null ? signedPct(data.totalGainPct) : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600">Cash</div>
+              <div className="text-[17px] leading-none text-amber-100 tabular-nums">{data?.cashPct != null ? `${data.cashPct.toFixed(1)}%` : '—'}</div>
+            </div>
+          </div>
+          {positions.length === 0 ? (
+            <Muted>No positions.</Muted>
+          ) : (
+            <div className="space-y-1.5">
+              {positions.map((p) => (
+                <div key={p.id} title={p.name || p.symbol}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="flex items-baseline gap-2 min-w-0">
+                      <span className="text-[13.5px] text-amber-100 font-mono-tech">{p.symbol || p.name}</span>
+                      {p.symbol && p.name && <span className="text-[11px] text-amber-600 truncate">{p.name}</span>}
+                    </span>
+                    <span className="flex items-baseline gap-2 tabular-nums shrink-0">
+                      <span className="text-[11.5px] text-amber-500">{p.weightPct != null ? `${p.weightPct.toFixed(1)}%` : ''}</span>
+                      <span className={`text-[12.5px] w-[58px] text-right ${p.gainPct != null ? gainClass(p.gainPct) : 'text-amber-700'}`}>
+                        {p.gainPct != null ? signedPct(p.gainPct) : '—'}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="mt-0.5 h-[3px] rounded-full bg-amber-900/40 overflow-hidden">
+                    <div className="h-full rounded-full bg-amber-400/60" style={{ width: `${Math.max(2, ((p.weightPct ?? 0) / maxWeight) * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+              <div className="pt-1 text-[10px] text-amber-700">Weight · gain since purchase</div>
+            </div>
+          )}
         </div>
       )}
     </Card>

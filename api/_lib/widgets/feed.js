@@ -1,5 +1,5 @@
 // Personal data for HUD widgets, from n8n: shopping list, reminders, smart home, deliveries,
-// doorbell log and photo album. The browser never sees the webhook URL or secret.
+// doorbell log, photo album and portfolio. The browser never sees the webhook URL or secret.
 //
 //   GET  /api/feed?name=<feed>              -> the feed, normalised (see normalizeFeed)
 //   POST /api/feed?name=<feed>  { action, ... } -> forwarded to n8n (check an item, toggle a light)
@@ -23,6 +23,7 @@ export const FEEDS = {
   deliveries: [],
   doorbell: [],
   photos: [],
+  portfolio: [],
 };
 
 const cache = new Map();
@@ -139,6 +140,24 @@ export function normalizeFeed(name, body) {
           .filter((r) => r.url)
           .slice(0, 100),
       };
+    case 'portfolio': {
+      // Percentages only: no dollar amounts are read, so none can reach the browser
+      const root = Array.isArray(body) ? body[0]?.json || body[0] || {} : body?.json || body || {};
+      const pct = (v) => {
+        const n = num(v);
+        return n !== null && Math.abs(n) < 1e6 ? Math.round(n * 100) / 100 : null;
+      };
+      return {
+        updatedAt: time(root.updatedAt),
+        totalGainPct: pct(root.totalGainPct),
+        cashPct: pct(root.cashPct),
+        positions: list(root, 'positions')
+          .map((r, i) => ({ id: id(r.id ?? r.symbol, i), symbol: text(r.symbol, 15).toUpperCase(), name: text(r.name, 80), weightPct: pct(r.weightPct), gainPct: pct(r.gainPct) }))
+          .filter((r) => r.symbol || r.name)
+          .sort((a, b) => (b.weightPct ?? -1) - (a.weightPct ?? -1))
+          .slice(0, 50),
+      };
+    }
     default:
       return {};
   }
