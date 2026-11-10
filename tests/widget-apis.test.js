@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanAction, normalizeFeed } from '../api/_lib/widgets/feed.js';
+import { actionResult, cleanAction, normalizeFeed } from '../api/_lib/widgets/feed.js';
 import { decode, parseFeed } from '../api/_lib/widgets/news.js';
 import { parseChart } from '../api/_lib/widgets/markets.js';
 import { parseTeam } from '../api/_lib/widgets/sports.js';
@@ -93,13 +93,42 @@ describe('n8n feeds', () => {
   });
 
   it('accepts only known actions with the fields they need', () => {
-    expect(cleanAction('shopping', { action: 'check', id: '7', checked: true, extra: 'drop me' })).toEqual({ action: 'check', id: '7', checked: true });
-    expect(cleanAction('shopping', { action: 'add', name: 'Eggs' })).toEqual({ action: 'add', name: 'Eggs' });
+    expect(cleanAction('shopping', { action: 'check', id: '7', checked: true, extra: 'drop me' })).toEqual({ action: 'check', op: 'check', id: '7', checked: true });
+    expect(cleanAction('shopping', { action: 'add', name: 'Eggs' })).toEqual({ action: 'add', op: 'add', name: 'Eggs' });
     expect(cleanAction('shopping', { action: 'add' })).toBeNull();
     expect(cleanAction('shopping', { action: 'delete_everything' })).toBeNull();
     expect(cleanAction('home', { action: 'set', id: 't1', value: 'warm' })).toBeNull();
-    expect(cleanAction('home', { action: 'set', id: 't1', value: 68 })).toEqual({ action: 'set', id: 't1', value: 68 });
+    expect(cleanAction('home', { action: 'set', id: 't1', value: 68 })).toEqual({ action: 'set', op: 'set', id: 't1', value: 68 });
     expect(cleanAction('deliveries', { action: 'check', id: '1' })).toBeNull();
+    expect(cleanAction('shopping', { action: 'remove', id: '9' })).toEqual({ action: 'remove', op: 'remove', id: '9' });
+  });
+
+  it("reads n8n's action result in its usual shapes", () => {
+    expect(actionResult('{"ok":true,"result":"moved_from_pantry"}')).toBe('moved_from_pantry');
+    expect(actionResult('{"out":{"result":"already_on_list"}}')).toBe('already_on_list');
+    expect(actionResult('[{"json":{"result":"added"}}]')).toBe('added');
+    expect(actionResult('{"result":"<script>"}')).toBe('');
+    expect(actionResult('not json')).toBe('');
+  });
+
+  it('normalises usage: counts, costs and the last 14 days in order', () => {
+    const out = normalizeFeed('usage', {
+      updatedAt: '2026-11-10T12:00:00Z',
+      model: 'gemini-2.5-flash',
+      today: { runs: 12, tokens: '34567', estCost: 0.0412345 },
+      month: { runs: 301, tokens: 900000, estCost: 1.2 },
+      last14Days: [{ day: '2026-11-10', runs: 12, tokens: 5 }, { day: '2026-11-09', runs: 30, tokens: 9 }, { runs: 4 }],
+      note: 'Estimate',
+      apiKey: 'nope',
+    });
+    expect(out).toEqual({
+      updatedAt: '2026-11-10T12:00:00.000Z',
+      model: 'gemini-2.5-flash',
+      today: { runs: 12, tokens: 34567, estCost: 0.0412 },
+      month: { runs: 301, tokens: 900000, estCost: 1.2 },
+      last14Days: [{ day: '2026-11-09', runs: 30, tokens: 9 }, { day: '2026-11-10', runs: 12, tokens: 5 }],
+      note: 'Estimate',
+    });
   });
 });
 

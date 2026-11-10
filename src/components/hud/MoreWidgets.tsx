@@ -1,9 +1,9 @@
 // More library widgets.
 //   From n8n (your data, via /api/feed): Shopping list, Reminders, Smart home, Deliveries,
-//     Doorbell log, Portfolio, and Photo frame (album mode).
+//     Doorbell log, Portfolio, Usage, and Photo frame (album mode).
 //   From public sources (no setup): Headlines, Markets, Sports, Commute, Photo frame (topic mode).
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, ExternalLink, Lock, LockOpen, Plus, Power, Thermometer, Trash2, Video } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Lock, LockOpen, Plus, Power, Thermometer, Trash2, Video } from 'lucide-react';
 import { notifyAuthRequired } from '../../services/auth';
 import { getLocation } from '../../services/weather';
 import { applyScreenDirective } from '../../services/screenController';
@@ -74,15 +74,41 @@ function usePolled<T>(url: string | null, intervalMs: number): { data: T | null;
   return { data, status, reload: useCallback(() => setTick((n) => n + 1), []) };
 }
 
-async function feedAction(name: string, body: Record<string, unknown>): Promise<boolean> {
+/** POST an action to a feed. result: n8n's answer when it gave one (e.g. "already_on_list") */
+async function feedAction(name: string, body: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
   try {
     const res = await fetch(`/api/feed?name=${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.status === 401) notifyAuthRequired();
-    return res.ok;
+    const out = await res.json().catch(() => ({}));
+    return { ok: res.ok, result: typeof out?.result === 'string' ? out.result : '' };
   } catch {
-    return false;
+    return { ok: false, result: '' };
   }
 }
+
+/** A short message that fades after a few seconds */
+function useToast(ms = 3000): [string, (text: string) => void] {
+  const [text, setText] = useState('');
+  useEffect(() => {
+    if (!text) return;
+    const t = setTimeout(() => setText(''), ms);
+    return () => clearTimeout(t);
+  }, [text, ms]);
+  return [text, setText];
+}
+
+const Toast: React.FC<{ text: string }> = ({ text }) =>
+  text ? (
+    <div role="status" className="pointer-events-none absolute left-1/2 bottom-12 -translate-x-1/2 z-10 px-3 py-1.5 rounded-full bg-amber-500 text-black text-[12px] font-semibold shadow-lg shadow-black/40 whitespace-nowrap">
+      {text}
+    </div>
+  ) : null;
+
+/** Toast text for n8n's answer to adding a shopping item */
+const ADD_RESULT_TEXT: Record<string, string> = {
+  moved_from_pantry: 'Moved back from pantry',
+  already_on_list: 'Already on the list',
+};
 
 const Muted: React.FC<{ children: React.ReactNode }> = ({ children }) => <div className="text-[13px] text-amber-500/80 leading-snug">{children}</div>;
 
@@ -122,41 +148,88 @@ interface ShoppingItem {
 export const ShoppingWidget: React.FC = () => {
   const { data, status, reload } = usePolled<{ items: ShoppingItem[] }>('/api/feed?name=shopping', 2 * 60_000);
   const [optimistic, setOptimistic] = useState<Record<string, boolean>>({});
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState('');
-  const items = (data?.items || []).map((i) => (i.id in optimistic ? { ...i, checked: optimistic[i.id] } : i));
+  const [pantryOpen, setPantryOpen] = useWidgetSetting<boolean>('shoppingPantryOpen', false);
+  const [toast, showToast] = useToast();
+  // Fresh data from n8n replaces the optimistic changes
+  useEffect(() => {
+    setOptimistic({});
+    setRemoved(new Set());
+  }, [data]);
+  const items = (data?.items || []).filter((i) => !removed.has(i.id)).map((i) => (i.id in optimistic ? { ...i, checked: optimistic[i.id] } : i));
   const open = items.filter((i) => !i.checked);
-  const done = items.filter((i) => i.checked);
+  const pantry = items.filter((i) => i.checked);
   const toggle = async (i: ShoppingItem) => {
     setOptimistic((o) => ({ ...o, [i.id]: !i.checked }));
-    await feedAction('shopping', { action: 'check', id: i.id, checked: !i.checked });
+    const { ok } = await feedAction('shopping', { action: 'check', id: i.id, checked: !i.checked });
+    if (!ok) showToast("Couldn't update the list");
     reload();
+  };
+  const remove = async (i: ShoppingItem) => {
+    setRemoved((r) => new Set(r).add(i.id));
+    const { ok } = await feedAction('shopping', { action: 'remove', id: i.id });
+    if (!ok) showToast("Couldn't remove it");
+    reload();
+  };
+  const row = (i: ShoppingItem) => {
+    const guest = isGuestAddition(i);
+    return (
+      <button key={i.id} onClick={() => void toggle(i)} title={addedTitle(i, guest)} className="flex-1 min-w-0 flex items-center gap-2.5 py-1 text-left group">
+        <span
+          className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+            i.checked ? 'bg-amber-700/50 border-amber-700' : guest ? 'border-sky-500/70 group-hover:border-sky-300' : 'border-amber-600 group-hover:border-amber-300'
+          }`}
+        >
+          {i.checked && <Check className="w-3 h-3 text-black/80" />}
+        </span>
+        <span className={`flex-1 truncate text-[14px] ${i.checked ? 'line-through text-amber-700/80 group-hover:text-amber-500' : guest ? GUEST_STYLE : 'text-amber-50'} ${i.checked && guest ? 'italic' : ''}`}>
+          {i.name}
+        </span>
+        {i.qty && <span className={`text-[11.5px] ${i.checked ? 'text-amber-800' : 'text-amber-500'}`}>×{i.qty}</span>}
+      </button>
+    );
   };
   return (
     <Card title="Shopping list" right={status === 'ok' ? <span className="text-[10.5px] text-amber-600">{open.length} to get</span> : null}>
       {status !== 'ok' ? (
         <FeedState status={status} feed="shopping" what="the shopping list" />
       ) : (
-        <div className="space-y-1">
-          {[...open, ...done].map((i) => {
-            const guest = isGuestAddition(i);
-            return (
-              <button key={i.id} onClick={() => void toggle(i)} title={addedTitle(i, guest)} className="w-full flex items-center gap-2.5 py-1 text-left group">
-                <span
-                  className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                    i.checked ? 'bg-amber-500/80 border-amber-400' : guest ? 'border-sky-500/70 group-hover:border-sky-300' : 'border-amber-600 group-hover:border-amber-300'
-                  }`}
-                >
-                  {i.checked && <Check className="w-3 h-3 text-black" />}
-                </span>
-                <span className={`flex-1 truncate text-[14px] ${i.checked ? 'line-through text-amber-700' : guest ? GUEST_STYLE : 'text-amber-50'} ${i.checked && guest ? 'italic' : ''}`}>
-                  {i.name}
-                </span>
-                {i.qty && <span className="text-[11.5px] text-amber-500">×{i.qty}</span>}
-              </button>
-            );
-          })}
+        <div className="relative space-y-1">
+          {open.map((i) => (
+            <div key={i.id} className="flex items-center">
+              {row(i)}
+            </div>
+          ))}
+          {open.length === 0 && <Muted>{pantry.length ? 'Nothing to get.' : 'The list is empty.'}</Muted>}
           {open.some(isGuestAddition) && <GuestKey />}
-          {items.length === 0 && <Muted>The list is empty.</Muted>}
+          {pantry.length > 0 && (
+            <div className="pt-1">
+              <button
+                onClick={() => setPantryOpen(!pantryOpen)}
+                aria-expanded={pantryOpen}
+                className="w-full flex items-center gap-2 py-1 text-[10.5px] uppercase tracking-[0.18em] text-amber-600 hover:text-amber-400"
+              >
+                {pantryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                Pantry
+                <span className="normal-case tracking-normal text-amber-700">{pantry.length}</span>
+                <span className="flex-1 h-px bg-amber-800/50" />
+              </button>
+              {pantryOpen && (
+                <div className="space-y-0.5 opacity-80">
+                  {pantry.map((i) => (
+                    <div key={i.id} className="flex items-center gap-1">
+                      {row(i)}
+                      <button onClick={() => void remove(i)} className="p-1 text-amber-800 hover:text-red-300 shrink-0" aria-label={`Delete ${i.name}`} title="Delete (used up, won't rebuy)">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="text-[10.5px] text-amber-700">Tap an item to put it back on the list.</div>
+                </div>
+              )}
+            </div>
+          )}
           <form
             className="flex items-center gap-2 pt-1"
             onSubmit={async (e) => {
@@ -164,7 +237,9 @@ export const ShoppingWidget: React.FC = () => {
               const name = adding.trim();
               if (!name) return;
               setAdding('');
-              await feedAction('shopping', { action: 'add', name });
+              const { ok, result } = await feedAction('shopping', { action: 'add', name });
+              if (!ok) showToast("Couldn't add it");
+              else if (ADD_RESULT_TEXT[result]) showToast(ADD_RESULT_TEXT[result]);
               reload();
             }}
           >
@@ -173,6 +248,7 @@ export const ShoppingWidget: React.FC = () => {
               <Plus className="w-3.5 h-3.5" />
             </button>
           </form>
+          <Toast text={toast} />
         </div>
       )}
     </Card>
@@ -745,6 +821,102 @@ export const PortfolioWidget: React.FC = () => {
               <div className="pt-1 text-[10px] text-amber-700">Today next to each symbol · weight · gain since purchase</div>
             </div>
           )}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------- Usage
+
+interface UsagePeriod {
+  runs: number | null;
+  tokens: number | null;
+  estCost: number | null;
+}
+interface UsageData {
+  updatedAt: string;
+  model: string;
+  today: UsagePeriod;
+  month: UsagePeriod;
+  last14Days: { day: string; runs: number; tokens: number }[];
+  note: string;
+}
+
+const money = (v: number | null) => (v == null ? '—' : v > 0 && v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`);
+const compact = (v: number | null) => (v == null ? '—' : v.toLocaleString([], { notation: 'compact', maximumFractionDigits: 1 }));
+const dayLabel = (day: string) => new Date(day.length === 10 ? `${day}T12:00:00` : day).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+
+/** Runs per day as a small line chart; hover a day for its numbers */
+const Sparkline: React.FC<{ days: UsageData['last14Days'] }> = ({ days }) => {
+  const W = 260;
+  const H = 46;
+  const max = Math.max(1, ...days.map((d) => d.runs));
+  const step = days.length > 1 ? W / (days.length - 1) : 0;
+  const pts = days.map((d, i) => [days.length > 1 ? i * step : W / 2, H - 3 - (d.runs / max) * (H - 8)] as const);
+  const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const last = pts[pts.length - 1];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full h-[46px] overflow-visible" role="img" aria-label="Runs per day, last 14 days">
+      <polygon points={`0,${H} ${line} ${W},${H}`} fill="rgba(245,158,11,0.12)" />
+      <polyline points={line} fill="none" stroke="rgb(251,191,36)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      {last && <circle cx={last[0]} cy={last[1]} r="2.6" fill="rgb(253,230,138)" />}
+      {days.map((d, i) => (
+        <rect key={d.day} x={(days.length > 1 ? i * step : 0) - step / 2} y={0} width={step || W} height={H} fill="transparent">
+          <title>{`${dayLabel(d.day)}: ${d.runs} runs · ${compact(d.tokens)} tokens`}</title>
+        </rect>
+      ))}
+    </svg>
+  );
+};
+
+/** Read-only: estimated cost of Jarvis's conversations this month and today, and runs per day */
+export const UsageWidget: React.FC = () => {
+  const { data, status } = usePolled<UsageData>('/api/feed?name=usage', 15 * 60_000);
+  const now = useNow(30_000);
+  const tip = [data?.note, 'Estimate: Jarvis conversations only.'].filter(Boolean).join('\n');
+  return (
+    <Card
+      title="Usage"
+      right={
+        status === 'ok' ? (
+          <span className="flex items-center gap-1.5 text-[10.5px] text-amber-600" title={tip}>
+            {data?.updatedAt ? `updated ${ago(data.updatedAt, now)}` : ''}
+            <Info className="w-3.5 h-3.5" aria-label={tip} />
+          </span>
+        ) : null
+      }
+    >
+      {status !== 'ok' || !data ? (
+        <FeedState status={status} feed="usage" what="usage" />
+      ) : (
+        <div className="space-y-2.5" title={tip}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600">
+                This month <span className="normal-case tracking-normal">(est.)</span>
+              </div>
+              <div className="text-[28px] leading-none font-semibold text-amber-50 tabular-nums">{money(data.month.estCost)}</div>
+              <div className="mt-1 text-[11px] text-amber-600 tabular-nums">
+                {compact(data.month.runs)} runs · {compact(data.month.tokens)} tokens
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-[10.5px] uppercase tracking-[0.18em] text-amber-600">Today</div>
+              <div className="text-[14px] text-amber-100 tabular-nums">{data.today.runs ?? '—'} runs</div>
+              <div className="text-[12px] text-amber-400 tabular-nums">{money(data.today.estCost)}</div>
+            </div>
+          </div>
+          {data.last14Days.length > 1 && (
+            <div>
+              <Sparkline days={data.last14Days} />
+              <div className="flex justify-between text-[10px] text-amber-700">
+                <span>{dayLabel(data.last14Days[0].day)}</span>
+                <span>Runs per day · 14 days</span>
+              </div>
+            </div>
+          )}
+          <div className="text-[10px] text-amber-700 truncate">Estimate · Jarvis conversations only{data.model ? ` · ${data.model}` : ''}</div>
         </div>
       )}
     </Card>

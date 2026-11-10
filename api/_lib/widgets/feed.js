@@ -24,6 +24,7 @@ export const FEEDS = {
   doorbell: [],
   photos: [],
   portfolio: [],
+  usage: [],
 };
 
 const cache = new Map();
@@ -160,6 +161,30 @@ export function normalizeFeed(name, body) {
           .slice(0, 50),
       };
     }
+    case 'usage': {
+      const root = Array.isArray(body) ? body[0]?.json || body[0] || {} : body?.json || body || {};
+      const count = (v) => {
+        const n = num(v);
+        return n !== null && n >= 0 && n < 1e12 ? Math.round(n) : null;
+      };
+      const cost = (v) => {
+        const n = num(v);
+        return n !== null && n >= 0 && n < 1e7 ? Math.round(n * 10000) / 10000 : null;
+      };
+      const period = (r) => ({ runs: count(r?.runs), tokens: count(r?.tokens), estCost: cost(r?.estCost) });
+      return {
+        updatedAt: time(root.updatedAt),
+        model: text(root.model, 60),
+        today: period(root.today),
+        month: period(root.month),
+        last14Days: list(root, 'last14Days')
+          .map((r) => ({ day: time(r.day), runs: count(r.runs) ?? 0, tokens: count(r.tokens) ?? 0 }))
+          .filter((r) => r.day)
+          .sort((a, b) => a.day.localeCompare(b.day))
+          .slice(-14),
+        note: text(root.note, 300),
+      };
+    }
     default:
       return {};
   }
@@ -194,7 +219,7 @@ async function readBody(req) {
 /** The action body the HUD may send: known action, short string/number fields only */
 export function cleanAction(name, body) {
   if (!body || typeof body !== 'object' || !FEEDS[name]?.includes(body.action)) return null;
-  const out = { action: body.action };
+  const out = { action: body.action, op: body.action };
   for (const k of ['id', 'name', 'title']) if (body[k] !== undefined) out[k] = text(String(body[k]), 160);
   if (body.checked !== undefined) out.checked = Boolean(body.checked);
   if (body.value !== undefined) {
@@ -204,6 +229,19 @@ export function cleanAction(name, body) {
   }
   if ((out.action === 'add' && !(out.name || out.title)) || (out.action !== 'add' && !out.id)) return null;
   return out;
+}
+
+/** n8n's answer to an action, e.g. "moved_from_pantry": { result }, { out: { result } } or n8n items */
+export function actionResult(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return '';
+  }
+  const root = Array.isArray(data) ? data[0]?.json || data[0] : data;
+  const r = root?.result ?? root?.out?.result ?? root?.output?.result;
+  return typeof r === 'string' && /^[a-z0-9_]{1,40}$/i.test(r.trim()) ? r.trim().toLowerCase() : '';
 }
 
 export default async function handler(req, res) {
@@ -259,7 +297,8 @@ export default async function handler(req, res) {
       console.warn(`[/api/feed] ${name} action HTTP`, upstream.status);
       return sendJson(res, 502, { error: 'feed_error' });
     }
-    return sendJson(res, 200, { ok: true });
+    const result = actionResult(await upstream.text().catch(() => ''));
+    return sendJson(res, 200, result ? { ok: true, result } : { ok: true });
   } catch (err) {
     console.warn(`[/api/feed] ${name} failed:`, err?.message || err);
     return sendJson(res, 504, { error: 'feed_unreachable' });

@@ -39,6 +39,7 @@ import {
   MarketsWidget,
   PhotoFrameWidget,
   PortfolioWidget,
+  UsageWidget,
   ShoppingWidget,
   SmartHomeWidget,
   SportsWidget,
@@ -1050,6 +1051,8 @@ export const App: React.FC = () => {
         return <MarketsWidget />;
       case 'portfolio':
         return <PortfolioWidget />;
+      case 'usage':
+        return <UsageWidget />;
       case 'sports':
         return <SportsWidget />;
       case 'commute':

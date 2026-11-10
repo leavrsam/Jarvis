@@ -274,31 +274,38 @@ the widget):
   Routes API, live traffic).
 - **Photo frame:** a cross-fading slideshow of free photos of a topic (Openverse), or your own
   album from the n8n `photos` feed.
-- **Shopping list, Reminders, Smart home, Deliveries, Doorbell log, Portfolio:** your own data
-  from n8n (below). Portfolio is read-only and shows percentages only: total gain since
+- **Shopping list, Reminders, Smart home, Deliveries, Doorbell log, Portfolio, Usage:** your own
+  data from n8n (below). Portfolio is read-only and shows percentages only: total gain since
   purchase, cash share, and the top holdings by weight with their gain. `totalGainPct` is labelled
   "Unrealized (current holdings)": it excludes sold positions and dividends. Today's change
   (`dayChangePct`) shows under it and next to each symbol, green or red.
+- **Shopping list:** items to get first; checked items go under a collapsible **Pantry** divider
+  (collapsed by default), greyed and struck through. Tap a pantry item to put it back on the
+  list, or its bin to delete it (used up, won't rebuy). After adding, n8n's `result` shows as
+  a toast: `moved_from_pantry` → "Moved back from pantry", `already_on_list` → "Already on the list".
+- **Usage:** this month's estimated cost (large), today's runs and cost, and a 14-day sparkline
+  of runs. The cost is an estimate covering Jarvis conversations only; n8n's `note` is the tooltip.
 
 ### Widget feeds (n8n)
 
 These widgets read from n8n through `/api/feed?name=<feed>`. That route needs a login, accepts
 same-origin requests only, and is limited to 60 reads and 30 actions a minute. The server adds
 `X-Jarvis-Key: JARVIS_WEBHOOK_SECRET`. Point it at **one** webhook with `JARVIS_FEEDS_URL`, which
-is called with `?feed=shopping|tasks|home|deliveries|doorbell|photos|portfolio`, or set
+is called with `?feed=shopping|tasks|home|deliveries|doorbell|photos|portfolio|usage`, or set
 `JARVIS_FEED_<NAME>_URL` for each feed. A feed whose URL isn't set shows "Not connected yet".
 
 GET returns JSON (n8n item arrays work too):
 
 | Feed | Response | Actions the HUD POSTs |
 | --- | --- | --- |
-| `shopping` | `{ items: [{ id, name, qty?, checked?, addedBy?, addedByOwner? }] }` | `{action:"check", id, checked}`, `{action:"add", name}`, `{action:"remove", id}` |
+| `shopping` | `{ items: [{ id, name, qty?, checked?, addedBy?, addedByOwner? }] }` | `{action:"check", id, checked}` (checked:false = back from the pantry), `{action:"add", name}`, `{action:"remove", id}`; each also carries `op` (same value). An answer of `{ result }` (or `{ out: { result } }`) is passed back to the HUD |
 | `tasks` | `{ tasks: [{ id, title, due? (date or ISO), done?, list?, addedBy?, addedByOwner? }] }` | `{action:"complete", id}`, `{action:"add", title}` |
 | `home` | `{ devices: [{ id, name, type: light\|switch\|plug\|fan\|lock\|thermostat\|sensor\|cover\|scene\|media, state, value?, unit?, room?, controllable? }] }` | `{action:"toggle", id}`, `{action:"set", id, value}` |
 | `deliveries` | `{ packages: [{ id, title, carrier?, status, eta?, url? }] }` | — |
 | `doorbell` | `{ events: [{ id, time (ISO), camera?, label?, imageUrl? }] }` | — |
 | `photos` | `{ photos: [{ url, caption? }] }` | — |
 | `portfolio` | `{ updatedAt (ISO), totalGainPct, cashPct, dayChangePct?, cryptoDayChangePct?, positions: [{ id, symbol, name, weightPct, gainPct, dayChangePct? }] }` (gainPct = since purchase; dayChangePct = today, overall for stocks/ETFs and per holding, crypto holdings over 24 h; cryptoDayChangePct = crypto over 24 h, shown as a smaller line; no dollar amounts, and any extra fields are dropped) | — |
+| `usage` | `{ updatedAt, model, today: { runs, tokens, estCost }, month: { runs, tokens, estCost }, last14Days: [{ day, runs, tokens }], note }` (estCost in dollars, an estimate for Jarvis conversations only) | — |
 
 **Who added it:** shopping items and tasks may include `addedBy` (a name) and
 `addedByOwner` (true/false). Items added by someone other than the owner show in *italic
