@@ -148,7 +148,7 @@ export class ReplyStreamProcessor {
         if (!text && !final) return;
 
         let check = checkLeadingDirective(text, final);
-        const hold = /^(?:SHOW_|SET_TIMER|CANCEL_TIMER)/i.test(text) ? MAX_URL_DIRECTIVE_HOLD : MAX_DIRECTIVE_HOLD;
+        const hold = /^(?:SHOW_|SET_TIMER|CANCEL_TIMER|PLAY_RADIO|PLAY_STREAM)/i.test(text) ? MAX_URL_DIRECTIVE_HOLD : MAX_DIRECTIVE_HOLD;
         if (check.kind === 'pending' && text.length > hold) check = { kind: 'none' };
         if (check.kind === 'pending') return;
         if (check.kind === 'directive') {

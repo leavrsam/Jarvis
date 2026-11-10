@@ -20,18 +20,14 @@ import {
   Sunset,
   Wind,
   Music,
+  Radio,
+  Loader2,
   CalendarDays,
   MapPin,
 } from 'lucide-react';
 import { notifyAuthRequired } from '../../services/auth';
 import { describeWeather, fetchWeather, getLocation, requestPreciseLocation, Weather } from '../../services/weather';
-import {
-  nextTrack,
-  stopVideo,
-  subscribeYouTubeState,
-  togglePlayPause,
-  YouTubePlaybackState,
-} from '../../services/youtubeController';
+import { MediaView, media, subscribeMedia } from '../../services/mediaRouter';
 import { AudioSpectrumMeter } from '../AudioSpectrumMeter';
 import { builtInStats, hudMetrics } from '../../services/eventLog';
 import { getLiveTranscription } from '../../services/micSettings';
@@ -577,44 +573,43 @@ export const CalendarCard: React.FC = () => {
 
 /** Hidden when nothing is playing, unless `showIdle` (layout mode shows where it will appear) */
 export const NowPlayingCard: React.FC<{ showIdle?: boolean }> = ({ showIdle }) => {
-  const [yt, setYt] = useState<YouTubePlaybackState | null>(null);
-  useEffect(() => subscribeYouTubeState(setYt), []);
-  if (!yt || (!yt.videoId && !yt.playlistId && !yt.isPlaying && !yt.isPaused)) {
+  const [m, setM] = useState<MediaView | null>(null);
+  useEffect(() => subscribeMedia(setM), []);
+  if (!m) {
     return showIdle ? (
       <div className="hud-panel px-5 py-3.5">
         <span className="hud-label">Now playing</span>
-        <p className="mt-1.5 text-[12px] text-amber-500/80">Shows here while music is playing.</p>
+        <p className="mt-1.5 text-[12px] text-amber-500/80">Shows here while music or radio is playing.</p>
       </div>
     ) : null;
   }
-  const title = yt.title && !/^(Track|Playlist): /.test(yt.title) ? yt.title : yt.playlistId ? 'YouTube playlist' : 'YouTube';
+  const Icon = m.source === 'youtube' ? Music : Radio;
   return (
     <div className="hud-panel px-5 py-3.5">
       <div className="flex items-center justify-between">
         <span className="hud-label">Now playing</span>
-        {yt.isDucked && <span className="text-[10px] text-amber-500/80">volume lowered while Jarvis talks</span>}
+        {m.ducked && <span className="text-[10px] text-amber-500/80">volume lowered while Jarvis talks</span>}
       </div>
       <div className="mt-2 flex items-center gap-3">
         <div className="w-9 h-9 rounded-lg border border-amber-700/50 bg-amber-950/40 flex items-center justify-center shrink-0">
-          <Music className={`w-4 h-4 text-amber-300 ${yt.isPlaying ? 'animate-pulse' : ''}`} />
+          {m.loading ? <Loader2 className="w-4 h-4 text-amber-300 animate-spin" /> : <Icon className={`w-4 h-4 text-amber-300 ${m.playing ? 'animate-pulse' : ''}`} />}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] text-amber-100 truncate">{title}</div>
-          <div className="text-[11px] text-amber-500/80">
-            {yt.isPlaying ? 'Playing' : 'Paused'}
-            {yt.playlistId && typeof yt.playlistIndex === 'number' ? ` · track ${yt.playlistIndex + 1}` : ''}
+          <div className="text-[14px] text-amber-100 truncate">{m.title}</div>
+          <div className={`text-[11px] truncate ${m.error ? 'text-red-300' : 'text-amber-500/80'}`}>
+            {m.error || `${m.loading ? 'Connecting…' : m.playing ? 'Playing' : 'Paused'} · ${m.subtitle}`}
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={togglePlayPause} className="p-2 rounded-full text-amber-200 hover:bg-amber-900/40" aria-label={yt.isPlaying ? 'Pause' : 'Play'}>
-            {yt.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          <button onClick={media.togglePlayPause} className="p-2 rounded-full text-amber-200 hover:bg-amber-900/40" aria-label={m.playing ? 'Pause' : 'Play'}>
+            {m.playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
           </button>
-          {yt.playlistId && (
-            <button onClick={nextTrack} className="p-2 rounded-full text-amber-300 hover:bg-amber-900/40" aria-label="Next track">
+          {m.canNext && (
+            <button onClick={media.next} className="p-2 rounded-full text-amber-300 hover:bg-amber-900/40" aria-label={m.source === 'radio' ? 'Next station' : 'Next track'}>
               <SkipForward className="w-4 h-4" />
             </button>
           )}
-          <button onClick={stopVideo} className="p-2 rounded-full text-amber-400 hover:bg-amber-900/40" aria-label="Stop">
+          <button onClick={media.stop} className="p-2 rounded-full text-amber-400 hover:bg-amber-900/40" aria-label="Stop">
             <Square className="w-3.5 h-3.5" />
           </button>
         </div>

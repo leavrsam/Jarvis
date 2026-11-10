@@ -19,6 +19,7 @@ import { parseDirective } from './services/directives';
 import { applyScreenDirective, subscribeScreen } from './services/screenController';
 import { addTimer, cancelTimers, dismissRinging, doneAnnouncement, fireDue, ringingTimers } from './services/timers';
 import { isStopCommand } from './services/stopCommand';
+import { applyMediaDirective } from './services/mediaRouter';
 import { TimerStack } from './components/hud/TimerStack';
 import {
   AirQualityWidget,
@@ -527,6 +528,15 @@ export const App: React.FC = () => {
         }
         if (!parsed && /^SHOW_(?:IMAGE|VIDEO|CAMERA)/i.test(directive.trim())) {
           logEvent('command', `Ignored screen directive (needs an https URL / valid camera name): ${directive.slice(0, 80)}`);
+          return;
+        }
+        // Music: YouTube, internet radio or a stream (pause / next / volume go to whatever plays)
+        if (applyMediaDirective(parsed, directive)) {
+          logEvent('command', `Music: ${directive.slice(0, 80)}`);
+          return;
+        }
+        if (!parsed && /^PLAY_(?:RADIO|STREAM)/i.test(directive.trim())) {
+          logEvent('command', `Ignored music directive (PLAY_STREAM needs an https URL): ${directive.slice(0, 80)}`);
           return;
         }
         handleJarvisResponse(directive);

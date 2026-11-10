@@ -437,6 +437,28 @@ never spoken or shown in the subtitles:
 
 ---
 
+## 📻 Internet Radio & Audio Streams (keeps playing with the screen off)
+
+YouTube's embedded player stops when a phone's screen turns off or Jarvis goes to the background
+(background play is a YouTube Premium feature). Radio and audio streams play through Jarvis's
+own audio player instead, which phones keep playing in the background, with lock-screen /
+notification controls (play, pause, next / previous station). On Mac, Windows and the kiosk,
+YouTube keeps playing in the background anyway.
+
+Directives (one per line at the start of a reply, like the YouTube ones):
+- `PLAY_RADIO: <station or genre>`: e.g. `lofi`, `jazz`, `classical`, `80s`, `BBC Radio 1`,
+  `KSL NewsRadio`. Jarvis looks it up in [Radio Browser](https://www.radio-browser.info) (free,
+  open directory, no key), by name and by genre, and plays the best match that works (https
+  streams first; it tries the next match if one won't start). "Next" moves to another match.
+- `PLAY_STREAM: <https url> | <title>`: a specific stream or audio file (must be https).
+- `PAUSE_MUSIC`, `RESUME_MUSIC`, `STOP_MUSIC`, `NEXT_MUSIC`, `PREV_MUSIC`, `SET_VOLUME: <0-100>`
+  control whatever is playing (the `*_YOUTUBE` ones work the same). Starting radio stops YouTube
+  and vice versa. Radio ducks while Jarvis talks, like YouTube (iPhones ignore volume set by a web
+  page, so there it stays at full volume).
+
+If the browser needs a tap before sound can start (no recent tap on the page; installed apps
+are usually exempt), the player says "Tap play to start".
+
 ## 🖥️ Jarvis's Screen (images, video, cameras)
 
 Jarvis can put things on a screen in the HUD. Like the YouTube directives, these go at the start

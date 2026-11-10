@@ -7,13 +7,20 @@
 //   SHOW_IMAGE: <https url>               SHOW_VIDEO: <https url to an mp4/webm file>
 //   SHOW_CAMERA: <camera name>            CLEAR_SCREEN
 //   SET_TIMER: <seconds> | <label>        CANCEL_TIMER: <label or "all">
+//   PLAY_RADIO: <station or genre>        (free internet radio; keeps playing with a phone's screen off)
+//   PLAY_STREAM: <https url> | <title>    (any audio stream or file)
+//   PAUSE_MUSIC / RESUME_MUSIC / STOP_MUSIC / NEXT_MUSIC / PREV_MUSIC (whatever is playing;
+//   the *_YOUTUBE ones work the same way)
 //
 // Pure logic (no DOM), shared by the reply stream parser and the HUD screen.
 
 export type Directive =
   | { type: 'youtube-video'; videoId: string }
   | { type: 'youtube-playlist'; playlistId: string }
+  /** Pause / resume / ... whatever is playing (YouTube, radio or a stream) */
   | { type: 'youtube-control'; action: 'pause' | 'resume' | 'stop' | 'next' | 'prev' }
+  | { type: 'play-radio'; query: string }
+  | { type: 'play-stream'; url: string; title: string }
   | { type: 'set-volume'; volume: number }
   | { type: 'show-image'; url: string }
   | { type: 'show-image-search'; query: string }
@@ -44,9 +51,16 @@ export const DIRECTIVE_KEYWORDS = [
   'CLEAR_SCREEN',
   'SET_TIMER',
   'CANCEL_TIMER',
+  'PLAY_RADIO',
+  'PLAY_STREAM',
+  'PAUSE_MUSIC',
+  'RESUME_MUSIC',
+  'STOP_MUSIC',
+  'NEXT_MUSIC',
+  'PREV_MUSIC',
 ];
 /** Keywords followed by ": <argument>" */
-export const ARG_KEYWORDS = new Set(['PLAY_YOUTUBE_PLAYLIST', 'PLAY_YOUTUBE', 'SET_VOLUME', 'SHOW_IMAGE', 'SHOW_IMAGE_SEARCH', 'SHOW_VIDEO', 'SHOW_CAMERA', 'SET_TIMER', 'CANCEL_TIMER']);
+export const ARG_KEYWORDS = new Set(['PLAY_YOUTUBE_PLAYLIST', 'PLAY_YOUTUBE', 'SET_VOLUME', 'SHOW_IMAGE', 'SHOW_IMAGE_SEARCH', 'SHOW_VIDEO', 'SHOW_CAMERA', 'SET_TIMER', 'CANCEL_TIMER', 'PLAY_RADIO', 'PLAY_STREAM']);
 
 // One alternation, used anchored (leading directive) and global (stripping / late directives).
 // URLs run to the next whitespace; a camera name runs to the end of its line.
@@ -60,7 +74,9 @@ const DIRECTIVE_SOURCE =
   String.raw`|SHOW_CAMERA:[ \t]*[^\n]*[^\s]` +
   String.raw`|SET_TIMER:[ \t]*[^\n]*[^\s]` +
   String.raw`|CANCEL_TIMER:[ \t]*[^\n]*[^\s]` +
-  String.raw`|\b(?:PAUSE_YOUTUBE|RESUME_YOUTUBE|STOP_YOUTUBE|NEXT_YOUTUBE|YOUTUBE_NEXT|PREV_YOUTUBE|PREVIOUS_YOUTUBE|YOUTUBE_PREV|CLEAR_SCREEN)\b`;
+  String.raw`|PLAY_RADIO:[ \t]*[^\n]*[^\s]` +
+  String.raw`|PLAY_STREAM:[ \t]*[^\n]*[^\s]` +
+  String.raw`|\b(?:PAUSE_YOUTUBE|RESUME_YOUTUBE|STOP_YOUTUBE|NEXT_YOUTUBE|YOUTUBE_NEXT|PREV_YOUTUBE|PREVIOUS_YOUTUBE|YOUTUBE_PREV|CLEAR_SCREEN|PAUSE_MUSIC|RESUME_MUSIC|STOP_MUSIC|NEXT_MUSIC|PREV_MUSIC)\b`;
 
 export const LEADING_DIRECTIVE_RE = new RegExp(`^(?:${DIRECTIVE_SOURCE})`, 'i');
 export const ANY_DIRECTIVE_RE = new RegExp(DIRECTIVE_SOURCE, 'gi');
@@ -121,18 +137,34 @@ export function parseDirective(text: string): Directive | null {
     case 'PLAY_YOUTUBE_PLAYLIST':
       return /^[A-Za-z0-9_-]+$/.test(arg) ? { type: 'youtube-playlist', playlistId: arg } : null;
     case 'PAUSE_YOUTUBE':
+    case 'PAUSE_MUSIC':
       return { type: 'youtube-control', action: 'pause' };
     case 'RESUME_YOUTUBE':
+    case 'RESUME_MUSIC':
       return { type: 'youtube-control', action: 'resume' };
     case 'STOP_YOUTUBE':
+    case 'STOP_MUSIC':
       return { type: 'youtube-control', action: 'stop' };
     case 'NEXT_YOUTUBE':
     case 'YOUTUBE_NEXT':
+    case 'NEXT_MUSIC':
       return { type: 'youtube-control', action: 'next' };
     case 'PREV_YOUTUBE':
     case 'PREVIOUS_YOUTUBE':
     case 'YOUTUBE_PREV':
+    case 'PREV_MUSIC':
       return { type: 'youtube-control', action: 'prev' };
+    case 'PLAY_RADIO': {
+      const q = normalizeImageQuery(arg);
+      return q ? { type: 'play-radio', query: q } : null;
+    }
+    case 'PLAY_STREAM': {
+      const [url, ...rest] = arg.split('|');
+      const u = (url ?? '').trim();
+      if (!isHttpsUrl(u)) return null;
+      const title = rest.join('|').trim().replace(/\s+/g, ' ').slice(0, 100);
+      return { type: 'play-stream', url: u, title };
+    }
     case 'SET_VOLUME': {
       if (!/^\d{1,3}$/.test(arg)) return null;
       return { type: 'set-volume', volume: Math.min(100, Number(arg)) };

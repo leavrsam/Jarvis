@@ -212,3 +212,22 @@ describe('stripping', () => {
     expect(checkLeadingDirective('Sure', false)).toEqual({ kind: 'none' });
   });
 });
+
+describe('music directives', () => {
+  it('parses PLAY_RADIO and PLAY_STREAM', () => {
+    expect(parseDirective('PLAY_RADIO: lofi hip hop')).toEqual({ type: 'play-radio', query: 'lofi hip hop' });
+    expect(parseDirective('PLAY_RADIO: "BBC Radio 1"')).toEqual({ type: 'play-radio', query: 'BBC Radio 1' });
+    expect(parseDirective('PLAY_STREAM: https://ice1.somafm.com/groovesalad-128-mp3 | Groove Salad')).toEqual({
+      type: 'play-stream',
+      url: 'https://ice1.somafm.com/groovesalad-128-mp3',
+      title: 'Groove Salad',
+    });
+    expect(parseDirective('PLAY_STREAM: http://insecure.example/s')).toBeNull();
+    expect(parseDirective('PLAY_RADIO:')).toBeNull();
+  });
+  it('maps the *_MUSIC controls like the *_YOUTUBE ones', () => {
+    expect(parseDirective('PAUSE_MUSIC')).toEqual({ type: 'youtube-control', action: 'pause' });
+    expect(parseDirective('NEXT_MUSIC')).toEqual({ type: 'youtube-control', action: 'next' });
+    expect(parseDirective('STOP_MUSIC')).toEqual({ type: 'youtube-control', action: 'stop' });
+  });
+});
