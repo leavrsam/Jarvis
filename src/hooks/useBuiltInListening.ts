@@ -15,11 +15,17 @@ import { isLikelyEcho } from '../services/echoMatch';
 import { notifyAuthRequired } from '../services/auth';
 import { LiveTurn, liveTranscriptionUnavailable, prefetchLiveToken } from '../services/liveTranscriber';
 import { getFocusNearestVoice, getLiveTranscription } from '../services/micSettings';
-import { commandAfterWakePhrase, jarvisCheck } from '../services/wakePhrase';
+import { commandAfterWakePhrase, jarvisCheck, jarvisMentioned } from '../services/wakePhrase';
 import type { UseSpeechRecognitionOptions } from './useSpeechRecognition';
 
 /** Trigger level. "Hey Jarvis" scored 0.99-1.00; near-misses like "hey Travis" reached 0.72. */
 const WAKE_THRESHOLD = 0.8;
+/**
+ * At or above this a "hey Jarvis" reacts instantly. Real ones scored 0.99-1.00 in testing; a TV
+ * line scored 0.86 and woke Jarvis. Between WAKE_THRESHOLD and this, the wake stays silent until
+ * the transcript mentions "Jarvis" (about half a second with live transcription).
+ */
+const HEY_INSTANT_THRESHOLD = 0.95;
 /** While Jarvis is talking, only a very clear "hey Jarvis" interrupts him */
 const WAKE_THRESHOLD_WHILE_SPEAKING = 0.9;
 const REFRACTORY_MS = 2000;
@@ -145,12 +151,20 @@ type CaptureState = {
    * until the transcript confirms it starts with "Jarvis"; dropped quietly otherwise.
    */
   needsConfirm: boolean;
+  /** How it's confirmed: the transcript starts with "Jarvis" (plain "Jarvis"), or mentions it
+   *  anywhere early (a borderline "hey Jarvis", whose recording starts ~2 s early) */
+  confirmBy: 'start' | 'mention';
   /** Nearest-voice focus: frames below this level (dB) are turned down; null = off */
   gateDb: number | null;
   gateState: { hang: number };
   /** Stopped by the user (Stop button / "stop"): whatever was heard is thrown away */
   cancelled: boolean;
 };
+
+/** Does this transcript confirm a silent wake? (rule depends on which detector started it) */
+function confirmCheck(cap: { confirmBy: 'start' | 'mention' }, text: string, final: boolean) {
+  return cap.confirmBy === 'mention' ? jarvisMentioned(text, final) : jarvisCheck(text, final);
+}
 
 export function useBuiltInListening(opts: BuiltInListeningOptions) {
   const {
@@ -223,7 +237,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       return false;
     }
     if (cap.needsConfirm) {
-      if (jarvisCheck(raw, true) !== 'yes') {
+      if (confirmCheck(cap, raw, true) !== 'yes') {
         logEvent('wake', `Not "Jarvis" ("${raw}"); ignored`);
         return false;
       }
@@ -330,7 +344,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
     toStandby();
   }, [endCapture, toStandby]);
 
-  const beginCapture = useCallback((kind: CaptureState['kind'], waitMs?: number, confirm?: { sinceMs: number }) => {
+  const beginCapture = useCallback((kind: CaptureState['kind'], waitMs?: number, confirm?: { sinceMs: number; by?: 'start' | 'mention' }) => {
     const previous = captureRef.current;
     if (previous) endCapture(previous);
     // Wake captures include the pre-roll (the wake phrase and whatever followed it so far);
@@ -387,6 +401,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
       forcedAt: 0,
       liveHeardWords: false,
       needsConfirm: Boolean(confirm),
+      confirmBy: confirm?.by ?? 'start',
       gateDb,
       gateState,
       cancelled: false,
@@ -398,7 +413,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
           if (captureRef.current === cap) {
             cap.liveHeardWords = true;
             if (cap.needsConfirm) {
-              const check = jarvisCheck(t, false);
+              const check = confirmCheck(cap, t, false);
               if (check === 'no') return rejectWake(cap, t);
               if (check === 'wait') return;
               confirmWake(cap, 'live');
@@ -410,7 +425,7 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
           if (captureRef.current !== cap) return;
           if (t) cap.liveHeardWords = true;
           if (cap.needsConfirm) {
-            if (t && jarvisCheck(t, true) === 'yes') confirmWake(cap, 'live');
+            if (t && confirmCheck(cap, t, true) === 'yes') confirmWake(cap, 'live');
             else if (t) return rejectWake(cap, t);
           }
           const command = commandAfterWakePhrase(t).command;
@@ -603,23 +618,33 @@ export function useBuiltInListening(opts: BuiltInListeningOptions) {
         const threshold = l.isJarvisSpeaking ? WAKE_THRESHOLD_WHILE_SPEAKING : WAKE_THRESHOLD;
         if (score < threshold) return;
         const current = captureRef.current;
-        // "hey Jarvis" heard while a plain-"Jarvis" capture waits for its transcript: that settles
-        // it at once (the plain detector usually fires first, so this skips the cooldown)
-        if (current?.needsConfirm) return confirmWake(current, `"hey Jarvis" ${score.toFixed(2)}`);
+        // A clear "hey Jarvis" while a silent wake waits for its transcript settles it at once (the
+        // plain detector usually fires first, so this skips the cooldown); a borderline one doesn't
+        if (current?.needsConfirm) {
+          if (score >= HEY_INSTANT_THRESHOLD) confirmWake(current, `"hey Jarvis" ${score.toFixed(2)}`);
+          return;
+        }
         if (Date.now() - lastWakeRef.current < REFRACTORY_MS) return;
         if (transcribingRef.current) return;
         // Already capturing a command; a follow-up window that hasn't heard anything yet gives way
         if (current && (current.kind !== 'follow-up' || current.speechStarted)) return;
         lastWakeRef.current = Date.now();
-        builtInStats.detections++;
         if (l.isJarvisSpeaking) {
+          builtInStats.detections++;
           logEvent('barge-in', `"hey Jarvis" (score ${score.toFixed(2)})`);
           l.onBargeIn?.('');
           beginCapture('wake');
         } else if (l.wakeWordEnabled || current) {
-          logEvent('wake', `"hey Jarvis" detected (score ${score.toFixed(2)})`);
-          l.onWakeWordDetected?.('');
-          beginCapture('wake');
+          if (score >= HEY_INSTANT_THRESHOLD) {
+            builtInStats.detections++;
+            logEvent('wake', `"hey Jarvis" detected (score ${score.toFixed(2)})`);
+            l.onWakeWordDetected?.('');
+            beginCapture('wake');
+          } else {
+            // Borderline (TV dialogue has scored 0.86): silent until the transcript mentions Jarvis
+            logEvent('wake', `Maybe "hey Jarvis" (score ${score.toFixed(2)}); checking the transcript`);
+            beginCapture('wake', undefined, { sinceMs: PRE_ROLL_MS, by: 'mention' });
+          }
         }
       });
 

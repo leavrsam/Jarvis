@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commandAfterWakePhrase, jarvisCheck, startsWithWakePhrase, stripWakePhrase } from './wakePhrase';
+import { commandAfterWakePhrase, jarvisCheck, jarvisMentioned, startsWithWakePhrase, stripWakePhrase } from './wakePhrase';
 
 describe('stripWakePhrase', () => {
   it('removes the wake phrase however it is punctuated', () => {
@@ -62,5 +62,22 @@ describe('commandAfterWakePhrase', () => {
   it('does not treat a person called Travis as the wake word', () => {
     expect(commandAfterWakePhrase('Ask Travis about tomorrow').hadWakePhrase).toBe(false);
     expect(commandAfterWakePhrase('Ask Travis about tomorrow').command).toBe('Ask Travis about tomorrow');
+  });
+});
+
+describe('jarvisMentioned (borderline "hey Jarvis" confirmation)', () => {
+  it('rejects the TV line that woke Jarvis at score 0.86', () => {
+    expect(jarvisMentioned('Just two words. See Robert.', true)).toBe('no');
+  });
+  it('accepts a real wake even with other talk recorded before it', () => {
+    for (const t of ['Hey Jarvis, what time is it?', 'and then he left. Hey Jarvis, lights on', 'Jarvis.', 'OK, Jarvis'])
+      expect(jarvisMentioned(t, true)).toBe('yes');
+  });
+  it('does not count sound-alikes', () => {
+    for (const t of ['Hey Travis, over here', 'Pass the jars', 'Harvest time']) expect(jarvisMentioned(t, true)).toBe('no');
+  });
+  it('waits on a short partial live transcript, gives up after ~10 words', () => {
+    expect(jarvisMentioned('Just two', false)).toBe('wait');
+    expect(jarvisMentioned('one two three four five six seven eight nine ten', false)).toBe('no');
   });
 });

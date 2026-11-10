@@ -51,3 +51,17 @@ export function commandAfterWakePhrase(text: string): { command: string; hadWake
   if (!m) return { command: text.trim(), hadWakePhrase: false };
   return { command: text.slice(m.index + m[0].length).trim(), hadWakePhrase: true };
 }
+
+const JARVIS_WORD = /\b(?:jarvis|jervis|jarvas|jarves|charvis)\b/i;
+
+/**
+ * Borderline "hey Jarvis" confirmation: does the transcript mention Jarvis at all? (Its recording
+ * starts ~2 s early, so other talk can come first.) 'wait' on a short partial live transcript;
+ * after ~10 words without it, or on the whole utterance, 'no'. "Travis" etc. don't count.
+ */
+export function jarvisMentioned(text: string, final: boolean): 'yes' | 'no' | 'wait' {
+  if (JARVIS_WORD.test(text)) return 'yes';
+  if (final) return 'no';
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return words >= 10 ? 'no' : 'wait';
+}
